@@ -1,0 +1,17 @@
+name: Compliance
+on: pull_request
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+jobs:
+  compliance:
+    # The reusable workflow needs private cross-repository credentials, which
+    # GitHub intentionally withholds from fork pull requests.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: dnsid-ai/dnsid-sdk-compliance/.github/workflows/sdk-compliance.yaml@main
+    secrets: inherit          # GH_PAT — needed only while these repos are private
+    with:
+      sdk: py
+      ref: ${{ github.event.pull_request.head.sha }}
+      base-ref: ${{ github.event.pull_request.base.sha }}

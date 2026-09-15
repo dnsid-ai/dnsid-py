@@ -1,0 +1,4 @@
+# false positives: AWS KMS key_spec enum, not a secret
+tests/test_aws_kms_key_provider.py:generic-api-key:75
+tests/test_aws_kms_key_provider.py:generic-api-key:95
+tests/test_aws_kms_key_provider.py:generic-api-key:311

@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dnsid"
+version = "0.19.1"
+description = "Python SDK for the DNSid Protocol — agent identity management and verification"
+readme = "README.md"
+authors = [{ name = "Identity Digital Innovation Labs" }]
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE.txt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    # IDNA A-label normalisation (normalize_fqdn)
+    "idna>=3.6",
+    # HTTP client for JWKS, status endpoint fetches, and DoH queries
+    "httpx>=0.27",
+    # System DNS resolver (TXT record lookup with DNSSEC awareness)
+    "dnspython>=2.6",
+    # Cryptographic operations (JWK thumbprint, ECDSA/EdDSA verify/sign)
+    "cryptography>=42.0",
+    # RFC 8941/9651 Structured Field parsing and serialization
+    "http-sf>=1.3.0,<2",
+]
+
+[project.urls]
+Documentation = "https://docs.dnsid.ai/"
+Repository = "https://github.com/dnsid-ai/dnsid-py"
+Issues = "https://github.com/dnsid-ai/dnsid-py/issues"
+Changelog = "https://github.com/dnsid-ai/dnsid-py/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+aws = [
+    "boto3>=1.34",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "griffe>=1.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["dnsid"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"examples/**/*.py" = ["E402", "E501", "D"]
+"tests/**/*.py" = ["E501", "D"]
+"scripts/**/*.py" = ["D"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

@@ -1,0 +1,115 @@
+name: Release
+
+# Triggered when the "release/next" PR is merged into main, or manually.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  attestations: write
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'release/next' &&
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          [ -n "$VERSION" ] || { echo "ERROR: could not read version from pyproject.toml"; exit 1; }
+          echo "version=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes
+        run: |
+          python - "${{ steps.version.outputs.version }}" <<'PY' > /tmp/release-notes.md
+          import sys
+          from pathlib import Path
+
+          version = sys.argv[1].removeprefix("v")
+          changelog = Path("CHANGELOG.md").read_text()
+          marker = f"## [{version}]"
+          start = changelog.find(marker)
+          if start == -1:
+              raise SystemExit(f"ERROR: {marker} not found in CHANGELOG.md")
+
+          next_start = changelog.find("\n## [", start + 1)
+          section = changelog[start : next_start if next_start != -1 else len(changelog)]
+          print(section.strip())
+          PY
+          echo "--- release notes ---"
+          cat /tmp/release-notes.md
+
+      - name: Verify release tag
+        id: tag
+        run: |
+          TAG="${{ steps.version.outputs.version }}"
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            [ "$(git rev-list -n 1 "${TAG}")" = "$GITHUB_SHA" ] || {
+              echo "ERROR: ${TAG} does not point at release commit ${GITHUB_SHA}"
+              exit 1
+            }
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build tools
+        run: python -m pip install build twine
+
+      - name: Build and check package
+        run: |
+          python -m build
+          python -m twine check dist/*
+
+      - name: Smoke test wheel
+        run: |
+          python -m venv /tmp/dnsid-smoke
+          /tmp/dnsid-smoke/bin/pip install dist/*.whl
+          (cd /tmp && /tmp/dnsid-smoke/bin/python -c "import dnsid")
+
+      - name: Attest package provenance
+        if: github.event.repository.private == false
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Tag release
+        if: steps.tag.outputs.exists != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        run: |
+          if gh release view "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Release ${{ steps.version.outputs.version }} already exists, skipping"
+          else
+            gh release create "${{ steps.version.outputs.version }}" \
+              dist/* \
+              --verify-tag \
+              --title "Release ${{ steps.version.outputs.version }}" \
+              --notes-file /tmp/release-notes.md
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,77 @@
+{
+  "format": "dnsid-sdk-c2sp-managed-trust-selection-v1",
+  "catalog": [
+    {
+      "id": "identity-digital-development",
+      "scope": "public",
+      "logPrefix": "https://log.dnsid.dev",
+      "trustMode": "trust-profile"
+    },
+    {
+      "id": "identity-digital-production",
+      "scope": "public",
+      "logPrefix": "https://log.dnsid.ai",
+      "trustMode": "trust-profile"
+    }
+  ],
+  "cases": [
+    {
+      "id": "exact-development-selector",
+      "lr": "c2sp-tlog:public:https://log.dnsid.dev#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": true,
+        "catalogEntry": "identity-digital-development",
+        "trustMode": "trust-profile"
+      }
+    },
+    {
+      "id": "exact-production-selector",
+      "lr": "c2sp-tlog:public:https://log.dnsid.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": true,
+        "catalogEntry": "identity-digital-production",
+        "trustMode": "trust-profile"
+      }
+    },
+    {
+      "id": "wrong-scope-fails-closed",
+      "lr": "c2sp-tlog:testnet:https://log.dnsid.dev#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "unknown-prefix-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "deceptive-hostname-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.dnsid.dev.attacker.example#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "noncanonical-prefix-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.dnsid.dev/#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "malformed or noncanonical reference"
+      }
+    },
+    {
+      "id": "missing-stream-id-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.dnsid.dev",
+      "expected": {
+        "accepted": false,
+        "reason": "malformed reference"
+      }
+    }
+  ]
+}

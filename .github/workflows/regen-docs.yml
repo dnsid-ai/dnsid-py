@@ -1,0 +1,51 @@
+name: Auto-regenerate reference docs
+
+# On every same-repo PR push, regenerate docs/reference/ and, when the output
+# changed, push the fix to the PR branch — contributors never run the docs
+# generator by hand. Fork PRs are skipped (GITHUB_TOKEN cannot push to forks);
+# the freshness warning in lint-test.yml still tells fork authors the manual
+# command.
+#
+# Loop guard: pushes made with GITHUB_TOKEN do not trigger new workflow runs,
+# so the bot's own commit cannot re-trigger this workflow (and a re-run would
+# find no diff anyway). The same property means CI results shown on the PR
+# belong to the contributor's last commit; the bot commit only touches
+# docs/reference/, which no test job consumes.
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: regen-docs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  regen:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Regenerate reference
+        run: python scripts/gen_docs.py
+
+      - name: Commit and push if changed
+        run: |
+          git diff --quiet docs/reference/ && { echo "reference is current"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/reference/
+          git commit -m "docs: regenerate reference"
+          git push

@@ -1,0 +1,47 @@
+[changelog]
+header = ""
+body = """
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.breaking %}[**breaking**] {% endif %}\
+{{ commit.message | split(pat="\n") | first }}\
+{% endfor %}
+{% endfor %}\n
+"""
+footer = ""
+trim = true
+
+[bump]
+initial_tag = "v0.1.0"
+breaking_always_bump_major = false
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+split_commits = false
+commit_preprocessors = [
+  { pattern = "Merge pull request #(\\d+) from [^\\n]+\\n\\n(.*)", replace = "${2} ([#${1}](https://github.com/dnsid-ai/dnsid-py/pull/${1}))" },
+  { pattern = "\\A([^\\n]+) \\(#(\\d+)\\)(\\n|\\z)", replace = "${1} ([#${2}](https://github.com/dnsid-ai/dnsid-py/pull/${2}))${3}" },
+]
+commit_parsers = [
+  { message = "^chore: update changelog and version|^Release v[0-9]", skip = true },
+  { message = "(?i)(?:^feat|^add).*\\[#\\d+\\]", group = "Features", increment = "minor" },
+  { message = "(?i)(?:^fix|^bug).*\\[#\\d+\\]", group = "Bug Fixes", increment = "patch" },
+  { message = "(?i)^doc.*\\[#\\d+\\]", group = "Documentation", increment = "patch" },
+  { message = "(?i)^test.*\\[#\\d+\\]", group = "Testing", increment = "patch" },
+  { message = "(?i)(?:^refactor|^chore|^update|^bump|^deps|^ci|^sec).*\\[#\\d+\\]", group = "Chores", increment = "patch" },
+  { message = ".*\\[#\\d+\\]", group = "Other", increment = "patch" },
+  { message = ".*", skip = true },
+]
+filter_commits = true
+tag_pattern = "v[0-9]*"
+skip_tags = ""
+ignore_tags = ""
+topo_order = false
+sort_commits = "oldest"

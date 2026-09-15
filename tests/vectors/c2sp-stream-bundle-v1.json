@@ -1,0 +1,68 @@
+{
+  "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKMgpmK1MybVFqdy9ub25ya3ZtRDdjSEJ4bnIzTDl6U2V5dWh5bGFmU0xEblFvPQoK4oCUIGxvZy5leGFtcGxlIFBiVHVDRmpvZzNBZGxhVEZ3dUdTY2lNcGhIN2NtdUZ3M04xTm1QbkVlOUoxUi9KVGNycnBUTVhhYU9BQmF0cERQaWVRSk5rSTBkWHdYbGdRQnhuSWVBMEFYQVE9CuKAlCB3aXRuZXNzLmV4YW1wbGUgMm5aZ0x3QUFBQUJxUEcvaytMcEVpbXdZWm80QTg5M2ZhTlRGcGVKS2UyTWRURHh0cFE3citKRjE4TnJZajVUdHFpaHNraWNpbE5qVzV6TmRQVDNxSmRvdGdmRU9qRUlDcmpsOUJBPT0K\",\"complete_through_size\":2,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sE\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9g\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"NnKRaNcGgO88yvziWDuuhfdWnyS4FcGsuvntztO9xN0\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"bundle.example+b0fef33a\",\"value\":\"pLbqU5Cy4-UfPp3Oz7lmWxqArYB3NKVenwYe1eyigt6aruAC6Q0obHT-3Nwwh9CdHosz5PS7tXLpQLnqUxmwDg\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+  "expected": {
+    "active_operational_thumbprint": "nRIE2VmKdMjL1JD7tbV7fXVgXxmv0GKnMFWRUJMTf9Q",
+    "bundle_signer_kid": "bundle.example+b0fef33a",
+    "event_count": 2,
+    "status": "ACTIVE"
+  },
+  "format": "dnsid-c2sp-stream-bundle@v1",
+  "negative_mutations": [
+    {
+      "append": "=",
+      "error": "canonical unpadded base64url",
+      "name": "padded-policy-hash",
+      "path": "/policy_hash"
+    },
+    {
+      "error": "state does not match replay",
+      "name": "wrong-state",
+      "path": "/state/logged_state",
+      "resign": true,
+      "value": "REVOKED"
+    },
+    {
+      "error": "expired",
+      "name": "expired",
+      "path": "/expires",
+      "resign": true,
+      "value": 1782345700
+    },
+    {
+      "error": "unsupported",
+      "name": "unsupported-completeness",
+      "path": "/completeness_mode",
+      "resign": true,
+      "value": "untrusted-index"
+    },
+    {
+      "error": "indexes",
+      "name": "out-of-order-index",
+      "path": "/events/1/index",
+      "resign": true,
+      "value": 0
+    },
+    {
+      "error": "proof length",
+      "name": "proof-length",
+      "path": "/events/0/proof",
+      "resign": true,
+      "value": "AA"
+    }
+  ],
+  "policy": "log log.example+3db4ee08+AcqTrBcFGHBx1nuDx/8O/oEI6OxFMFdddyaHkzPb2r58\nwitness primary witness.example+da76602f+BG56HN0psLeP0Tr0xVmP7/TvKpcWbjym8uT7/M2AUFvx\nquorum primary\n",
+  "trust": {
+    "bundle_verifier_key": "bundle.example+b0fef33a+AYqHX/8es4RRV3rNWv7kBUVlaN18ieCQhjoFV7x69J8X",
+    "checkpoint_freshness_ms": 120000,
+    "entity_jwk": {
+      "alg": "EdDSA",
+      "crv": "Ed25519",
+      "kid": "entity-1",
+      "kty": "OKP",
+      "x": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+    },
+    "max_bundle_lifetime_ms": 300000,
+    "now": 1782345760
+  },
+  "unsigned_bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKMgpmK1MybVFqdy9ub25ya3ZtRDdjSEJ4bnIzTDl6U2V5dWh5bGFmU0xEblFvPQoK4oCUIGxvZy5leGFtcGxlIFBiVHVDRmpvZzNBZGxhVEZ3dUdTY2lNcGhIN2NtdUZ3M04xTm1QbkVlOUoxUi9KVGNycnBUTVhhYU9BQmF0cERQaWVRSk5rSTBkWHdYbGdRQnhuSWVBMEFYQVE9CuKAlCB3aXRuZXNzLmV4YW1wbGUgMm5aZ0x3QUFBQUJxUEcvaytMcEVpbXdZWm80QTg5M2ZhTlRGcGVKS2UyTWRURHh0cFE3citKRjE4TnJZajVUdHFpaHNraWNpbE5qVzV6TmRQVDNxSmRvdGdmRU9qRUlDcmpsOUJBPT0K\",\"complete_through_size\":2,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sE\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9g\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"NnKRaNcGgO88yvziWDuuhfdWnyS4FcGsuvntztO9xN0\",\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}"
+}

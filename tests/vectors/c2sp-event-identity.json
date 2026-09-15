@@ -1,0 +1,37 @@
+{
+  "format": "dnsid-sdk-c2sp-event-identity",
+  "scope": "Hash primitives only; placeholder state thumbprints and predecessor hashes are not a verified lifecycle history.",
+  "vectors": [
+    {
+      "domain": "event",
+      "value": {
+        "v": 1,
+        "kind": "dnsid.lifecycle",
+        "method": "c2sp-tlog",
+        "log_origin": "log.example",
+        "stream_id": "Q2hWbW5Ta0x5R0JtM3B0dw",
+        "lr": "c2sp-tlog:public:https://log.example#Q2hWbW5Ta0x5R0JtM3B0dw",
+        "fqdn": "agent.example",
+        "type": "DELEGATION",
+        "ts": 1788523200,
+        "seq": 1,
+        "prev_event_id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "prev_state_hash": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        "extension": "signed-value"
+      },
+      "canonical": "{\"extension\":\"signed-value\",\"fqdn\":\"agent.example\",\"kind\":\"dnsid.lifecycle\",\"log_origin\":\"log.example\",\"lr\":\"c2sp-tlog:public:https://log.example#Q2hWbW5Ta0x5R0JtM3B0dw\",\"method\":\"c2sp-tlog\",\"prev_event_id\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"prev_state_hash\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\",\"seq\":1,\"stream_id\":\"Q2hWbW5Ta0x5R0JtM3B0dw\",\"ts\":1788523200,\"type\":\"DELEGATION\",\"v\":1}",
+      "hash": "zVOwfCZGsIdLcBjl9YCN5qgvC7Pk2f7aLfpHSkJgPKY"
+    },
+    {
+      "domain": "state",
+      "value": {
+        "fqdn": "agent.example",
+        "status": "ACTIVE",
+        "entity_thumb": "entity-test",
+        "operational_thumb": "operational-test"
+      },
+      "canonical": "{\"entity_thumb\":\"entity-test\",\"fqdn\":\"agent.example\",\"operational_thumb\":\"operational-test\",\"status\":\"ACTIVE\"}",
+      "hash": "nt88NbPWbuq2Hfa1Lk7ZzcDaj8sQV-znU0Q2sCxkVPc"
+    }
+  ]
+}

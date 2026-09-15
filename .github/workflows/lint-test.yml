@@ -1,0 +1,51 @@
+name: Lint and Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint check
+        run: ruff check .
+
+      - name: Mypy type check
+        run: mypy dnsid
+
+      - name: Run tests
+        run: pytest
+
+      # Advisory only: the regen-docs workflow pushes regenerated reference
+      # docs to same-repo PR branches automatically. The warning matters for
+      # fork PRs, where the bot cannot push.
+      - name: Docs freshness (generated reference)
+        if: matrix.python-version == '3.13'
+        run: |
+          python scripts/gen_docs.py
+          git diff --exit-code docs/reference/ || {
+            echo "::warning::docs/reference/ is stale — the auto-regen workflow pushes the fix to same-repo PRs; fork authors run python scripts/gen_docs.py and commit the result"
+            exit 0
+          }

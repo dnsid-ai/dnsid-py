@@ -1,0 +1,58 @@
+[
+  {
+    "label": "Overview",
+    "slug": "reference/py/overview"
+  },
+  {
+    "label": "Core: IdentityManager",
+    "slug": "reference/py/core"
+  },
+  {
+    "label": "Configuration",
+    "slug": "reference/py/configuration"
+  },
+  {
+    "label": "Records & keys",
+    "slug": "reference/py/records"
+  },
+  {
+    "label": "Verification results",
+    "slug": "reference/py/verification"
+  },
+  {
+    "label": "Profile: JOSE",
+    "slug": "reference/py/profile-jose"
+  },
+  {
+    "label": "Profile: HTTP signatures",
+    "slug": "reference/py/profile-http-signatures"
+  },
+  {
+    "label": "Profile: Web Bot Auth",
+    "slug": "reference/py/profile-web-bot-auth"
+  },
+  {
+    "label": "Profile: OIDC",
+    "slug": "reference/py/profile-oidc"
+  },
+  {
+    "label": "Key providers",
+    "slug": "reference/py/key-providers"
+  },
+  {
+    "label": "Registry",
+    "slug": "reference/py/registry"
+  },
+  {
+    "label": "Transparency log",
+    "slug": "reference/py/transparency-log"
+  },
+  {
+    "label": "Interfaces",
+    "slug": "reference/py/interfaces"
+  },
+  {
+    "label": "Errors & enums",
+    "slug": "reference/py/errors"
+  }
+]
