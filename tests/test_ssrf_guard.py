@@ -68,8 +68,8 @@ class TestResolveChecked:
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
             assert (
                 resolve_checked_address(
-                    "registry.dev.dnsid.test",
-                    private_address_hosts={"registry.dev.dnsid.test"},
+                    "registry.test.dnsid.test",
+                    private_address_hosts={"registry.test.dnsid.test"},
                 )
                 == "127.0.0.1"
             )
@@ -90,7 +90,7 @@ class TestResolveChecked:
             with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
                 resolve_checked_address(
                     "attacker.example",
-                    private_address_hosts={"registry.dev.dnsid.test"},
+                    private_address_hosts={"registry.test.dnsid.test"},
                 )
 
     def test_returns_public_ip(self):
@@ -161,7 +161,7 @@ class TestStatusFetchSsrf:
         # fails on its own, but never via the SSRF guard.
         transport = make_ssrf_safe_transport(
             TransportConfig(
-                private_address_hosts=frozenset({"registry.dev.dnsid.test"})
+                private_address_hosts=frozenset({"registry.test.dnsid.test"})
             )
         )
         with patch(
@@ -169,7 +169,7 @@ class TestStatusFetchSsrf:
         ):
             with pytest.raises(VerificationError) as exc:
                 fetch_agent_status(
-                    "https://registry.dev.dnsid.test/status", transport=transport
+                    "https://registry.test.dnsid.test/status", transport=transport
                 )
         # Not the SSRF path: either a transient connection error or similar.
         assert "SSRF" not in str(exc.value)

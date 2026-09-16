@@ -123,7 +123,7 @@ def test_safe_fetcher_applies_transport_config_with_exact_loopback_exception() -
     ) as make_transport:
         fetcher = SafeC2spResourceFetcher(
             transport_config=config,
-            allow_loopback_host="registry.dev.dnsid.test",
+            allow_loopback_host="registry.test.dnsid.test",
         )
 
     safe_config = make_transport.call_args.args[0]
@@ -131,7 +131,7 @@ def test_safe_fetcher_applies_transport_config_with_exact_loopback_exception() -
     assert safe_config.ca_bundle_path == config.ca_bundle_path
     assert safe_config.private_address_hosts == frozenset()
     assert make_transport.call_args.kwargs["allow_loopback_host"] == (
-        "registry.dev.dnsid.test"
+        "registry.test.dnsid.test"
     )
     fetcher.close()
 

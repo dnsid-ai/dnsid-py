@@ -1277,7 +1277,7 @@ class TestEkPinningHost:
         from dnsid.manager import _ek_pinning_host
 
         with pytest.raises(VerificationError) as exc_info:
-            _ek_pinning_host("example.com", "https://attacker.com/jwks.json")
+            _ek_pinning_host("example.com", "https://attacker.example/jwks.json")
         assert exc_info.value.code == VerificationCode.RECORD_INVALID
 
     def test_non_domain_gi_rejected(self):

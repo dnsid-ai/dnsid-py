@@ -261,12 +261,12 @@ class TestLrGrammar:
 
     def test_parses_testnet_lr(self):
         parsed = parse_c2sp_tlog_lr(
-            "c2sp-tlog:public:https://registry.dev.dnsid.test#bob.dev.dnsid.test"
+            "c2sp-tlog:public:https://registry.dev.dnsid.test#bob.test.dnsid.test"
         )
         assert parsed.scope == "public"
         assert parsed.log_prefix == "https://registry.dev.dnsid.test"
         assert parsed.origin == "registry.dev.dnsid.test"
-        assert parsed.stream_id == "bob.dev.dnsid.test"
+        assert parsed.stream_id == "bob.test.dnsid.test"
         assert parsed.entry_index is None
 
     def test_entry_index_suffix(self):

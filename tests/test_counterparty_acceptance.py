@@ -253,7 +253,7 @@ class TestAcceptance:
             assert manager.verify_domain(DOMAIN).domain == DOMAIN
 
     @pytest.mark.parametrize(
-        "configured", ["service.example.com", "com", "xample.com", "example.co"]
+        "configured", ["service.example.com", "com", "xample.test", "example.co"]
     )
     def test_child_suffix_lookalike_gi_rejected(self, ec_pair, configured):
         manager, _, _, patches = _verifier(

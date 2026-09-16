@@ -106,7 +106,7 @@ class TestCreateJWT:
     def test_reserved_claim_override_raises(self, ec_provider):
         jose = _build_profile(ec_provider)
         with pytest.raises(ArgumentError):
-            jose.create_jwt(JWTOptions(audience="x.com", additional_claims={"iss": "evil.com"}))
+            jose.create_jwt(JWTOptions(audience="x.example", additional_claims={"iss": "evil.example"}))
 
     def test_empty_audience_raises(self, ec_provider):
         jose = _build_profile(ec_provider)
