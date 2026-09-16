@@ -29,6 +29,12 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      # Scans the installed environment (runtime + dev). Accepted risks: add
+      # `--ignore-vuln <ID>` here with a comment linking the advisory.
+      - name: Dependency vulnerability audit
+        if: matrix.python-version == '3.13'
+        run: pip install pip-audit && pip-audit
+
       - name: Ruff lint check
         run: ruff check .
 
