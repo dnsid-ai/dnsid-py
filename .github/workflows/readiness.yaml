@@ -1,0 +1,19 @@
+name: Release readiness
+on:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # weekly drift check
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+jobs:
+  readiness:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    uses: dnsid-ai/dnsid-sdk-compliance/.github/workflows/sdk-release-readiness.yaml@main
+    secrets: inherit # pragma: allowlist secret
+    with:
+      sdk: py
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      pr-number: ${{ github.event.pull_request.number }}
