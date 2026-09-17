@@ -24,7 +24,12 @@ from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from ._verification_budget import remaining_seconds, verification_operation, wait_for_verification
+from ._verification_budget import (
+    remaining_seconds,
+    run_concurrently,
+    verification_operation,
+    wait_for_verification,
+)
 
 if TYPE_CHECKING:
     import httpcore
@@ -1441,10 +1446,7 @@ class IdentityManager:
         return refreshed
 
     def _verify_domain_uncached(self, domain: str) -> VerifiedDomain:
-        from ._utils import (
-            b64url_decode_strict,
-            parse_ledger_ref,
-        )
+        from ._utils import b64url_decode_strict
 
         dnssec_mode = self._config.verification.dnssec_mode
 
@@ -1543,6 +1545,44 @@ class IdentityManager:
                 "_dnsid record signature invalid",
             )
 
+        # sg is authenticated: record-derived locations (ku, lr, su) may now be
+        # followed. The ku/lifecycle-log branch and the status fetch are
+        # independent, so they run concurrently; the first definitive failure
+        # cancels the sibling and error precedence is fixed (identity > status
+        # > cancellation). Both must succeed before any result is built.
+        (jwks, tls_cert, log_reader, key_bound_at), status = run_concurrently(
+            lambda: self._verify_identity_evidence(domain, record, ek_jwks, signing_key),
+            lambda: self._fetch_active_status(record.su),
+        )
+
+        result = VerifiedDomain(
+            domain=domain,
+            record=record,
+            jwks=jwks,
+            signing_key=signing_key,
+            tls_cert=tls_cert,
+            registry_status=status,
+            verified_at=_now(),
+            dns_ttl=dns_ttl,
+            dns_expires_at=dns_expires_at,
+            key_bound_at=key_bound_at,
+            last_status_check_at=_now(),
+            dnssec_state=dnssec_state,
+            log_reader=log_reader,
+            record_signing_jwks=ek_jwks,
+            record_signing_tls_cert=ek_tls_cert,
+        )
+        self._require_fresh_evidence(result, fresh_dns_lookup=True)
+        if dns_ttl > 0:
+            self._cache.put(domain, result)
+        return result
+
+    def _verify_identity_evidence(
+        self, domain: str, record: DnsIdTxtRecord, ek_jwks: JWKS, signing_key: Any
+    ) -> tuple[JWKS, Any, LogReader, datetime.datetime]:
+        """Post-sg identity branch: ku fetch, two-key separation, lifecycle binding, key age."""
+        from ._utils import parse_ledger_ref
+
         # -- Step 3: Fetch the authenticated runtime key set --------------
         ku_host = _extract_host(record.ku)
         if normalize_fqdn(ku_host) != domain:
@@ -1595,45 +1635,24 @@ class IdentityManager:
                 )
 
         # -- Step 6: Policy flags are enforced per caller by verify_domain --
+        # -- Step 8: Operation-level logchk is caller policy ---------------
+        # VerifyDomain records the flag (via record.policy_flags()) but does
+        # not decide whether the caller's next operation is high-value or
+        # irreversible.  Callers that act on fl=logchk must enforce their own
+        # operation-specific log-inclusion policy using result.log_reader
+        # (e.g. verify_non_revocation) before such operations.
+        return jwks, tls_cert, log_reader, key_bound_at
 
-        # -- Step 7: Check status endpoint --------------------------------
-        status = self._fetch_status(record.su)
+    def _fetch_active_status(self, su: str) -> Any:
+        """Post-sg status branch (Step 7): fetch su and require ACTIVE."""
+        status = self._fetch_status(su)
         if status.state != "ACTIVE":
             raise VerificationError(
                 VerificationCode.STATUS_NOT_ACTIVE,
                 f"identity is not ACTIVE: {status.state}",
                 agent_state=status.state,
             )
-
-        # -- Step 8: Operation-level logchk is caller policy ---------------
-        # VerifyDomain records the flag (via record.policy_flags()) but does
-        # not decide whether the caller's next operation is high-value or
-        # irreversible.  Callers that act on fl=logchk must enforce their own
-        # operation-specific log-inclusion policy using result.log_reader
-        # (e.g. verify_non_revocation) before such
-        # operations.
-
-        result = VerifiedDomain(
-            domain=domain,
-            record=record,
-            jwks=jwks,
-            signing_key=signing_key,
-            tls_cert=tls_cert,
-            registry_status=status,
-            verified_at=_now(),
-            dns_ttl=dns_ttl,
-            dns_expires_at=dns_expires_at,
-            key_bound_at=key_bound_at,
-            last_status_check_at=_now(),
-            dnssec_state=dnssec_state,
-            log_reader=log_reader,
-            record_signing_jwks=ek_jwks,
-            record_signing_tls_cert=ek_tls_cert,
-        )
-        self._require_fresh_evidence(result, fresh_dns_lookup=True)
-        if dns_ttl > 0:
-            self._cache.put(domain, result)
-        return result
+        return status
 
     def _require_fresh_evidence(
         self, result: VerifiedDomain, *, fresh_dns_lookup: bool = False

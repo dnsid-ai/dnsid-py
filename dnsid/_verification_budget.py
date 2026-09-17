@@ -4,11 +4,12 @@ Injected blocking dependencies must honor ``remaining_seconds()`` and check
 cancellation between reads; Python cannot forcibly interrupt arbitrary callbacks.
 """
 
+import contextvars
 import math
 import threading
 import time
 from collections.abc import Callable, Iterator
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
@@ -24,6 +25,22 @@ _budget: ContextVar[tuple[float, tuple[threading.Event, ...]] | None] = ContextV
 )
 P = ParamSpec("P")
 T = TypeVar("T")
+U = TypeVar("U")
+
+
+class BudgetExhausted(VerificationError):
+    """The invocation deadline passed or a sibling cancelled this work.
+
+    Never a definitive verification result; concurrent branches use it to
+    tell "cancelled because my sibling failed" apart from a real failure.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            VerificationCode.RECORD_INVALID,
+            "verification deadline exceeded or cancelled",
+            transient=True,
+        )
 
 
 def remaining_seconds(maximum: float = 30.0) -> float:
@@ -41,11 +58,7 @@ def remaining_seconds(maximum: float = 30.0) -> float:
     deadline, cancelled = current
     remaining = deadline - time.monotonic()
     if remaining <= 0 or any(event.is_set() for event in cancelled):
-        raise VerificationError(
-            VerificationCode.RECORD_INVALID,
-            "verification deadline exceeded or cancelled",
-            transient=True,
-        )
+        raise BudgetExhausted()
     return min(maximum, remaining)
 
 
@@ -84,6 +97,50 @@ def wait_for_verification(future: Future[T]) -> T:
         except TimeoutError:
             if future.done():
                 raise
+
+
+def run_concurrently(primary: Callable[[], T], secondary: Callable[[], U]) -> tuple[T, U]:
+    """Run two independent verification branches under the caller's budget.
+
+    ``secondary`` runs on a helper thread with a copy of the caller's context so
+    it inherits, and cannot extend, the invocation deadline. The first
+    definitive failure cancels the sibling through the shared budget. Error
+    precedence is fixed so callers see the same code regardless of which branch
+    settled first: primary failure, then secondary failure, then cancellation.
+
+    A cancelled sibling that is blocked inside a network call is abandoned to
+    finish on its own bounded timeout; Python cannot interrupt it.
+    """
+    cancel = threading.Event()
+    context = contextvars.copy_context()
+
+    def guarded_secondary() -> U:
+        try:
+            with verification_budget(cancelled=cancel):
+                return secondary()
+        except BaseException:
+            cancel.set()
+            raise
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    future: Future[U] = pool.submit(context.run, guarded_secondary)
+    pool.shutdown(wait=False)
+    try:
+        with verification_budget(cancelled=cancel):
+            primary_result = primary()
+    except BudgetExhausted:
+        # Only the secondary can have set the flag so far. It does so before
+        # re-raising, so its future settles momentarily.
+        if cancel.is_set():
+            secondary_error = future.exception()
+            if secondary_error is not None and not isinstance(secondary_error, BudgetExhausted):
+                raise secondary_error
+        cancel.set()
+        raise
+    except BaseException:
+        cancel.set()
+        raise
+    return primary_result, wait_for_verification(future)
 
 
 def bounded_http_timeout(timeout: float | httpx.Timeout | None = None) -> httpx.Timeout:
