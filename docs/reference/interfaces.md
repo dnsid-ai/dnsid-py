@@ -464,6 +464,10 @@ as a configured HTTP client, transport, session, or other idiomatic abstraction.
 Injected via IdentityManagerDependencies.https_fetcher.  When omitted,
 IdentityManager uses a default implementation backed by TransportConfig.
 
+Implementations MUST be safe for concurrent use: after the record
+signature is authenticated, verify_domain fetches the status endpoint on
+a helper thread while the runtime JWKS and lifecycle-log work proceed.
+
 The built-in fetcher enforces strict HTTPS and rejects su/JWKS hosts that
 resolve to non-public addresses unless the hostname matches an exact or
 leading-dot suffix entry in TransportConfig.private_address_hosts. A blocked
