@@ -41,11 +41,33 @@ jobs:
       - name: Regenerate reference
         run: python scripts/gen_docs.py
 
+      # Commit through the GraphQL API instead of `git commit`: commits created
+      # by createCommitOnBranch are signed by GitHub's web-flow key, so the bot
+      # commit is Verified and satisfies signed-commit branch protection. A
+      # GITHUB_TOKEN commit still does not re-trigger this workflow.
       - name: Commit and push if changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          git diff --quiet docs/reference/ && { echo "reference is current"; exit 0; }
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/reference/
-          git commit -m "docs: regenerate reference"
-          git push
+          git add -A docs/reference/
+          if git diff --cached --quiet; then
+            echo "reference is current"
+            exit 0
+          fi
+          git diff --cached --name-only --diff-filter=AM -z \
+            | while IFS= read -r -d '' f; do jq -n --arg p "$f" --arg c "$(base64 -w0 < "$f")" '{path: $p, contents: $c}'; done \
+            | jq -s . > /tmp/additions.json
+          git diff --cached --name-only --diff-filter=D -z \
+            | jq -Rs 'split("\u0000") | map(select(length > 0) | {path: .})' > /tmp/deletions.json
+          jq -n --arg repo "$GITHUB_REPOSITORY" --arg branch "$BRANCH" --arg head "$(git rev-parse HEAD)" \
+            --slurpfile additions /tmp/additions.json --slurpfile deletions /tmp/deletions.json '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: { input: {
+                branch: { repositoryNameWithOwner: $repo, branchName: $branch },
+                expectedHeadOid: $head,
+                message: { headline: "docs: regenerate reference" },
+                fileChanges: { additions: $additions[0], deletions: $deletions[0] }
+              } }
+            }' > /tmp/commit.json
+          gh api graphql --input /tmp/commit.json --jq '.data.createCommitOnBranch.commit.oid'
