@@ -393,9 +393,11 @@ from dnsid import DEFAULT_REGISTRY_URL
 
 *Type:* `str`
 
-*Value:* `'https://api.dnsid.ai'`
+*Value:* `'http://127.0.0.1:7755'`
 
-Default DNSid registry base URL, used when none is configured (matches the CLI).
+Default DNSid registry base URL: the local registry from ``dnsid local up``.
+
+Hosted use requires an explicit URL (``DNSID_REGISTRY_URL``).
 
 ## `publish_allowed_version`
 

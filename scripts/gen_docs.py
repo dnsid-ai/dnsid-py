@@ -159,6 +159,7 @@ PAGES: list[dict] = [
             "CliConfigResult",
             "config_from_environment",
             "identity_manager_from_environment",
+            "registry_client_from_environment",
             "EnvironmentConfigResult",
             "EnvironmentFieldName",
             "dnsid_environment_variables",
