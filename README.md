@@ -534,7 +534,7 @@ Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/
 |---|---|---|
 | [examples/local-key-provider/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/local-key-provider) | File-backed local key provider demo | None — fully self-contained |
 | [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Testnet environment |
-| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | None — uses public `sandbox.dnsid.dev` |
+| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | None — uses DNSid's public test log |
 | [examples/webbotauth/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/webbotauth) | Sign and verify bot HTTP requests with `WebBotAuthProfile` | None — fully self-contained |
 | [examples/oidc/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/oidc) | Mint and inspect a DNSid OIDC token with `OIDCProfile` | OIDC token endpoint (defaults to `https://oidc.dnsid.ai`) |
 
@@ -559,7 +559,7 @@ step-by-step instructions.
 
 ### Validate-domain example (no testnet needed)
 
-Verifies a domain's DNSid identity against the public sandbox:
+Verifies a domain's DNSid identity against DNSid's public test log:
 
 ```bash
 source .venv/bin/activate

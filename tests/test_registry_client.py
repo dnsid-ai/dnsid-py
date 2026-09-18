@@ -293,9 +293,16 @@ class TestRegisterAgent:
         assert isinstance(result, AgentRegistration)
         assert result.oidc_issuer_url == "https://issuer.example.com/live"
 
-    def test_self_managed_requires_explicit_non_sandbox_environment(self):
-        with pytest.raises(ArgumentError, match="managed registrations"):
+    def test_omitted_environment_defaults_to_self_managed_production(self):
+        ctx, captured = _post_capturing(_REGISTER_RESPONSE)
+        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
             _make_client().register_agent(AgentRegistrationInput(domain=_DOMAIN))
+        assert captured[0]["body"]["domain"] == _DOMAIN
+        assert captured[0]["body"]["environment"] == "production"
+
+    def test_omitted_environment_without_domain_is_rejected(self):
+        with pytest.raises(ArgumentError, match="requires a domain"):
+            _make_client().register_agent(AgentRegistrationInput())
 
     def test_self_managed_sends_explicit_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
@@ -306,14 +313,14 @@ class TestRegisterAgent:
         assert captured[0]["body"]["domain"] == _DOMAIN
         assert captured[0]["body"]["environment"] == "production"
 
-    def test_omitted_environment_defaults_to_managed_sandbox(self):
+    def test_explicit_sandbox_environment_is_managed(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
         with ctx, patch.object(
             RegistryClient,
             "get_registration",
             return_value=_registration(authority="registry"),
         ):
-            _make_client().register_agent(AgentRegistrationInput())
+            _make_client().register_agent(AgentRegistrationInput(environment="sandbox"))
 
         assert "domain" not in captured[0]["body"]
         assert captured[0]["body"]["environment"] == "sandbox"
@@ -329,7 +336,7 @@ class TestRegisterAgent:
             )
         assert "domain" not in captured[0]["body"]
         assert captured[0]["body"]["managed"] is True
-        assert captured[0]["body"]["environment"] == "sandbox"
+        assert captured[0]["body"]["environment"] == "production"
 
     def test_managed_rejects_client_supplied_domain(self):
         key = _live_key()
@@ -363,7 +370,7 @@ class TestRegisterAgent:
             )
         assert captured[0]["body"]["environment"] == "production"
 
-    def test_zone_managed_defaults_to_sandbox_environment(self):
+    def test_zone_managed_defaults_to_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
         with ctx, patch.object(
             RegistryClient,
@@ -373,7 +380,7 @@ class TestRegisterAgent:
             _make_client().register_agent(AgentRegistrationInput(zone_id="zone-1"))
 
         assert captured[0]["body"]["zone_id"] == "zone-1"
-        assert captured[0]["body"]["environment"] == "sandbox"
+        assert captured[0]["body"]["environment"] == "production"
 
     def test_zone_managed_accepts_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
