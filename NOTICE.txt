@@ -1,6 +1,6 @@
 THIRD-PARTY SOFTWARE NOTICES
 dnsid-py
-Copyright 2026 Identity Digital Inc.
+Copyright 2026 Known Systems AI, Inc.
 
 This SDK includes, in the form it is distributed to users, the
 third-party open-source software components listed below. Each

@@ -1,6 +1,6 @@
 # **Security Policy**
 
-Identity Digital Innovation Labs takes the security of this project seriously. This document explains how to report vulnerabilities and what you can expect from us in return.
+Known Systems AI, Inc. takes the security of this project seriously. This document explains how to report vulnerabilities and what you can expect from us in return.
 
 ## **Supported Versions**
 
@@ -34,4 +34,4 @@ We will not pursue or support legal action against researchers who:
 - Avoid privacy violations, service disruption, and destruction/exfiltration of data beyond what is needed to demonstrate the issue, and  
 - Give us a reasonable time to respond before disclosing.
 
-*This policy applies to this open-source project only. It does not create any obligation with respect to Identity Digital's commercial products or services.*
+*This policy applies to this open-source project only. It does not create any obligation with respect to Known Systems' commercial products or services.*
