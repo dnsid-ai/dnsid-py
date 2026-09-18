@@ -133,10 +133,10 @@ Register a non-Live agent with the registry.
 
 ``POST /api/v1/agent``
 
-An omitted environment defaults to ``sandbox``. Sandbox registrations,
-explicit ``managed=True``, and registrations with ``zone_id`` are
-effectively registry-managed and must omit ``domain``. A self-managed
-registration requires a domain and ``environment="production"``.
+An omitted environment defaults to ``production``. Explicit
+``managed=True``, registrations with ``zone_id``, and an explicit
+``environment="sandbox"`` are registry-managed and must omit
+``domain``. A self-managed registration requires a domain.
 Use `register_live_agent` for managed Live registration.
 
 ### `register_live_agent`
