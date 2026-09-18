@@ -116,8 +116,8 @@ Initialize the client with a registry base URL and optional credential.
 
 **Arguments:**
 
-- `base_url` (`str | None`): HTTPS registry base URL, or HTTP loopback URL for local testnets; defaults to ``DEFAULT_REGISTRY_URL``. A trailing slash is stripped. — default `None`
-- `api_key` (`str | None`): Owner session or organization API-key credential sent as an ``Authorization: Bearer`` header. Whitespace-only values are treated as absent; without one only legacy status reads are available. — default `None`
+- `base_url` (`str | None`): HTTPS registry base URL, or HTTP loopback URL for the local registry; defaults to ``DEFAULT_REGISTRY_URL`` (the local registry from ``dnsid local up``). Hosted use requires an explicit URL; see `dnsid.registry_client_options_from_environment`. A trailing slash is stripped. — default `None`
+- `api_key` (`str | None`): Owner session or organization API-key credential sent as an ``Authorization: Bearer`` header. Whitespace-only values are treated as absent; without one only legacy status reads are available. Constructors never read the environment themselves. — default `None`
 
 **Raises:**
 
@@ -133,10 +133,11 @@ Register a non-Live agent with the registry.
 
 ``POST /api/v1/agent``
 
-An omitted environment defaults to ``sandbox``. Sandbox registrations,
-explicit ``managed=True``, and registrations with ``zone_id`` are
-effectively registry-managed and must omit ``domain``. A self-managed
-registration requires a domain and ``environment="production"``.
+Registration is production-only; ``environment`` may be omitted or
+``"production"``. Registrations with ``zone_id`` are registry-managed
+and must omit ``domain``; ``managed=True`` without ``zone_id`` is
+rejected. A self-managed registration requires a domain. Sandbox
+registration lives in the console and CLI, not the SDK.
 Use `register_live_agent` for managed Live registration.
 
 ### `register_live_agent`

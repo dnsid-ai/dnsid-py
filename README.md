@@ -427,23 +427,50 @@ and [examples/a2a/startup.py](https://github.com/dnsid-ai/dnsid-py/blob/main/exa
 
 ## Registry client (authenticated)
 
-`RegistryClient` mutation calls require owner credentials: an organization
-session or API key, passed as `api_key` and sent as an `Authorization: Bearer`
-header. An agent bearer token is not sufficient. This also applies to
-`prepare_key_rotation()` and the other transparency-log preparation operations:
+**Local (default).** `RegistryClient()` talks to the local registry from
+`dnsid local up` at `http://127.0.0.1:7755` unless told otherwise:
+
+```sh
+dnsid local up                                # local registry, DNS, and CA in Docker
+dnsid local run my-agent -- python app.py     # registers my-agent if needed, runs with DNSID_* set
+```
 
 ```python
-from dnsid import RegistryClient, AgentRegistrationInput
+from dnsid import AgentRegistrationInput, registry_client_from_environment
 
-client = RegistryClient("https://api.dnsid.ai", api_key="<session-token>")
-client.register_agent(
-    AgentRegistrationInput(domain="agent.example.com", environment="production")
-)
+# DNSID_REGISTRY_URL and DNSID_API_KEY when set; otherwise the local registry, no credential.
+client = registry_client_from_environment()
+client.register_agent(AgentRegistrationInput(domain="agent.example.com"))
 client.verify_agent("agent.example.com")
+```
 
+To export the same variables into your shell instead of wrapping one command:
+`eval "$(dnsid local env my-agent)"`. If nothing is listening, calls fail with
+`no registry at 127.0.0.1:7755; run `dnsid local up` or set DNSID_REGISTRY_URL`.
+
+**Hosted.** Set `DNSID_REGISTRY_URL` and `DNSID_API_KEY` from the console; the
+same code then talks to the hosted registry. Or pass them explicitly:
+
+```python
+from dnsid import RegistryClient
+
+client = RegistryClient("https://api.dnsid.ai", api_key="<console-issued key>")
 # Legacy status reads need no credential:
 RegistryClient("https://api.dnsid.ai").get_agent_status("agent.example.com")
 ```
+
+`base_url` must be HTTPS, or HTTP on loopback. Constructors never read the
+environment; only `registry_client_from_environment()` does.
+
+Registration is production-only: `AgentRegistrationInput(domain=...)` for a
+domain you control, `zone_id=...` for a delegated zone, `register_live_agent()`
+for Live. `managed=True` without `zone_id` is rejected. Sandbox registration
+lives in the console and CLI; use the SDK for everything after registration.
+
+Mutation calls require owner credentials: an organization session or API key,
+passed as `api_key` and sent as an `Authorization: Bearer` header. An agent
+bearer token is not sufficient. This also applies to `prepare_key_rotation()`
+and the other transparency-log preparation operations.
 
 Self-managed agents prove key possession through a challenge handshake: after
 `verify_agent()`, the status document exposes a single-use nonce
@@ -524,7 +551,7 @@ or environment variables; use `config_from_environment` /
 
 | Field | Default | Description |
 |---|---|---|
-| `registry_url` | `"https://api.dnsid.ai"` | DNSid registry base URL |
+| `registry_url` | `"http://127.0.0.1:7755"` | DNSid registry base URL; the local registry by default, set `DNSID_REGISTRY_URL` for hosted |
 
 ## Examples
 
@@ -534,7 +561,7 @@ Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/
 |---|---|---|
 | [examples/local-key-provider/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/local-key-provider) | File-backed local key provider demo | None — fully self-contained |
 | [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Testnet environment |
-| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | None — uses public `sandbox.dnsid.dev` |
+| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | None — uses DNSid's public test log |
 | [examples/webbotauth/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/webbotauth) | Sign and verify bot HTTP requests with `WebBotAuthProfile` | None — fully self-contained |
 | [examples/oidc/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/oidc) | Mint and inspect a DNSid OIDC token with `OIDCProfile` | OIDC token endpoint (defaults to `https://oidc.dnsid.ai`) |
 
@@ -559,7 +586,7 @@ step-by-step instructions.
 
 ### Validate-domain example (no testnet needed)
 
-Verifies a domain's DNSid identity against the public sandbox:
+Verifies a domain's DNSid identity against DNSid's public test log:
 
 ```bash
 source .venv/bin/activate

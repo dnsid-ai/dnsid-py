@@ -6,7 +6,7 @@ from dnsid.c2sp_tlog import (
     create_c2sp_tlog_verification_registry,
 )
 
-# Trusted configuration for the public log used by the DNSid sandbox. Production
+# Trusted configuration for DNSid's public test log. Production
 # applications should select their own independently trusted policy.
 POLICY_URL = "https://log.dnsid.dev/dnsid-policy"
 

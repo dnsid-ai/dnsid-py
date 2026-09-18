@@ -19,6 +19,7 @@ from .models import (
 
 if TYPE_CHECKING:
     from .manager import IdentityManager, IdentityManagerDependencies
+    from .registry_client import RegistryClient
 
 # ---------------------------------------------------------------------------
 # Env-var name map  (field name → DNSID_* variable name)
@@ -29,6 +30,7 @@ dnsid_environment_variables: dict[str, str] = {
     "domain": "DNSID_DOMAIN",
     "governance_id": "DNSID_GOVERNANCE_ID",
     "registry_url": "DNSID_REGISTRY_URL",
+    "api_key": "DNSID_API_KEY",
     "status_url": "DNSID_STATUS_URL",
     "log_ref": "DNSID_LOG_REF",
     "ek_url": "DNSID_EK_URL",
@@ -57,6 +59,9 @@ class EnvironmentConfigResult:
 
     config: DnsidConfig
     registry_config: RegistryConfig
+    #: Owner API key for registry workflows (``DNSID_API_KEY``). Kept out of
+    #: ``registry_config`` so config objects stay safe to log.
+    api_key: str | None = None
     public_url: str | None = None
     key_store_path: str | None = None
     agent_name: str | None = None
@@ -128,12 +133,14 @@ def config_from_environment(
     * ``DNSID_DOMAIN`` — agent FQDN
     * ``DNSID_GOVERNANCE_ID`` — governance domain or URI
     * ``DNSID_STATUS_URL`` — direct agent status URL (if omitted, derived from
-      ``DNSID_REGISTRY_URL`` which itself defaults to ``https://api.dnsid.ai``)
+      ``DNSID_REGISTRY_URL`` which itself defaults to the local registry,
+      ``http://127.0.0.1:7755``)
 
     Optional variables:
 
     * ``DNSID_LOG_REF`` — log reference (default: ``"noop:0"``)
-    * ``DNSID_REGISTRY_URL`` — registry base URL
+    * ``DNSID_REGISTRY_URL`` — registry base URL (hosted use sets this)
+    * ``DNSID_API_KEY`` — owner API key for registry workflows
     * ``DNSID_KU_URL`` — explicit JWKS URL override
     * ``DNSID_DNS_SERVER`` — custom DNS server in ``host:port`` form
     * ``DNSID_CA_BUNDLE`` — path to a CA bundle for TLS trust augmentation
@@ -230,10 +237,31 @@ def config_from_environment(
     return EnvironmentConfigResult(
         config=config,
         registry_config=registry_config,
+        api_key=env.get("DNSID_API_KEY", "").strip() or None,
         public_url=env.get("DNSID_PUBLIC_URL", "").strip() or None,
         key_store_path=env.get("DNSID_KEY_STORE", "").strip() or None,
         agent_name=env.get("DNSID_AGENT_NAME", "").strip() or None,
         agent_port=agent_port,
+    )
+
+
+def registry_client_from_environment(
+    env: dict[str, str] | None = None,
+) -> RegistryClient:
+    """Build a :class:`~dnsid.RegistryClient` from ``DNSID_REGISTRY_URL`` and ``DNSID_API_KEY``.
+
+    These are the variables ``dnsid local env`` exports. Unset means the local
+    registry with no credential. Unlike :func:`config_from_environment` this
+    needs no identity variables, so it works before an agent exists. It is the
+    only place the registry client reads the environment.
+    """
+    from .registry_client import RegistryClient
+
+    if env is None:
+        env = dict(os.environ)
+    return RegistryClient(
+        env.get("DNSID_REGISTRY_URL", "").strip() or None,
+        api_key=env.get("DNSID_API_KEY", "").strip() or None,
     )
 
 

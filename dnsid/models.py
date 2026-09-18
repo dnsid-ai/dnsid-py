@@ -186,8 +186,10 @@ class DnsidConfig:
     transport: TransportConfig = field(default_factory=TransportConfig)
 
 
-DEFAULT_REGISTRY_URL: str = "https://api.dnsid.ai"
-"""Default DNSid registry base URL, used when none is configured (matches the CLI)."""
+DEFAULT_REGISTRY_URL: str = "http://127.0.0.1:7755"
+"""Default DNSid registry base URL: the local registry from ``dnsid local up``.
+
+Hosted use requires an explicit URL (``DNSID_REGISTRY_URL``)."""
 
 
 @dataclass

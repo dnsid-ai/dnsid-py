@@ -7,6 +7,7 @@ import json
 from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from dnsid import (
@@ -246,7 +247,7 @@ class TestRegisterAgent:
         with patch.object(client, "_post") as post:
             with pytest.raises(ArgumentError, match="private JWK"):
                 client.register_agent(
-                    AgentRegistrationInput(managed=True, public_key_jwk=key)
+                    AgentRegistrationInput(zone_id="zone-1", public_key_jwk=key)
                 )
         post.assert_not_called()
 
@@ -293,9 +294,16 @@ class TestRegisterAgent:
         assert isinstance(result, AgentRegistration)
         assert result.oidc_issuer_url == "https://issuer.example.com/live"
 
-    def test_self_managed_requires_explicit_non_sandbox_environment(self):
-        with pytest.raises(ArgumentError, match="managed registrations"):
+    def test_omitted_environment_defaults_to_self_managed_production(self):
+        ctx, captured = _post_capturing(_REGISTER_RESPONSE)
+        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
             _make_client().register_agent(AgentRegistrationInput(domain=_DOMAIN))
+        assert captured[0]["body"]["domain"] == _DOMAIN
+        assert captured[0]["body"]["environment"] == "production"
+
+    def test_omitted_environment_without_domain_is_rejected(self):
+        with pytest.raises(ArgumentError, match="requires a domain"):
+            _make_client().register_agent(AgentRegistrationInput())
 
     def test_self_managed_sends_explicit_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
@@ -306,17 +314,15 @@ class TestRegisterAgent:
         assert captured[0]["body"]["domain"] == _DOMAIN
         assert captured[0]["body"]["environment"] == "production"
 
-    def test_omitted_environment_defaults_to_managed_sandbox(self):
-        ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(
-            RegistryClient,
-            "get_registration",
-            return_value=_registration(authority="registry"),
-        ):
-            _make_client().register_agent(AgentRegistrationInput())
+    def test_sandbox_environment_is_rejected(self):
+        with pytest.raises(ArgumentError, match='must be "production"'):
+            _make_client().register_agent(AgentRegistrationInput(environment="sandbox"))
 
-        assert "domain" not in captured[0]["body"]
-        assert captured[0]["body"]["environment"] == "sandbox"
+    def test_managed_without_zone_is_rejected(self):
+        with pytest.raises(ArgumentError, match="requires zone_id"):
+            _make_client().register_agent(
+                AgentRegistrationInput(managed=True, public_key_jwk=_live_key())
+            )
 
     def test_server_assigned_managed_omits_domain(self):
         key = _live_key()
@@ -325,45 +331,29 @@ class TestRegisterAgent:
             RegistryClient, "get_registration", return_value=_registration(authority="registry")
         ):
             _make_client().register_agent(
-                AgentRegistrationInput(managed=True, public_key_jwk=key)
+                AgentRegistrationInput(managed=True, zone_id="zone-1", public_key_jwk=key)
             )
         assert "domain" not in captured[0]["body"]
         assert captured[0]["body"]["managed"] is True
-        assert captured[0]["body"]["environment"] == "sandbox"
+        assert captured[0]["body"]["zone_id"] == "zone-1"
+        assert captured[0]["body"]["environment"] == "production"
 
     def test_managed_rejects_client_supplied_domain(self):
         key = _live_key()
-        with pytest.raises(ArgumentError, match="domain must not be supplied"):
+        with pytest.raises(ArgumentError, match="cannot both be supplied"):
             _make_client().register_agent(
                 AgentRegistrationInput(
-                    domain=_DOMAIN, managed=True, public_key_jwk=key
+                    domain=_DOMAIN, managed=True, zone_id="zone-1", public_key_jwk=key
                 )
             )
 
     def test_self_managed_rejects_sandbox_environment(self):
-        with pytest.raises(ArgumentError, match="managed registrations"):
+        with pytest.raises(ArgumentError, match='must be "production"'):
             _make_client().register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="sandbox")
             )
 
-    def test_explicit_managed_accepts_non_sandbox_environment(self):
-        key = _live_key()
-        ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(
-            RegistryClient,
-            "get_registration",
-            return_value=_registration(authority="registry"),
-        ):
-            _make_client().register_agent(
-                AgentRegistrationInput(
-                    managed=True,
-                    public_key_jwk=key,
-                    environment="production",
-                )
-            )
-        assert captured[0]["body"]["environment"] == "production"
-
-    def test_zone_managed_defaults_to_sandbox_environment(self):
+    def test_zone_managed_defaults_to_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
         with ctx, patch.object(
             RegistryClient,
@@ -373,7 +363,7 @@ class TestRegisterAgent:
             _make_client().register_agent(AgentRegistrationInput(zone_id="zone-1"))
 
         assert captured[0]["body"]["zone_id"] == "zone-1"
-        assert captured[0]["body"]["environment"] == "sandbox"
+        assert captured[0]["body"]["environment"] == "production"
 
     def test_zone_managed_accepts_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
@@ -1076,11 +1066,12 @@ class TestAsyncWaitForStatus:
 
 
 class TestRegistryClientDefaultBaseUrl:
-    """RegistryClient defaults base_url to https://api.dnsid.ai."""
+    """RegistryClient defaults base_url to the local registry."""
 
-    def test_defaults_to_api_dnsid_ai(self):
+    def test_defaults_to_local_registry(self):
         client = RegistryClient()
-        assert client._base_url == "https://api.dnsid.ai"
+        assert client._base_url == "http://127.0.0.1:7755"
+        assert client._api_key is None
 
     def test_accepts_explicit_base_url(self):
         client = RegistryClient("https://custom.example.com/")
@@ -1093,7 +1084,27 @@ class TestRegistryClientDefaultBaseUrl:
 
     def test_empty_string_falls_back_to_default(self):
         client = RegistryClient("")
-        assert client._base_url == "https://api.dnsid.ai"
+        assert client._base_url == "http://127.0.0.1:7755"
+
+    def test_connection_refused_on_loopback_hints_at_local_registry(self):
+        import httpx
+
+        client = RegistryClient(api_key=_FAKE_API_KEY)
+        with patch("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
+            with pytest.raises(
+                Exception,
+                match=r"no registry at 127.0.0.1:7755; run `dnsid local up` or set DNSID_REGISTRY_URL",
+            ) as exc_info:
+                client.get_agent_status(_DOMAIN)
+        assert _FAKE_API_KEY not in str(exc_info.value)
+
+    def test_connection_refused_on_hosted_registry_keeps_transport_error(self):
+        import httpx
+
+        client = RegistryClient("https://registry.example.com")
+        with patch("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
+            with pytest.raises(Exception, match="Connection refused"):
+                client.get_agent_status(_DOMAIN)
 
     @pytest.mark.parametrize(
         "base_url",
@@ -1238,6 +1249,22 @@ class TestAuthentication:
             getattr(client, reader)(_DOMAIN)
 
         assert captured["headers"]["Authorization"] == f"Bearer {_FAKE_API_KEY}"
+
+    @pytest.mark.parametrize("call", _MUTATION_CALLS)
+    def test_mutation_without_credentials_allowed_on_loopback(self, call):
+        # The local registry ignores Authorization, so the default (loopback)
+        # client must reach the transport instead of failing the credential gate.
+        client = RegistryClient()
+        reached = []
+
+        def fake(*args, **kwargs):
+            reached.append(kwargs.get("headers", {}))
+            raise httpx.ConnectError("refused")
+
+        with patch("httpx.request", fake), patch("httpx.post", fake), patch("httpx.get", fake):
+            with pytest.raises(Exception, match="no registry at 127.0.0.1:7755"):
+                call(client)
+        assert reached and "Authorization" not in reached[0]
 
     def test_credential_not_leaked_in_repr(self):
         client = RegistryClient("https://registry.example.com", api_key=_FAKE_API_KEY)

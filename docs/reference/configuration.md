@@ -236,12 +236,14 @@ Required variables:
 * ``DNSID_DOMAIN`` — agent FQDN
 * ``DNSID_GOVERNANCE_ID`` — governance domain or URI
 * ``DNSID_STATUS_URL`` — direct agent status URL (if omitted, derived from
-  ``DNSID_REGISTRY_URL`` which itself defaults to ``https://api.dnsid.ai``)
+  ``DNSID_REGISTRY_URL`` which itself defaults to the local registry,
+  ``http://127.0.0.1:7755``)
 
 Optional variables:
 
 * ``DNSID_LOG_REF`` — log reference (default: ``"noop:0"``)
-* ``DNSID_REGISTRY_URL`` — registry base URL
+* ``DNSID_REGISTRY_URL`` — registry base URL (hosted use sets this)
+* ``DNSID_API_KEY`` — owner API key for registry workflows
 * ``DNSID_KU_URL`` — explicit JWKS URL override
 * ``DNSID_DNS_SERVER`` — custom DNS server in ``host:port`` form
 * ``DNSID_CA_BUNDLE`` — path to a CA bundle for TLS trust augmentation
@@ -292,6 +294,23 @@ dependency; pass a ``LogRegistry`` through *deps*.
 
 - `IdentityManager` — A fully initialized ``IdentityManager``.
 
+## `registry_client_from_environment`
+
+```python
+from dnsid import registry_client_from_environment
+```
+
+```python
+registry_client_from_environment(env: dict[str, str] | None = None) -> RegistryClient
+```
+
+Build a `RegistryClient` from ``DNSID_REGISTRY_URL`` and ``DNSID_API_KEY``.
+
+These are the variables ``dnsid local env`` exports. Unset means the local
+registry with no credential. Unlike `config_from_environment` this
+needs no identity variables, so it works before an agent exists. It is the
+only place the registry client reads the environment.
+
 ## `EnvironmentConfigResult`
 
 ```python
@@ -316,7 +335,7 @@ from dnsid import dnsid_environment_variables
 
 *Type:* `dict[str, str]`
 
-*Value:* `{'domain': 'DNSID_DOMAIN', 'governance_id': 'DNSID_GOVERNANCE_ID', 'registry_url': 'DNSID_REGISTRY_URL', 'status_url': 'DNSID_STATUS_URL', 'log_ref': 'DNSID_LOG_REF', 'ek_url': 'DNSID_EK_URL', 'ku_url': 'DNSID_KU_URL', 'publish_profile': 'DNSID_PUBLISH_PROFILE', 'dns_server': 'DNSID_DNS_SERVER', 'ca_bundle_path': 'DNSID_CA_BUNDLE', 'dnssec_mode': 'DNSID_DNSSEC_MODE', 'public_url': 'DNSID_PUBLIC_URL', 'key_store_path': 'DNSID_KEY_STORE', 'agent_port': 'DNSID_AGENT_PORT', 'agent_name': 'DNSID_AGENT_NAME'}`
+*Value:* `{'domain': 'DNSID_DOMAIN', 'governance_id': 'DNSID_GOVERNANCE_ID', 'registry_url': 'DNSID_REGISTRY_URL', 'api_key': 'DNSID_API_KEY', 'status_url': 'DNSID_STATUS_URL', 'log_ref': 'DNSID_LOG_REF', 'ek_url': 'DNSID_EK_URL', 'ku_url': 'DNSID_KU_URL', 'publish_profile': 'DNSID_PUBLISH_PROFILE', 'dns_server': 'DNSID_DNS_SERVER', 'ca_bundle_path': 'DNSID_CA_BUNDLE', 'dnssec_mode': 'DNSID_DNSSEC_MODE', 'public_url': 'DNSID_PUBLIC_URL', 'key_store_path': 'DNSID_KEY_STORE', 'agent_port': 'DNSID_AGENT_PORT', 'agent_name': 'DNSID_AGENT_NAME'}`
 
 ## `key_store_path_from_environment`
 

@@ -9,6 +9,7 @@ from dnsid.environment import (
     config_from_environment,
     identity_manager_from_environment,
     key_store_path_from_environment,
+    registry_client_from_environment,
 )
 from dnsid.environment import (
     dnsid_environment_variables as env_vars,
@@ -59,17 +60,29 @@ class TestConfigFromEnvironment:
         result = config_from_environment(env)
         assert result.config.identity.status_url == "https://status.example.com/alice"
 
-    def test_defaults_registry_url_to_api_dnsid_ai(self):
-        """When DNSID_REGISTRY_URL is not set, the default https://api.dnsid.ai is used."""
+    def test_defaults_registry_url_to_local_registry(self):
+        """When DNSID_REGISTRY_URL is not set, the local registry is used."""
         env = {
             env_vars["domain"]: "alice.example.com",
             env_vars["governance_id"]: "example.com",
         }
         result = config_from_environment(env)
-        assert result.registry_config.registry_url == "https://api.dnsid.ai"
+        assert result.registry_config.registry_url == "http://127.0.0.1:7755"
         assert result.config.identity.status_url == (
-            "https://api.dnsid.ai/api/v1/agent/alice.example.com/status"
+            "http://127.0.0.1:7755/api/v1/agent/alice.example.com/status"
         )
+        assert result.api_key is None
+
+    def test_exposes_api_key_outside_config(self):
+        env = {
+            env_vars["domain"]: "alice.example.com",
+            env_vars["governance_id"]: "example.com",
+            env_vars["api_key"]: "testnet",
+        }
+        result = config_from_environment(env)
+        assert result.api_key == "testnet"
+        assert "testnet" not in repr(result.config)
+        assert "testnet" not in repr(result.registry_config)
 
     def test_require_raises_when_field_missing(self):
         env = {
@@ -264,3 +277,17 @@ class TestRequiredInt:
             required_int("DNSID_AGENT_PORT", {"DNSID_AGENT_PORT": "0"})
         with pytest.raises(ValueError, match="must be a positive integer"):
             required_int("DNSID_AGENT_PORT", {"DNSID_AGENT_PORT": "-1"})
+
+
+class TestRegistryClientFromEnvironment:
+    def test_defaults_to_local_registry_without_identity_variables(self):
+        client = registry_client_from_environment({})
+        assert client._base_url == "http://127.0.0.1:7755"
+        assert client._api_key is None
+
+    def test_reads_registry_url_and_api_key(self):
+        client = registry_client_from_environment(
+            {"DNSID_REGISTRY_URL": "https://api.dnsid.ai/", "DNSID_API_KEY": "k"}
+        )
+        assert client._base_url == "https://api.dnsid.ai"
+        assert client._api_key == "k"

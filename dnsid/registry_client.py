@@ -48,6 +48,9 @@ def _is_terminal_status(status: str) -> bool:
     return status in ("RETIRED", "REVOKED", "REJECTED", "CANCELLED")
 
 
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
 class RegistryClient(AbstractRegistryClient):
     """Operator-side client for managing the local agent's own registration.
 
@@ -85,12 +88,15 @@ class RegistryClient(AbstractRegistryClient):
         """Initialize the client with a registry base URL and optional credential.
 
         Args:
-            base_url: HTTPS registry base URL, or HTTP loopback URL for local
-                testnets; defaults to ``DEFAULT_REGISTRY_URL``. A trailing slash
-                is stripped.
+            base_url: HTTPS registry base URL, or HTTP loopback URL for the
+                local registry; defaults to ``DEFAULT_REGISTRY_URL`` (the local
+                registry from ``dnsid local up``). Hosted use requires an explicit
+                URL; see :func:`dnsid.registry_client_options_from_environment`.
+                A trailing slash is stripped.
             api_key: Owner session or organization API-key credential sent as
                 an ``Authorization: Bearer`` header. Whitespace-only values are
                 treated as absent; without one only legacy status reads are available.
+                Constructors never read the environment themselves.
 
         Raises:
             ValueError: If *base_url* is not a safe HTTPS or loopback HTTP URL,
@@ -106,11 +112,9 @@ class RegistryClient(AbstractRegistryClient):
             parsed.port
         except ValueError as exc:
             raise ValueError("base_url must be an HTTPS URL") from exc
+        is_loopback = parsed.hostname in _LOOPBACK_HOSTS
         if not parsed.hostname or (
-            parsed.scheme != "https"
-            and not (
-                parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-            )
+            parsed.scheme != "https" and not (parsed.scheme == "http" and is_loopback)
         ):
             raise ValueError("base_url must be HTTPS (or HTTP on loopback)")
         if parsed.username is not None or parsed.password is not None:
@@ -118,6 +122,7 @@ class RegistryClient(AbstractRegistryClient):
         if parsed.query or parsed.fragment:
             raise ValueError("base_url must not include query or fragment")
         self._base_url = resolved.rstrip("/")
+        self._is_loopback = is_loopback
         # ponytail: one Bearer credential covers owner API keys and session tokens;
         # add other schemes only if the registry ever needs them.
         # Strip so whitespace-only keys fail the missing-auth check locally
@@ -152,8 +157,23 @@ class RegistryClient(AbstractRegistryClient):
             return text.replace(self._api_key, "***")
         return text
 
+    def _transport_detail(self, exc: Exception) -> str:
+        """Describe a transport failure without the credential, with a local hint.
+
+        A refused connection to the loopback default almost always means the
+        local registry is not running, so say so instead of echoing the socket error.
+        """
+        import httpx
+
+        if isinstance(exc, httpx.ConnectError) and self._is_loopback:
+            host = urlsplit(self._base_url).netloc
+            return f"no registry at {host}; run `dnsid local up` or set DNSID_REGISTRY_URL"
+        return self._sanitize(str(exc))
+
     def _require_auth(self, operation: str) -> None:
-        if not self._api_key:
+        # The local registry (``dnsid local up``) ignores Authorization, so a
+        # loopback client needs no credential; the hosted registry does.
+        if not self._api_key and not self._is_loopback:
             from .exceptions import ArgumentError
 
             raise ArgumentError(
@@ -169,21 +189,24 @@ class RegistryClient(AbstractRegistryClient):
 
         ``POST /api/v1/agent``
 
-        An omitted environment defaults to ``sandbox``. Sandbox registrations,
-        explicit ``managed=True``, and registrations with ``zone_id`` are
-        effectively registry-managed and must omit ``domain``. A self-managed
-        registration requires a domain and ``environment="production"``.
+        Registration is production-only; ``environment`` may be omitted or
+        ``"production"``. Registrations with ``zone_id`` are registry-managed
+        and must omit ``domain``; ``managed=True`` without ``zone_id`` is
+        rejected. A self-managed registration requires a domain. Sandbox
+        registration lives in the console and CLI, not the SDK.
         Use :meth:`register_live_agent` for managed Live registration.
         """
         self._require_auth("register_agent")
         from .exceptions import ArgumentError
 
-        environment = input.environment or "sandbox"
-        if environment not in {"sandbox", "production"}:
-            raise ArgumentError('environment must be "sandbox" or "production"')
+        environment = input.environment or "production"
+        if environment != "production":
+            raise ArgumentError('environment must be "production"')
         if input.zone_id and input.domain:
             raise ArgumentError("zone_id and domain cannot both be supplied")
-        effective_managed = input.managed or environment == "sandbox" or bool(input.zone_id)
+        if input.managed and not input.zone_id:
+            raise ArgumentError("managed registration requires zone_id")
+        effective_managed = input.managed or bool(input.zone_id)
         if effective_managed and input.domain:
             raise ArgumentError(
                 "domain must not be supplied for managed registrations; the registry assigns it"
@@ -412,7 +435,7 @@ class RegistryClient(AbstractRegistryClient):
 
             _transport_err = VerificationError(
                 VerificationCode.LOG_ERROR,
-                f"Registry challenge request failed for {domain!r}: {self._sanitize(str(exc))}",
+                f"Registry challenge request failed for {domain!r}: {self._transport_detail(exc)}",
                 transient=True,
             )
         if _transport_err is not None:
@@ -526,7 +549,7 @@ class RegistryClient(AbstractRegistryClient):
 
             _transport_err = VerificationError(
                 VerificationCode.LOG_ERROR,
-                f"Registry status request failed for {domain!r}: {self._sanitize(str(exc))}",
+                f"Registry status request failed for {domain!r}: {self._transport_detail(exc)}",
                 transient=True,
             )
         if _transport_err is not None:
@@ -571,7 +594,7 @@ class RegistryClient(AbstractRegistryClient):
 
             _transport_err = VerificationError(
                 VerificationCode.LOG_ERROR,
-                f"Registry status request failed for {domain!r}: {self._sanitize(str(exc))}",
+                f"Registry status request failed for {domain!r}: {self._transport_detail(exc)}",
                 transient=True,
             )
         if _transport_err is not None:
@@ -621,7 +644,8 @@ class RegistryClient(AbstractRegistryClient):
 
             raise VerificationError(
                 VerificationCode.LOG_ERROR,
-                f"Registry registration request failed for {domain!r}: {self._sanitize(str(exc))}",
+                f"Registry registration request failed for {domain!r}: "
+                f"{self._transport_detail(exc)}",
                 transient=True,
             ) from None
         if resp.status_code == 404:
@@ -761,7 +785,7 @@ class RegistryClient(AbstractRegistryClient):
 
             _transport_err = VerificationError(
                 VerificationCode.LOG_ERROR,
-                f"Registry unregister request failed for {domain!r}: {self._sanitize(str(exc))}",
+                f"Registry unregister request failed for {domain!r}: {self._transport_detail(exc)}",
                 transient=True,
             )
         if _transport_err is not None:
@@ -850,7 +874,7 @@ class RegistryClient(AbstractRegistryClient):
         except httpx.TransportError as exc:
             raise VerificationError(
                 VerificationCode.LOG_ERROR,
-                f"Registry request to {path!r} failed: {self._sanitize(str(exc))}",
+                f"Registry request to {path!r} failed: {self._transport_detail(exc)}",
                 transient=True,
             ) from None
         if not response.is_success:
@@ -931,7 +955,7 @@ class RegistryClient(AbstractRegistryClient):
         except httpx.TransportError as exc:
             raise VerificationError(
                 VerificationCode.LOG_ERROR,
-                f"Registry request to {path!r} failed: {self._sanitize(str(exc))}",
+                f"Registry request to {path!r} failed: {self._transport_detail(exc)}",
                 transient=True,
             ) from None
         if not response.is_success:
@@ -1081,7 +1105,7 @@ class RegistryClient(AbstractRegistryClient):
         except httpx.TransportError as exc:
             _transport_err = VerificationError(
                 VerificationCode.LOG_ERROR,
-                f"Registry request to {path!r} failed: {self._sanitize(str(exc))}",
+                f"Registry request to {path!r} failed: {self._transport_detail(exc)}",
                 transient=True,
             )
         if _transport_err is not None:
