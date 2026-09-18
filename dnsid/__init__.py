@@ -43,6 +43,7 @@ CLI config helpers:
 Environment helpers:
     identity_manager_from_environment — one-call init from DNSID_* variables and local keys
     config_from_environment    — build config objects from DNSID_* environment variables
+    registry_client_from_environment — RegistryClient from DNSID_REGISTRY_URL / DNSID_API_KEY
     EnvironmentConfigResult    — return type of config_from_environment
 
 Interfaces (implement to integrate your own backends):
@@ -105,6 +106,7 @@ from .environment import (
     dnsid_environment_variables,
     identity_manager_from_environment,
     key_store_path_from_environment,
+    registry_client_from_environment,
 )
 from .exceptions import (
     ArgumentError,
@@ -330,6 +332,7 @@ __all__ = [
     "EnvironmentFieldName",
     "dnsid_environment_variables",
     "key_store_path_from_environment",
+    "registry_client_from_environment",
     # Agent status helpers
     "active_status_document",
     # Interfaces
