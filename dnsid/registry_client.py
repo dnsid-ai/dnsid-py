@@ -171,7 +171,9 @@ class RegistryClient(AbstractRegistryClient):
         return self._sanitize(str(exc))
 
     def _require_auth(self, operation: str) -> None:
-        if not self._api_key:
+        # The local registry (``dnsid local up``) ignores Authorization, so a
+        # loopback client needs no credential; the hosted registry does.
+        if not self._api_key and not self._is_loopback:
             from .exceptions import ArgumentError
 
             raise ArgumentError(

@@ -7,6 +7,7 @@ import json
 from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from dnsid import (
@@ -1248,6 +1249,22 @@ class TestAuthentication:
             getattr(client, reader)(_DOMAIN)
 
         assert captured["headers"]["Authorization"] == f"Bearer {_FAKE_API_KEY}"
+
+    @pytest.mark.parametrize("call", _MUTATION_CALLS)
+    def test_mutation_without_credentials_allowed_on_loopback(self, call):
+        # The local registry ignores Authorization, so the default (loopback)
+        # client must reach the transport instead of failing the credential gate.
+        client = RegistryClient()
+        reached = []
+
+        def fake(*args, **kwargs):
+            reached.append(kwargs.get("headers", {}))
+            raise httpx.ConnectError("refused")
+
+        with patch("httpx.request", fake), patch("httpx.post", fake), patch("httpx.get", fake):
+            with pytest.raises(Exception, match="no registry at 127.0.0.1:7755"):
+                call(client)
+        assert reached and "Authorization" not in reached[0]
 
     def test_credential_not_leaked_in_repr(self):
         client = RegistryClient("https://registry.example.com", api_key=_FAKE_API_KEY)
