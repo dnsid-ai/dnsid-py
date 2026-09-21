@@ -5,8 +5,8 @@ Walks the public API of the ``dnsid`` package with griffe — the top-level
 ``__all__``, the profile submodules, and ``dnsid.c2sp_tlog.__all__`` — and
 emits one markdown page per area, plus ``nav.json`` for the docs site.
 
-The output is committed and exported verbatim to the docs site repo
-(dnsid-ai/dnsid-docs) under ``src/content/docs/reference/py/``, so:
+The output is committed and exported verbatim to the docs site repository
+(docs.dnsid.ai) under ``src/content/docs/reference/py/``, so:
 
 - pages carry Starlight YAML frontmatter (``title`` + ``description``);
 - links to other docs pages are absolute ``https://docs.dnsid.ai/...`` URLs
