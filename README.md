@@ -389,7 +389,7 @@ profile, falling back to its bounded complete scanner when the bundle endpoint
 is unavailable or a valid newer bundle needs raw consistency evidence. The
 complete scan must prove both the stored and bundle checkpoint roots.
 
-For an explicit application decision to trust Identity Digital-managed logs,
+For an explicit application decision to trust DNSid-managed logs,
 use the separately named managed factory:
 
 ```python
