@@ -42,6 +42,18 @@ version plus an advisory:
 A report showing an invalid record, signature, or status being **accepted as valid** is treated as the
 highest priority regardless of its CVSS score.
 
+## **Non-Security Problems Found After Publication**
+
+If a published release is found to contain a licensing defect, third-party material we may not
+distribute, personal data, or anything else that should not have been published, we follow the same
+path as a security fix: a new release with the material removed, a notice in the README and (where a
+registry supports it) an advisory, and deprecation of the affected versions on the package registry.
+Because published packages and git history cannot be truly recalled, we will also remove the
+material from the repository where that is possible and contact the registry if removal of a published
+version is warranted. Archiving the repository is the last resort. The decision is made by the
+company's legal team; the security owner executes it. Report such problems to `security@dnsid.ai`; they
+are routed to legal.
+
 ## **Remediation Timelines and Support Period**
 
 Beyond the acknowledgement and assessment commitments above, we do not currently commit to fixed
