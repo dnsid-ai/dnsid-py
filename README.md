@@ -16,6 +16,14 @@ For AWS KMS-backed signing keys, install the `aws` extra:
 pip install "dnsid[aws]"
 ```
 
+If the release is not yet available on PyPI, install directly from GitHub.
+Replace `main` with a [release tag](https://github.com/dnsid-ai/dnsid-py/releases)
+to pin a version; the `[aws]` extra works the same way:
+
+```bash
+pip install "dnsid @ git+https://github.com/dnsid-ai/dnsid-py@main"
+```
+
 Requires Python 3.11+. CI-tested against Python 3.11, 3.12, and 3.13. Dependencies: `idna`, `httpx`, `cryptography`, `dnspython`. The package ships a `py.typed` marker (PEP 561), so mypy and other type checkers see its full strict-mode annotations.
 
 See **[COMPATIBILITY.md](https://github.com/dnsid-ai/dnsid-py/blob/main/COMPATIBILITY.md)** for the full runtime and dependency compatibility matrix,

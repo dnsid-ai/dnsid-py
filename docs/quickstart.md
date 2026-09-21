@@ -16,6 +16,14 @@ For AWS KMS-backed signing keys:
 pip install "dnsid[aws]"
 ```
 
+If the release is not yet available on PyPI, install directly from GitHub.
+Replace `main` with a [release tag](https://github.com/dnsid-ai/dnsid-py/releases)
+to pin a version; the `[aws]` extra works the same way:
+
+```bash
+pip install "dnsid @ git+https://github.com/dnsid-ai/dnsid-py@main"
+```
+
 **Requirements:** Python 3.11+
 
 ## Prerequisites
