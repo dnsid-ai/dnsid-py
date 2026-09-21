@@ -51,9 +51,7 @@ keys.json
 *.swo
 .DS_Store
 
-# Claude Code
+# Local scratch (never committed)
 .claude/
-TASK.md
-
-# Local issue triage
-/STARLIGHT_ISSUES.md
+/TASK*.md
+/*_ISSUES.md
