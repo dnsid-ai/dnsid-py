@@ -193,7 +193,8 @@ class RegistryClient(AbstractRegistryClient):
         ``zone_id`` to have the registry assign a name in a delegated zone
         (registry-managed). The two are mutually exclusive, and
         ``managed=True`` requires ``zone_id``. ``environment`` defaults to
-        ``"production"``; ``"sandbox"`` is also accepted. For Live names use :meth:`register_live_agent`.
+        ``"production"``; ``"sandbox"`` is also accepted. For Live names use
+        :meth:`register_live_agent`.
         """
         self._require_auth("register_agent")
         from .exceptions import ArgumentError
