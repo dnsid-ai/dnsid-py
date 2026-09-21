@@ -462,10 +462,10 @@ RegistryClient("https://api.dnsid.ai").get_agent_status("agent.example.com")
 `base_url` must be HTTPS, or HTTP on loopback. Constructors never read the
 environment; only `registry_client_from_environment()` does.
 
-Registration is production-only: `AgentRegistrationInput(domain=...)` for a
+Registration defaults to production: `AgentRegistrationInput(domain=...)` for a
 domain you control, `zone_id=...` for a delegated zone, `register_live_agent()`
-for Live. `managed=True` without `zone_id` is rejected. Sandbox registration
-lives in the console and CLI; use the SDK for everything after registration.
+for Live. Pass `environment="sandbox"` for a sandbox agent. `managed=True`
+without `zone_id` is rejected.
 
 Mutation calls require owner credentials: an organization session or API key,
 passed as `api_key` and sent as an `Authorization: Bearer` header. An agent

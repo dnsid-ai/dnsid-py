@@ -136,8 +136,9 @@ Register an agent with the registry.
 Pass ``domain`` to register a name you control (self-managed), or
 ``zone_id`` to have the registry assign a name in a delegated zone
 (registry-managed). The two are mutually exclusive, and
-``managed=True`` requires ``zone_id``. ``environment`` may be left
-unset. For Live names use `register_live_agent`.
+``managed=True`` requires ``zone_id``. ``environment`` defaults to
+``"production"``; ``"sandbox"`` is also accepted. For Live names use
+`register_live_agent`.
 
 ### `register_live_agent`
 

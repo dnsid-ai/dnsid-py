@@ -314,9 +314,11 @@ class TestRegisterAgent:
         assert captured[0]["body"]["domain"] == _DOMAIN
         assert captured[0]["body"]["environment"] == "production"
 
-    def test_sandbox_environment_is_rejected(self):
-        with pytest.raises(ArgumentError, match='must be "production"'):
-            _make_client().register_agent(AgentRegistrationInput(environment="sandbox"))
+    def test_unknown_environment_is_rejected(self):
+        with pytest.raises(ArgumentError, match='must be "production" or "sandbox"'):
+            _make_client().register_agent(
+                AgentRegistrationInput(domain=_DOMAIN, environment="staging")
+            )
 
     def test_managed_without_zone_is_rejected(self):
         with pytest.raises(ArgumentError, match="requires zone_id"):
@@ -347,11 +349,13 @@ class TestRegisterAgent:
                 )
             )
 
-    def test_self_managed_rejects_sandbox_environment(self):
-        with pytest.raises(ArgumentError, match='must be "production"'):
+    def test_self_managed_accepts_sandbox_environment(self):
+        ctx, captured = _post_capturing(_REGISTER_RESPONSE)
+        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
             _make_client().register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="sandbox")
             )
+        assert captured[0]["body"]["environment"] == "sandbox"
 
     def test_zone_managed_defaults_to_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)

@@ -192,15 +192,16 @@ class RegistryClient(AbstractRegistryClient):
         Pass ``domain`` to register a name you control (self-managed), or
         ``zone_id`` to have the registry assign a name in a delegated zone
         (registry-managed). The two are mutually exclusive, and
-        ``managed=True`` requires ``zone_id``. ``environment`` may be left
-        unset. For Live names use :meth:`register_live_agent`.
+        ``managed=True`` requires ``zone_id``. ``environment`` defaults to
+        ``"production"``; ``"sandbox"`` is also accepted. For Live names use
+        :meth:`register_live_agent`.
         """
         self._require_auth("register_agent")
         from .exceptions import ArgumentError
 
         environment = input.environment or "production"
-        if environment != "production":
-            raise ArgumentError('environment must be "production"')
+        if environment not in {"production", "sandbox"}:
+            raise ArgumentError('environment must be "production" or "sandbox"')
         if input.zone_id and input.domain:
             raise ArgumentError("zone_id and domain cannot both be supplied")
         if input.managed and not input.zone_id:
