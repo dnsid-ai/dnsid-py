@@ -129,16 +129,15 @@ Initialize the client with a registry base URL and optional credential.
 RegistryClient.register_agent(input: AgentRegistrationInput) -> AgentRegistration
 ```
 
-Register a non-Live agent with the registry.
+Register an agent with the registry.
 
 ``POST /api/v1/agent``
 
-Registration is production-only; ``environment`` may be omitted or
-``"production"``. Registrations with ``zone_id`` are registry-managed
-and must omit ``domain``; ``managed=True`` without ``zone_id`` is
-rejected. A self-managed registration requires a domain. Sandbox
-registration lives in the console and CLI, not the SDK.
-Use `register_live_agent` for managed Live registration.
+Pass ``domain`` to register a name you control (self-managed), or
+``zone_id`` to have the registry assign a name in a delegated zone
+(registry-managed). The two are mutually exclusive, and
+``managed=True`` requires ``zone_id``. ``environment`` may be left
+unset. For Live names use `register_live_agent`.
 
 ### `register_live_agent`
 
