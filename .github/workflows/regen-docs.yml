@@ -6,9 +6,8 @@ name: Auto-regenerate reference docs
 # the freshness warning in lint-test.yml still tells fork authors the manual
 # command.
 #
-# Loop guard: pushes made with GITHUB_TOKEN do not trigger new workflow runs,
-# so the bot's own commit cannot re-trigger this workflow (and a re-run would
-# find no diff anyway). The same property means CI results shown on the PR
+# Loop guard: the job skips when the actor is github-actions[bot] (GraphQL-created
+# commits do re-trigger pull_request), and a re-run would find no diff anyway. The same property means CI results shown on the PR
 # belong to the contributor's last commit; the bot commit only touches
 # docs/reference/, which no test job consumes.
 on:
@@ -23,7 +22,8 @@ concurrency:
 
 jobs:
   regen:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # actor guard: createCommitOnBranch commits DO re-trigger pull_request, unlike GITHUB_TOKEN git pushes
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,7 +56,7 @@ jobs:
             exit 0
           fi
           git diff --cached --name-only --diff-filter=AM -z \
-            | while IFS= read -r -d '' f; do jq -n --arg p "$f" --arg c "$(base64 -w0 < "$f")" '{path: $p, contents: $c}'; done \
+            | while IFS= read -r -d '' f; do base64 -w0 < "$f" > /tmp/b64; jq -n --arg p "$f" --rawfile c /tmp/b64 '{path: $p, contents: $c}'; done \
             | jq -s . > /tmp/additions.json
           git diff --cached --name-only --diff-filter=D -z \
             | jq -Rs 'split("\u0000") | map(select(length > 0) | {path: .})' > /tmp/deletions.json

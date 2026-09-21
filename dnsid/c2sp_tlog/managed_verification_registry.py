@@ -1,4 +1,4 @@
-"""Opt-in verification setup for Identity Digital-managed DNSid logs."""
+"""Opt-in verification setup for DNSid-managed DNSid logs."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ _MANAGED_CATALOG = (
 def create_dnsid_managed_verification_registry(
     options: DnsidManagedVerificationOptions | None = None,
 ) -> LogRegistry:
-    """Create a registry for reviewed Identity Digital-managed trust roots.
+    """Create a registry for reviewed DNSid-managed trust roots.
 
     Calling this separately named factory is an explicit application trust
     decision; the generic factory never selects these roots implicitly. Trust

@@ -1,4 +1,4 @@
-"""Identity Digital-managed C2SP trust selection tests."""
+"""DNSid-managed C2SP trust selection tests."""
 
 from __future__ import annotations
 

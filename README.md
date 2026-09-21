@@ -389,7 +389,7 @@ profile, falling back to its bounded complete scanner when the bundle endpoint
 is unavailable or a valid newer bundle needs raw consistency evidence. The
 complete scan must prove both the stored and bundle checkpoint roots.
 
-For an explicit application decision to trust Identity Digital-managed logs,
+For an explicit application decision to trust DNSid-managed logs,
 use the separately named managed factory:
 
 ```python
@@ -609,6 +609,36 @@ ruff check dnsid/
 # Type check
 mypy dnsid/
 ```
+
+## Security & trust
+
+**Official sources.** Source: `github.com/dnsid-ai/dnsid-py`. Package: `dnsid` on PyPI. Releases: GitHub Releases on
+this repository, each with a CycloneDX SBOM attached. Forks, mirrors, and similarly named packages
+are not maintained by us. Report vulnerabilities per [SECURITY.md](SECURITY.md); never in a public issue.
+
+**Software is not identity.** This SDK ships no keys, credentials, or trust. A DNSid identity is proven
+by control of a DNS zone, an agent private key, and the registry's published status. Possessing, forking,
+or modifying this code grants none of those: an unofficial build cannot mint or inherit anyone's identity.
+
+**What it does on the network.** Only when you call it, and only to hosts you or the domain being verified
+chose:
+
+- DNS TXT lookup of `_dnsid.<domain>` through your system resolver (no hardcoded resolver)
+- HTTPS GET to the JWKS and status URLs published in that TXT record
+- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dnsid.dev` (C2SP transparency log, bundled public trust roots), cloud KMS endpoints
+- No telemetry, usage reporting, update checks, or crash reporting
+
+**Logging.** None today. A standard-library `logging` logger under the `dnsid` namespace is declared for future
+use; if it ever emits, it will carry key thumbprints and verification states, never private keys, tokens, or
+signatures. Errors are raised to the caller.
+
+**Hosted endpoints.** `api.dnsid.ai` and `log.dnsid.ai` are operated separately from this SDK under their
+own terms. Nothing in this repository is an availability, uptime, or support commitment for them.
+
+**For your privacy notice.** Using this SDK causes your system to make DNS and HTTPS requests to the domains
+you verify and to the JWKS/status hosts they publish. It sends them nothing about your users. If you enable
+the registry or transparency-log clients, requests also go to DNSid-operated endpoints; disclose that where
+your notice requires it.
 
 ## License
 

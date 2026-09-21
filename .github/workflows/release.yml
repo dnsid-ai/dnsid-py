@@ -100,13 +100,21 @@ jobs:
           git tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
           git push origin "${{ steps.version.outputs.version }}"
 
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@006b7ce8314066bdf1765b4500370d40fa6917a3 # v0.24.2
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+
       - name: Create GitHub Release
         run: |
           if gh release view "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
             echo "Release ${{ steps.version.outputs.version }} already exists, skipping"
           else
             gh release create "${{ steps.version.outputs.version }}" \
-              dist/* \
+              dist/* sbom.cdx.json \
               --verify-tag \
               --title "Release ${{ steps.version.outputs.version }}" \
               --notes-file /tmp/release-notes.md

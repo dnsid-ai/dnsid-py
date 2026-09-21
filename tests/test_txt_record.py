@@ -30,22 +30,22 @@ class TestParse:
         assert r.sg == "dGVzdA"
 
     def test_missing_v_tag_raises(self):
-        raw = "gi=example.com;ku=https://x.com/jwks.json;lr=m:a;su=https://x.com/s;sg=abc"
+        raw = "gi=example.com;ku=https://x.example/jwks.json;lr=m:a;su=https://x.example/s;sg=abc"
         with pytest.raises(ParseError):
             DnsIdTxtRecord.parse(raw)
 
     def test_v_not_first_raises(self):
-        raw = "gi=example.com;v=dnsid-draft-01;ek=https://example.com/j;ku=https://x.com/j;lr=m:a;su=https://x.com/s;sg=a"
+        raw = "gi=example.com;v=dnsid-draft-01;ek=https://example.com/j;ku=https://x.example/j;lr=m:a;su=https://x.example/s;sg=a"
         with pytest.raises(ParseError):
             DnsIdTxtRecord.parse(raw)
 
     def test_duplicate_tag_raises(self):
-        raw = _VALID_RECORD + ";gi=other.com"
+        raw = _VALID_RECORD + ";gi=other.example"
         with pytest.raises(ParseError):
             DnsIdTxtRecord.parse(raw)
 
     def test_invalid_tag_name_raises(self):
-        raw = "v=dnsid-draft-01;gi=example.com;ek=https://example.com/j;ku=https://a.com/j;lr=m:a;su=https://a.com/s;sg=x;123bad=val"
+        raw = "v=dnsid-draft-01;gi=example.com;ek=https://example.com/j;ku=https://a.example/j;lr=m:a;su=https://a.example/s;sg=x;123bad=val"
         with pytest.raises(ParseError):
             DnsIdTxtRecord.parse(raw)
 
@@ -66,7 +66,7 @@ class TestParse:
         assert r.unknown_tags.get("xt") == "custom_value"
 
     def test_missing_required_tag_raises(self):
-        raw = "v=dnsid-draft-01;gi=example.com;ek=https://example.com/j;ku=https://a.com/j;lr=m:a;su=https://a.com/s"  # no sg
+        raw = "v=dnsid-draft-01;gi=example.com;ek=https://example.com/j;ku=https://a.example/j;lr=m:a;su=https://a.example/s"  # no sg
         with pytest.raises(ParseError, match="sg"):
             DnsIdTxtRecord.parse(raw)
 
@@ -264,7 +264,7 @@ class TestValidate:
 
 
     def test_gi_need_not_be_parent_when_ek_is_beneath_it(self):
-        self._make(gi="other.com", ek="https://keys.other.com/jwks.json").validate()
+        self._make(gi="other.example", ek="https://keys.other.example/jwks.json").validate()
 
     def test_ku_non_https_raises(self):
         r = self._make(ku="http://agent.example.com/jwks.json")
@@ -365,7 +365,7 @@ class TestValidate:
         r.validate()
 
     def test_ek_host_not_under_gi_raises(self):
-        r = self._make(ek="https://attacker.com/.well-known/jwks.json")
+        r = self._make(ek="https://attacker.example/.well-known/jwks.json")
         with pytest.raises(ValidationError, match="ek host"):
             r.validate()
 
