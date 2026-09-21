@@ -577,10 +577,10 @@ python examples/local-key-provider/main.py
 
 ### Testnet-dependent examples
 
-The `a2a` example requires the local testnet managed by the `dnsid` CLI from
-the main [dnsid-ai/dnsid](https://github.com/dnsid-ai/dnsid)
-repo (`dnsid testnet up` / `dnsid testnet run`), which provides local DNS, a
-CA, and a registry. The retired `dnsid-testnet` repo is not needed. See
+The `a2a` example requires the local testnet managed by the `dnsid` CLI
+([installation guide](https://docs.dnsid.ai/cli-installation);
+`dnsid testnet up` / `dnsid testnet run`), which provides local DNS, a
+CA, and a registry. See
 [examples/a2a/README.md](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/a2a/README.md) for full prerequisites and
 step-by-step instructions.
 

@@ -22,7 +22,7 @@ Durable rules for anyone — human or agent — touching this directory.
 ## Export to the docs site
 
 Files under `docs/reference/` are exported **verbatim** to the
-`dnsid-ai/dnsid-docs` repo (the Astro/Starlight site behind
+docs site repository (the Astro/Starlight site behind
 docs.dnsid.ai) under `src/content/docs/reference/py/`, and
 `nav.json` feeds that site's `nav.mjs`. Consequences:
 

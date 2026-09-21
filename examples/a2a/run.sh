@@ -5,7 +5,7 @@
 # Usage (from project root):
 #   bash examples/a2a/run.sh
 #
-# Prerequisites: the `dnsid` CLI (from the dnsid-ai/dnsid repo) must be
+# Prerequisites: the `dnsid` CLI (https://docs.dnsid.ai/cli-installation) must be
 # on PATH — or set DNSID_CLI=/path/to/dnsid — and Docker must be running.
 # Extra Python deps (if not already installed):
 #   pip install fastapi uvicorn dnspython a2a-sdk sse-starlette

@@ -17,10 +17,9 @@ pip install fastapi uvicorn dnspython a2a-sdk sse-starlette
 
 (`httpx` is already a dependency of the dnsid SDK.)
 
-Install the `dnsid` CLI from the main
-[dnsid-ai/dnsid](https://github.com/dnsid-ai/dnsid) repo and make sure
-Docker is running. The CLI manages the testnet directly; the retired `dnsid-testnet`
-repo is not needed. By default it pulls `ghcr.io/identity-digital/dnsid-testnet-registry:latest`
+Install the `dnsid` CLI ([installation
+guide](https://docs.dnsid.ai/cli-installation)) and make sure Docker is
+running. The CLI manages the testnet directly. By default it pulls `ghcr.io/identity-digital/dnsid-testnet-registry:latest`
 (override with `DNSID_TESTNET_IMAGE`).
 
 ## Run
