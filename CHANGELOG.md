@@ -1,4 +1,32 @@
 
+## [0.19.2] - 2026-09-21
+
+### Bug Fixes
+
+- fix: set correct codeowners ([#3](https://github.com/dnsid-ai/dnsid-py/pull/3))
+
+### Chores
+
+- Bump taiki-e/install-action from 2.87.11 to 2.87.12 ([#1](https://github.com/dnsid-ai/dnsid-py/pull/1))
+- ci: sign release PR commits via GitHub API ([#5](https://github.com/dnsid-ai/dnsid-py/pull/5))
+- ci: sign regenerated-docs commits via GitHub API ([#7](https://github.com/dnsid-ai/dnsid-py/pull/7))
+- Chore/public release cleanup ([#10](https://github.com/dnsid-ai/dnsid-py/pull/10))
+
+### Documentation
+
+- docs: describe registration positively ([#9](https://github.com/dnsid-ai/dnsid-py/pull/9))
+
+### Features
+
+- Add release-readiness check from dnsid-sdk-compliance ([#4](https://github.com/dnsid-ai/dnsid-py/pull/4))
+
+### Other
+
+- perf(manager): run post-sg identity and status work concurrently in verify_domain ([#6](https://github.com/dnsid-ai/dnsid-py/pull/6))
+- registry: default register_agent environment to production ([#8](https://github.com/dnsid-ai/dnsid-py/pull/8))
+- examples(validate-domain): support the local registry via dnsid local env ([#12](https://github.com/dnsid-ai/dnsid-py/pull/12))
+
+
 ## [0.19.1] - 2026-09-15
 
 ### Chores
