@@ -110,7 +110,7 @@ def test_ssrf_blocking_connect_error_is_non_transient() -> None:
     assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
 
 
-def test_safe_fetcher_applies_transport_config_with_exact_loopback_exception() -> None:
+def test_safe_fetcher_passes_transport_config_through_unchanged() -> None:
     config = TransportConfig(
         dns_server="127.0.0.1:5353",
         ca_bundle_path="/tmp/ca.pem",
@@ -126,10 +126,7 @@ def test_safe_fetcher_applies_transport_config_with_exact_loopback_exception() -
             allow_loopback_host="registry.test.dnsid.test",
         )
 
-    safe_config = make_transport.call_args.args[0]
-    assert safe_config.dns_server == config.dns_server
-    assert safe_config.ca_bundle_path == config.ca_bundle_path
-    assert safe_config.private_address_hosts == frozenset()
+    assert make_transport.call_args.args[0] is config
     assert make_transport.call_args.kwargs["allow_loopback_host"] == (
         "registry.test.dnsid.test"
     )

@@ -43,6 +43,34 @@ def is_disallowed_ip(ip_text: str) -> bool:
     )
 
 
+def is_private_or_loopback_ip(ip_text: str) -> bool:
+    """Return whether *ip_text* is loopback or private-use (RFC 1918/4193).
+
+    These are the only non-public classes a ``private_address_hosts`` match may
+    resolve to; link-local, multicast, reserved, and unspecified stay rejected.
+    """
+    try:
+        ip = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    if ip.is_loopback:
+        return True
+    if ip.version == 4:
+        return any(ip in net for net in _RFC1918)
+    return ip in _RFC4193
+
+
+_RFC1918 = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+_RFC4193 = ipaddress.ip_network("fc00::/7")
+
+
 def resolve_checked_address(
     host: str,
     dns_host: str = "",
@@ -60,14 +88,20 @@ def resolve_checked_address(
     if not addresses:
         raise httpcore.ConnectError(f"unable to resolve {host!r}")
 
-    allow_private = _matches_private_allowlist(host, private_address_hosts)
-    unsafe = [
-        address
-        for address in addresses
-        if is_disallowed_ip(address)
-        and not allow_private
-        and not _is_allowed_loopback_resolution(host, address, allow_loopback_host)
-    ]
+    allow_private = not _is_ip_literal(host) and _matches_private_allowlist(
+        host, private_address_hosts
+    )
+    if allow_private and any(is_disallowed_ip(address) for address in addresses):
+        # A matching host may resolve non-publicly only to loopback/private-use,
+        # and then every address must be: a public+private mix is rejected.
+        unsafe = [a for a in addresses if not is_private_or_loopback_ip(a)]
+    else:
+        unsafe = [
+            address
+            for address in addresses
+            if is_disallowed_ip(address)
+            and not _is_allowed_loopback_resolution(host, address, allow_loopback_host)
+        ]
     if unsafe:
         raise httpcore.ConnectError(
             f"{SSRF_BLOCK_MARKER}: {host!r} resolves to disallowed "
@@ -204,14 +238,10 @@ class _HttpcoreTransport(httpx.BaseTransport):
 def _matches_private_allowlist(host: str, private_address_hosts: Collection[str]) -> bool:
     """Match *host* against exact entries and leading-dot suffix entries.
 
-    ``".example.test"`` matches ``example.test`` and every name beneath it.
-    Names under the reserved ``.test`` TLD (RFC 2606) always match: they can
-    never resolve publicly, so a private answer is deliberate local
-    configuration such as ``dnsid local``, not a rebinding attack.
+    ``".example.test"`` matches ``example.test`` and every name beneath it,
+    label-bounded and case-insensitive. There is no built-in exemption.
     """
     normalized = _normalize_host(host)
-    if normalized == "test" or normalized.endswith(".test"):
-        return True
     for entry in private_address_hosts:
         if entry.startswith("."):
             suffix = _normalize_host(entry[1:])
@@ -220,6 +250,14 @@ def _matches_private_allowlist(host: str, private_address_hosts: Collection[str]
         elif normalized == _normalize_host(entry):
             return True
     return False
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return True
 
 
 def _normalize_host(host: str) -> str:

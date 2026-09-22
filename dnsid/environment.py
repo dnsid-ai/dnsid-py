@@ -38,6 +38,7 @@ dnsid_environment_variables: dict[str, str] = {
     "publish_profile": "DNSID_PUBLISH_PROFILE",
     "dns_server": "DNSID_DNS_SERVER",
     "ca_bundle_path": "DNSID_CA_BUNDLE",
+    "private_address_hosts": "DNSID_PRIVATE_HOSTS",
     "dnssec_mode": "DNSID_DNSSEC_MODE",
     "public_url": "DNSID_PUBLIC_URL",
     "key_store_path": "DNSID_KEY_STORE",
@@ -144,6 +145,8 @@ def config_from_environment(
     * ``DNSID_KU_URL`` — explicit JWKS URL override
     * ``DNSID_DNS_SERVER`` — custom DNS server in ``host:port`` form
     * ``DNSID_CA_BUNDLE`` — path to a CA bundle for TLS trust augmentation
+    * ``DNSID_PRIVATE_HOSTS`` — comma-separated hostnames or ``.suffix`` entries
+      allowed to resolve to loopback/private addresses (e.g. ``.test``)
     * ``DNSID_DNSSEC_MODE`` — ``"auto"`` | ``"validated"`` | ``"required"``
     * ``DNSID_PUBLIC_URL`` — public base URL of the agent
     * ``DNSID_KEY_STORE`` — local key-store file path
@@ -216,6 +219,9 @@ def config_from_environment(
         transport=TransportConfig(
             dns_server=env.get("DNSID_DNS_SERVER", "").strip(),
             ca_bundle_path=env.get("DNSID_CA_BUNDLE", "").strip(),
+            private_address_hosts=frozenset(
+                h.strip() for h in env.get("DNSID_PRIVATE_HOSTS", "").split(",") if h.strip()
+            ),
         ),
     )
 

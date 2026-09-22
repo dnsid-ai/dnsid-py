@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 from ._https_client import _create_https_client
 from ._utils import (
+    _DOMAIN_NAME_RE,
     b64url_decode_strict,
     normalize_fqdn,
 )
@@ -1978,6 +1979,32 @@ def _validate_transport_config(
         raise ArgumentError(
             "transport.ca_bundle_path has no SDK-managed consumer: https_fetcher is injected"
         )
+    for entry in cfg.private_address_hosts:
+        if not _is_private_address_host_entry(entry):
+            raise ArgumentError(
+                f"transport.private_address_hosts entry {entry!r} must be a bare hostname "
+                "or leading-dot suffix (no IP literal, port, scheme, path, or credentials)"
+            )
+    if cfg.private_address_hosts and fetcher_injected:
+        raise ArgumentError(
+            "transport.private_address_hosts has no SDK-managed consumer: "
+            "https_fetcher is injected"
+        )
+
+
+def _is_private_address_host_entry(entry: object) -> bool:
+    import ipaddress
+
+    if not isinstance(entry, str):
+        return False
+    name = entry[1:] if entry.startswith(".") else entry
+    name = name[:-1] if name.endswith(".") else name
+    try:
+        ipaddress.ip_address(name)
+        return False
+    except ValueError:
+        pass
+    return bool(_DOMAIN_NAME_RE.fullmatch(name))
 
 
 def _default_dns_resolver(transport_config: TransportConfig) -> DNSResolver:

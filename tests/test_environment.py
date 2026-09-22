@@ -160,6 +160,22 @@ class TestConfigFromEnvironment:
         assert result.config.identity.ek_url == "https://gov.example.com/.well-known/jwks.json"
         assert result.config.identity.ku_url == "https://alice.example.com/.well-known/jwks.json"
 
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (None, frozenset()),
+            ("", frozenset()),
+            ("  , ,", frozenset()),
+            (".test", frozenset({".test"})),
+            (" .test , registry.dnsid.test ,, ", frozenset({".test", "registry.dnsid.test"})),
+        ],
+    )
+    def test_private_hosts_parsed_comma_separated(self, raw, expected):
+        extra = {} if raw is None else {"DNSID_PRIVATE_HOSTS": raw}
+        result = config_from_environment(self._base(**extra))
+        assert result.config.transport.private_address_hosts == expected
+        assert env_vars["private_address_hosts"] == "DNSID_PRIVATE_HOSTS"
+
     def test_agent_name_absent_is_none(self):
         env = {
             env_vars["domain"]: "alice.example.com",

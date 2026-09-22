@@ -469,10 +469,12 @@ signature is authenticated, verify_domain fetches the status endpoint on
 a helper thread while the runtime JWKS and lifecycle-log work proceed.
 
 The built-in fetcher enforces strict HTTPS and rejects su/JWKS hosts that
-resolve to non-public addresses unless the hostname matches an exact or
-leading-dot suffix entry in TransportConfig.private_address_hosts. A blocked
-resolution raises a
-non-transient VerificationError with TLS_ERROR.
+resolve to non-public addresses. The only exception is a hostname matching
+an exact or leading-dot suffix entry in
+TransportConfig.private_address_hosts (empty by default, no built-in
+exemption), which may resolve to loopback or private-use addresses only.
+A blocked resolution raises a non-transient VerificationError with
+TLS_ERROR.
 
 ### `fetch_strict_json`
 

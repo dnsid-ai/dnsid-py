@@ -282,7 +282,9 @@ def test_transport_config_reaches_built_in_fetcher() -> None:
             seen.append(kwargs.get("transport_config"))  # type: ignore[arg-type]
             super().__init__(**kwargs)  # type: ignore[arg-type]
 
-    transport = TransportConfig(dns_server="127.0.0.1:7753")
+    transport = TransportConfig(
+        dns_server="127.0.0.1:7753", private_address_hosts=frozenset({".test"})
+    )
     with patch("dnsid.c2sp_tlog.verification_registry.SafeC2spResourceFetcher", Fetcher):
         create_c2sp_tlog_verification_registry(
             C2spTlogVerificationOptions(
@@ -290,6 +292,18 @@ def test_transport_config_reaches_built_in_fetcher() -> None:
             )
         )
     assert seen == [transport]
+    assert seen[0].private_address_hosts == frozenset({".test"})
+
+
+def test_private_address_hosts_reach_built_in_fetcher_transport() -> None:
+    transport = TransportConfig(private_address_hosts=frozenset({".test"}))
+    with patch("dnsid.c2sp_tlog.resource_fetcher.make_ssrf_safe_transport") as make_transport:
+        create_c2sp_tlog_verification_registry(
+            C2spTlogVerificationOptions(
+                policy_document=_policy_document(), transport_config=transport
+            )
+        )
+    assert make_transport.call_args.args[0].private_address_hosts == frozenset({".test"})
 
 
 def test_policy_url_requires_bounded_custom_fetcher() -> None:

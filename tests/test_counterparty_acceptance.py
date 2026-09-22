@@ -222,6 +222,35 @@ class TestConfiguration:
             ).close()
         assert make_transport.call_args.args[0].ca_bundle_path == "/ca.pem"
 
+    def test_private_address_hosts_with_fetcher_injected_is_rejected(self):
+        with pytest.raises(ArgumentError, match="private_address_hosts"):
+            IdentityManager(
+                DnsidConfig(transport=TransportConfig(private_address_hosts=frozenset({".test"}))),
+                deps=IdentityManagerDependencies(https_fetcher=MagicMock(spec=HTTPSFetcher)),
+            )
+
+    @pytest.mark.parametrize(
+        "entry",
+        ["", ".", "127.0.0.1", "::1", "[::1]", ".10.0.0.0", "agent.test:443", "https://agent.test",
+         "agent.test/path", "user@agent.test", "user:pw@agent.test", "a b.test", "-bad.test",
+         "..test", "agent..test"],
+    )
+    def test_invalid_private_address_host_entry_rejected(self, entry):
+        with pytest.raises(ArgumentError, match="private_address_hosts"):
+            IdentityManager(
+                DnsidConfig(transport=TransportConfig(private_address_hosts=frozenset({entry}))),
+                deps=IdentityManagerDependencies(dns_resolver=MagicMock(spec=DNSResolver)),
+            )
+
+    def test_valid_private_address_host_entries_accepted(self):
+        with patch("dnsid.manager._make_sdk_transport"):
+            IdentityManager(
+                DnsidConfig(transport=TransportConfig(
+                    private_address_hosts=frozenset({".test", "agent.example.test", "TEST."})
+                )),
+                deps=IdentityManagerDependencies(dns_resolver=MagicMock(spec=DNSResolver)),
+            ).close()
+
 
 # ---------------------------------------------------------------------------
 # Acceptance decisions
