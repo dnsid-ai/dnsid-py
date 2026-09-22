@@ -18,7 +18,9 @@ location from an unverified identity record, its `lr`, or its log prefix.
 
 Against the local registry, evaluate `dnsid local env` first; it exports
 `DNSID_LOG_POLICY_URL`, `DNSID_DNS_SERVER`, and `DNSID_CA_BUNDLE`, which the
-example picks up:
+example passes through `TransportConfig` and
+`C2spTlogVerificationOptions.transport_config`. No SSRF allowlist is needed:
+the SDK always permits private answers for names under the reserved `.test` TLD.
 
 ```sh
 eval "$(dnsid local env)"
