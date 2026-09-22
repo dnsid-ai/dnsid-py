@@ -1,4 +1,11 @@
 
+## [0.20.0] - 2026-09-22
+
+### Features
+
+- feat: verify against a private registry such as dnsid local ([#22](https://github.com/dnsid-ai/dnsid-py/pull/22))
+
+
 ## [0.19.4] - 2026-09-22
 
 ### Chores
