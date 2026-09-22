@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
-from dataclasses import replace
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from agent import echo_executor
 from server import EchoAgent, EchoAgentOptions
@@ -22,9 +20,7 @@ from dnsid import (
 )
 from dnsid.c2sp_tlog import (
     C2spTlogVerificationOptions,
-    SafeC2spResourceFetcher,
     create_c2sp_tlog_verification_registry,
-    parse_c2sp_tlog_lr,
 )
 from dnsid.models import (
     AgentRegistrationInput,
@@ -49,17 +45,10 @@ def _make_log_registry(
     """
     if not log_ref.startswith("c2sp-tlog:"):
         return None
-    parsed = parse_c2sp_tlog_lr(log_ref)
-    fetcher = SafeC2spResourceFetcher(
-        transport_config=replace(transport_config, private_address_hosts=frozenset()),
-        allow_loopback_host=(
-            urlsplit(policy_url).hostname if parsed.scope == "testnet" else None
-        ),
-    )
     return create_c2sp_tlog_verification_registry(
         C2spTlogVerificationOptions(
             policy_url=policy_url,
-            resource_fetcher=fetcher,
+            transport_config=transport_config,
             max_clock_skew_ms=30_000,
             checkpoint_freshness_ms=5 * 60_000,
         )
@@ -166,13 +155,6 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, object]:
     transport_config = result.config.transport
     registry_config = result.registry_config
     policy_url = required_log_policy_url(env)
-
-    # The CLI testnet resolves every name under the governance domain (this
-    # agent's endpoints and every peer's) to the host's loopback proxy. Allow
-    # that zone only; production verifiers keep this empty. `dnsid testnet run`
-    # always emits a bare domain as DNSID_GOVERNANCE_ID and serves ek/ku/su
-    # beneath it, so a suffix covers callers this server cannot enumerate.
-    transport_config.private_address_hosts = frozenset({"." + protocol_config.governance_id})
 
     # Registry mutation calls (register/verify/publish) require a session
     # credential. `dnsid testnet run` injects DNSID_API_KEY; DNSID_REGISTRY_API_KEY

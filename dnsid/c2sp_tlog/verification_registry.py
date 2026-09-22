@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from ..exceptions import ArgumentError
+from ..models import TransportConfig
 from ..registry import LogRegistry
 from .checkpoint_store import CheckpointStore, InMemoryCheckpointStore
 from .errors import C2spTlogParseError, C2spTlogVerificationError
@@ -46,9 +47,13 @@ class C2spTlogVerificationOptions:
 
     ``resource_fetcher`` is shared by policy and standard C2SP reads. Custom
     fetchers must implement the bounded-fetch and explicit security-capability
-    contract. The built-in fetcher requires HTTPS and HTTP 200, rejects
-    redirects and unsafe destinations, pins connections to validated DNS
-    results, bounds decoded bytes during reads, and uses finite deadlines.
+    contract. ``transport_config`` instead applies a custom DNS server and CA
+    bundle to the built-in fetcher; pass the same ``DnsidConfig.transport``
+    given to the IdentityManager when verifying against a private registry
+    such as ``dnsid local``. It is mutually exclusive with ``resource_fetcher``.
+    The built-in fetcher requires HTTPS and HTTP 200, rejects redirects and
+    unsafe destinations, pins connections to validated DNS results, bounds
+    decoded bytes during reads, and uses finite deadlines.
 
     A trust profile or direct ``bundle_verifier_keys`` enables verified
     per-domain stream bundles. Unavailable endpoints fall back to the bounded
@@ -74,6 +79,7 @@ class C2spTlogVerificationOptions:
     trust_profile: C2spTlogTrustProfile | None = None
     bundle_verifier_keys: list[SignedNoteKey] | None = None
     resource_fetcher: C2spBoundedResourceFetcher | None = None
+    transport_config: TransportConfig | None = None
     scan_limits: C2spScanLimits | None = None
     migration_limits: C2spMigrationVerificationLimits | None = None
     trusted_checkpoint_store: CheckpointStore | None = None
@@ -142,10 +148,14 @@ def create_c2sp_tlog_verification_registry(
             "c2sp-tlog migration_limits must be C2spMigrationVerificationLimits"
         )
 
+    if options.resource_fetcher is not None and options.transport_config is not None:
+        raise ArgumentError(
+            "c2sp-tlog transport_config is mutually exclusive with resource_fetcher"
+        )
     fetcher: C2spBoundedResourceFetcher = (
         options.resource_fetcher
         if options.resource_fetcher is not None
-        else SafeC2spResourceFetcher()
+        else SafeC2spResourceFetcher(transport_config=options.transport_config)
     )
     # The registry can later construct a public reader even when the policy was
     # supplied as bytes, so reject an insufficient custom fetcher at creation.

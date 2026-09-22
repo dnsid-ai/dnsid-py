@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import datetime
 import hashlib
+from unittest.mock import patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -21,6 +22,7 @@ from dnsid.c2sp_tlog import (
     C2spTlogVerificationError,
     C2spTlogVerificationOptions,
     InMemoryCheckpointStore,
+    SafeC2spResourceFetcher,
     ScanStreamSource,
     SignedNoteKey,
     canonical_json,
@@ -31,7 +33,7 @@ from dnsid.c2sp_tlog import (
 )
 from dnsid.c2sp_tlog.stream_bundle import _FetchedStreamBundleSource
 from dnsid.exceptions import ArgumentError, VerificationError
-from dnsid.models import AgentStatus, IssuanceEvent, TLSCertificate, TXTRecord
+from dnsid.models import AgentStatus, IssuanceEvent, TLSCertificate, TransportConfig, TXTRecord
 from tests.conftest import MockDNSResolver
 
 _LR = "c2sp-tlog:public:https://log.example#instance_AAAAAAAAAAAAAAAAAAAAAA"
@@ -239,6 +241,11 @@ def test_omitted_freshness_keeps_non_revocation_fail_closed() -> None:
             policy_document=_policy_document(),
             require_stream_bundle=1,  # type: ignore[arg-type]
         ),
+        C2spTlogVerificationOptions(
+            policy_document=_policy_document(),
+            resource_fetcher=_Fetcher(b"unused"),
+            transport_config=TransportConfig(dns_server="127.0.0.1:7753"),
+        ),
     ],
 )
 def test_factory_rejects_invalid_configuration(
@@ -265,6 +272,24 @@ def test_factory_eagerly_rejects_missing_fetcher_capability(field: str) -> None:
                 resource_fetcher=InsufficientFetcher(b"unused"),
             )
         )
+
+
+def test_transport_config_reaches_built_in_fetcher() -> None:
+    seen: list[TransportConfig | None] = []
+
+    class Fetcher(SafeC2spResourceFetcher):
+        def __init__(self, **kwargs: object) -> None:
+            seen.append(kwargs.get("transport_config"))  # type: ignore[arg-type]
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+
+    transport = TransportConfig(dns_server="127.0.0.1:7753")
+    with patch("dnsid.c2sp_tlog.verification_registry.SafeC2spResourceFetcher", Fetcher):
+        create_c2sp_tlog_verification_registry(
+            C2spTlogVerificationOptions(
+                policy_document=_policy_document(), transport_config=transport
+            )
+        )
+    assert seen == [transport]
 
 
 def test_policy_url_requires_bounded_custom_fetcher() -> None:

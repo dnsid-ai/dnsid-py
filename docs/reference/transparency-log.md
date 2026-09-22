@@ -601,9 +601,13 @@ configuration and is never inferred from an identity record or log prefix.
 
 ``resource_fetcher`` is shared by policy and standard C2SP reads. Custom
 fetchers must implement the bounded-fetch and explicit security-capability
-contract. The built-in fetcher requires HTTPS and HTTP 200, rejects
-redirects and unsafe destinations, pins connections to validated DNS
-results, bounds decoded bytes during reads, and uses finite deadlines.
+contract. ``transport_config`` instead applies a custom DNS server and CA
+bundle to the built-in fetcher; pass the same ``DnsidConfig.transport``
+given to the IdentityManager when verifying against a private registry
+such as ``dnsid local``. It is mutually exclusive with ``resource_fetcher``.
+The built-in fetcher requires HTTPS and HTTP 200, rejects redirects and
+unsafe destinations, pins connections to validated DNS results, bounds
+decoded bytes during reads, and uses finite deadlines.
 
 A trust profile or direct ``bundle_verifier_keys`` enables verified
 per-domain stream bundles. Unavailable endpoints fall back to the bounded

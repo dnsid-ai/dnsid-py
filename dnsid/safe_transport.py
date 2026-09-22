@@ -205,8 +205,13 @@ def _matches_private_allowlist(host: str, private_address_hosts: Collection[str]
     """Match *host* against exact entries and leading-dot suffix entries.
 
     ``".example.test"`` matches ``example.test`` and every name beneath it.
+    Names under the reserved ``.test`` TLD (RFC 2606) always match: they can
+    never resolve publicly, so a private answer is deliberate local
+    configuration such as ``dnsid local``, not a rebinding attack.
     """
     normalized = _normalize_host(host)
+    if normalized == "test" or normalized.endswith(".test"):
+        return True
     for entry in private_address_hosts:
         if entry.startswith("."):
             suffix = _normalize_host(entry[1:])

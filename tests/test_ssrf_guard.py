@@ -76,14 +76,24 @@ class TestResolveChecked:
 
     def test_leading_dot_entry_allows_domain_and_subdomains_only(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
-            for host in ("dnsid.test", "agent.dnsid.test", "Deep.Peer.DNSID.test."):
+            for host in ("dnsid.internal", "agent.dnsid.internal", "Deep.Peer.DNSID.internal."):
                 assert (
-                    resolve_checked_address(host, private_address_hosts={".dnsid.test"})
+                    resolve_checked_address(host, private_address_hosts={".dnsid.internal"})
                     == "127.0.0.1"
                 )
-            for host in ("evildnsid.test", "dnsid.test.attacker.example"):
+            for host in ("evildnsid.internal", "dnsid.internal.attacker.example"):
                 with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
-                    resolve_checked_address(host, private_address_hosts={".dnsid.test"})
+                    resolve_checked_address(host, private_address_hosts={".dnsid.internal"})
+
+    def test_reserved_test_tld_always_allows_private_resolution(self):
+        # RFC 2606: .test never resolves publicly, so a loopback answer is local
+        # configuration (dnsid local), not rebinding. No allowlist entry needed.
+        with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
+            for host in ("alice.dev.dnsid.test", "registry.dev.dnsid.test.", "TEST"):
+                assert resolve_checked_address(host) == "127.0.0.1"
+            for host in ("alice.dev.dnsid.testing", "dnsid.test.attacker.example"):
+                with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
+                    resolve_checked_address(host)
 
     def test_private_host_allowlist_does_not_apply_to_other_hosts(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
