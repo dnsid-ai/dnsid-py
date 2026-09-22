@@ -1,4 +1,15 @@
 
+## [0.19.4] - 2026-09-22
+
+### Chores
+
+- ci: publish to PyPI via trusted publishing; document GitHub install fallback ([#11](https://github.com/dnsid-ai/dnsid-py/pull/11))
+
+### Other
+
+- perf: Preload lifecycle history concurrently with the ku fetch ([#16](https://github.com/dnsid-ai/dnsid-py/pull/16))
+
+
 ## [0.19.3] - 2026-09-21
 
 ### Other
