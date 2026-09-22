@@ -1590,7 +1590,23 @@ class IdentityManager:
                 VerificationCode.RECORD_INVALID,
                 "ku host does not match identity domain",
             )
-        jwks, tls_cert = self._fetch_key_set(record.ku, allowed_host=domain)
+        # Construct bound LogReader for this counterparty's log method.
+        if self._log_registry is not None:
+            log_reader: LogReader = self._log_registry.new_reader(record.lr)
+        else:
+            method, _ = parse_ledger_ref(record.lr)
+            log_reader = NoopLogReader(method=method)
+
+        # The lifecycle history depends only on the sg-authenticated lr and the
+        # ek signing key, not on ku contents, so readers that support it warm
+        # their history concurrently with the ku fetch. Error precedence is
+        # unchanged: a ku failure wins, then the log failure that
+        # verify_bilateral_binding would have raised anyway.
+        preload = getattr(log_reader, "preload_history", None)
+        (jwks, tls_cert), _ = run_concurrently(
+            lambda: self._fetch_key_set(record.ku, allowed_host=domain),
+            (lambda: preload(domain, signing_key)) if callable(preload) else lambda: None,
+        )
         operational_key = jwks.current_operational_signing_key(record.v)
 
         ek_thumbprints = {k.thumbprint() for k in ek_jwks.keys}
@@ -1600,13 +1616,6 @@ class IdentityManager:
                 VerificationCode.RECORD_INVALID,
                 "ek and ku JWK Sets share a key (RFC 7638 thumbprint collision)",
             )
-
-        # Construct bound LogReader for this counterparty's log method.
-        if self._log_registry is not None:
-            log_reader: LogReader = self._log_registry.new_reader(record.lr)
-        else:
-            method, _ = parse_ledger_ref(record.lr)
-            log_reader = NoopLogReader(method=method)
 
         # -- Step 4: Lifecycle-log verification ----------------------------
         if signing_key.thumbprint() == operational_key.thumbprint():
