@@ -104,19 +104,28 @@ class DefaultDNSResolver(DNSResolver):
         from urllib.parse import urlparse
 
         from .models import TransportConfig
-        from .safe_transport import make_ssrf_safe_transport
+        from .safe_transport import _is_ip_literal, make_ssrf_safe_transport
 
-        config = TransportConfig(private_address_hosts=frozenset([urlparse(url).hostname or ""]))
+        doh_host = urlparse(url).hostname or ""
+        # Allowlist entries are hostnames only; an IP-literal DoH server is
+        # checked as a literal by the guard and must not be listed here.
+        allow = frozenset() if _is_ip_literal(doh_host) else frozenset([doh_host])
+        config = TransportConfig(private_address_hosts=allow)
         try:
             with httpx.Client(transport=make_ssrf_safe_transport(config)) as client:
-                with client.stream("GET", url, headers={"Accept": "application/dns-json"},
-                                   timeout=remaining_seconds(10.0)) as response:
+                with client.stream(
+                    "GET",
+                    url,
+                    headers={"Accept": "application/dns-json"},
+                    timeout=remaining_seconds(10.0),
+                ) as response:
                     body = bytearray()
                     for chunk in response.iter_bytes():
                         remaining_seconds()
                         if len(body) + len(chunk) > 64 * 1024:
-                            raise VerificationError(VerificationCode.DNS_RESOLUTION,
-                                                    "DoH response body too large")
+                            raise VerificationError(
+                                VerificationCode.DNS_RESOLUTION, "DoH response body too large"
+                            )
                         body.extend(chunk)
                     resp = httpx.Response(response.status_code, content=bytes(body))
         except httpx.TransportError as exc:

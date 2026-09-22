@@ -246,7 +246,7 @@ class TestConfiguration:
         with patch("dnsid.manager._make_sdk_transport"):
             IdentityManager(
                 DnsidConfig(transport=TransportConfig(
-                    private_address_hosts=frozenset({".test", "agent.example.test", "TEST."})
+                    private_address_hosts=frozenset({".test", "agent.example.test", "TEST.", "münchen.test"})
                 )),
                 deps=IdentityManagerDependencies(dns_resolver=MagicMock(spec=DNSResolver)),
             ).close()

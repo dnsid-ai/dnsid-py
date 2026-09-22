@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 
 from ._https_client import _create_https_client
 from ._utils import (
-    _DOMAIN_NAME_RE,
     b64url_decode_strict,
     normalize_fqdn,
 )
@@ -76,6 +75,7 @@ from .models import (
 )
 from .registry import LogRegistry
 from .safe_transport import make_ssrf_safe_transport as _make_sdk_transport
+from .safe_transport import validate_private_address_hosts
 
 _ZERO_TIME = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 _log = logging.getLogger(__name__)
@@ -499,9 +499,7 @@ class IdentityManager:
                 "(the accountable-entity record-signing key)"
             )
         entity_key = provider.signing_key()
-        agent_key = self._require_operational_key_provider(
-            "draft 01 publishing"
-        ).signing_key()
+        agent_key = self._require_operational_key_provider("draft 01 publishing").signing_key()
         try:
             distinct = entity_key.thumbprint() != agent_key.thumbprint()
         except ValueError as exc:
@@ -602,9 +600,7 @@ class IdentityManager:
             self._local_identity.domain, b64url_encode(sig_bytes)
         )
 
-    def publish_to_registry(
-        self, registry_client: AbstractRegistryClient
-    ) -> PublishedRecord:
+    def publish_to_registry(self, registry_client: AbstractRegistryClient) -> PublishedRecord:
         """Deprecated alias for :meth:`publish_client_controlled_record`."""
         return self.publish_client_controlled_record(registry_client)
 
@@ -651,9 +647,7 @@ class IdentityManager:
         if registration.publication_authority != "registry":
             raise ValidationError("client controls accountable-entity publication")
 
-        status = registry_client.wait_for_status(
-            domain, timeout=timeout, interval=interval
-        )
+        status = registry_client.wait_for_status(domain, timeout=timeout, interval=interval)
         if not status.published:
             raise ValidationError("registry did not report DNS publication complete")
 
@@ -663,9 +657,7 @@ class IdentityManager:
         if registration.publication_authority != "registry":
             raise ValidationError("registry publication authority changed while waiting")
         if registration.registry_status in {"REJECTED", "CANCELLED", "ERROR"}:
-            raise ValidationError(
-                f"registry publication failed: {registration.registry_status}"
-            )
+            raise ValidationError(f"registry publication failed: {registration.registry_status}")
         if registration.dns_published is not True:
             raise ValidationError("registry did not confirm DNS publication")
 
@@ -738,14 +730,10 @@ class IdentityManager:
 
         domain = self._local_identity.domain
         lr = self._local_identity.log_ref
-        self._validate_rotation_hooks(
-            persist_rotation, set_application_signing_paused
-        )
+        self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         self._validate_rotation_idempotency_key(idempotency_key)
 
-        key_provider = self._require_operational_key_provider(
-            "rotate_operational_key"
-        )
+        key_provider = self._require_operational_key_provider("rotate_operational_key")
         previous_key = key_provider.signing_key()
         if not previous_key.kid:
             raise ArgumentError("active operational key missing kid")
@@ -858,9 +846,7 @@ class IdentityManager:
         )
 
         self._require_local_identity("resume_key_rotation")
-        self._validate_rotation_hooks(
-            persist_rotation, set_application_signing_paused
-        )
+        self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         rotation = self._clone_rotation(result)
         self._validate_persisted_rotation(rotation)
 
@@ -928,9 +914,7 @@ class IdentityManager:
     ) -> KeyRotationResult:
         """Reconcile an accepted rotation using the mandatory durability hooks."""
         self._require_local_identity("activate_rotated_key")
-        self._validate_rotation_hooks(
-            persist_rotation, set_application_signing_paused
-        )
+        self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         rotation = self._clone_rotation(result)
         self._validate_persisted_rotation(rotation)
         if submission is not None:
@@ -1116,9 +1100,7 @@ class IdentityManager:
                 raise ValidationError("pending key does not match persisted rotation")
             provider.activate(rotation.new_kid)
         elif active.kid != rotation.new_kid:
-            raise ValidationError(
-                f"unexpected active key {active.kid!r} during rotation recovery"
-            )
+            raise ValidationError(f"unexpected active key {active.kid!r} during rotation recovery")
         elif active_thumbprint != rotation.new_thumbprint:
             raise ValidationError("active key does not match persisted new key")
 
@@ -1236,9 +1218,7 @@ class IdentityManager:
     def _clone_rotation(cls, rotation: KeyRotationResult) -> KeyRotationResult:
         previous_public_key = rotation.previous_public_key
         if previous_public_key is not None:
-            previous_public_key = replace(
-                previous_public_key, _raw=dict(previous_public_key._raw)
-            )
+            previous_public_key = replace(previous_public_key, _raw=dict(previous_public_key._raw))
         return replace(
             rotation,
             entry_bytes=bytes(rotation.entry_bytes),
@@ -1466,19 +1446,13 @@ class IdentityManager:
                 VerificationCode.DNSSEC_FAILED,
                 f"DNSSEC validation failed for {domain}",
             )
-        if (
-            dnssec_mode == DNSSECMode.VALIDATED
-            and dnssec_state == DNSSECState.UNKNOWN
-        ):
+        if dnssec_mode == DNSSECMode.VALIDATED and dnssec_state == DNSSECState.UNKNOWN:
             raise VerificationError(
                 VerificationCode.DNSSEC_FAILED,
                 "DNSSEC validation status is unknown; validated mode requires "
                 "a DNSSEC-aware resolver",
             )
-        if (
-            dnssec_mode == DNSSECMode.REQUIRED
-            and dnssec_state != DNSSECState.VALID
-        ):
+        if dnssec_mode == DNSSECMode.REQUIRED and dnssec_state != DNSSECState.VALID:
             raise VerificationError(
                 VerificationCode.DNSSEC_FAILED,
                 f"DNSSEC required but state is {dnssec_state.name}",
@@ -1685,8 +1659,11 @@ class IdentityManager:
             code = VerificationCode.DNS_RESOLUTION
         if code is not None:
             self._cache.evict(result.domain)
-            raise VerificationError(code, "identity evidence expired during verification",
-                                    transient=code == VerificationCode.DNS_RESOLUTION)
+            raise VerificationError(
+                code,
+                "identity evidence expired during verification",
+                transient=code == VerificationCode.DNS_RESOLUTION,
+            )
 
     def verify_log_evidence(
         self,
@@ -1979,32 +1956,11 @@ def _validate_transport_config(
         raise ArgumentError(
             "transport.ca_bundle_path has no SDK-managed consumer: https_fetcher is injected"
         )
-    for entry in cfg.private_address_hosts:
-        if not _is_private_address_host_entry(entry):
-            raise ArgumentError(
-                f"transport.private_address_hosts entry {entry!r} must be a bare hostname "
-                "or leading-dot suffix (no IP literal, port, scheme, path, or credentials)"
-            )
+    validate_private_address_hosts(cfg.private_address_hosts)
     if cfg.private_address_hosts and fetcher_injected:
         raise ArgumentError(
-            "transport.private_address_hosts has no SDK-managed consumer: "
-            "https_fetcher is injected"
+            "transport.private_address_hosts has no SDK-managed consumer: https_fetcher is injected"
         )
-
-
-def _is_private_address_host_entry(entry: object) -> bool:
-    import ipaddress
-
-    if not isinstance(entry, str):
-        return False
-    name = entry[1:] if entry.startswith(".") else entry
-    name = name[:-1] if name.endswith(".") else name
-    try:
-        ipaddress.ip_address(name)
-        return False
-    except ValueError:
-        pass
-    return bool(_DOMAIN_NAME_RE.fullmatch(name))
 
 
 def _default_dns_resolver(transport_config: TransportConfig) -> DNSResolver:
@@ -2095,9 +2051,7 @@ def _fetch_strict_json_status(
     from ._https_client import fetch_agent_status
 
     sdk_transport = _make_sdk_transport(transport) if client is None else None
-    return fetch_agent_status(
-        su, verify=True, transport=sdk_transport, client=client
-    )
+    return fetch_agent_status(su, verify=True, transport=sdk_transport, client=client)
 
 
 def _make_async_sdk_transport(config: TransportConfig | None) -> httpx.AsyncBaseTransport:

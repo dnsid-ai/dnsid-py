@@ -16,7 +16,9 @@ import httpcore
 import httpx
 from httpcore._backends.base import SOCKET_OPTION
 
+from ._utils import _DOMAIN_NAME_RE
 from ._verification_budget import remaining_seconds
+from .exceptions import ArgumentError
 from .models import TransportConfig
 
 SSRF_BLOCK_MARKER = "dnsid-ssrf-blocked"
@@ -104,10 +106,44 @@ def resolve_checked_address(
         ]
     if unsafe:
         raise httpcore.ConnectError(
-            f"{SSRF_BLOCK_MARKER}: {host!r} resolves to disallowed "
-            f"address {unsafe[0]}"
+            f"{SSRF_BLOCK_MARKER}: {host!r} resolves to disallowed address {unsafe[0]}"
         )
     return addresses[0]
+
+
+def is_private_address_host_entry(entry: object) -> bool:
+    """Return whether *entry* is a bare hostname or leading-dot suffix.
+
+    IP literals, ports, schemes, paths, credentials, and empty strings are
+    rejected. Unicode labels are IDNA-encoded before checking, so
+    ``"münchen.test"`` is accepted and matched as its A-label form.
+    """
+    if not isinstance(entry, str):
+        return False
+    name = entry[1:] if entry.startswith(".") else entry
+    name = name[:-1] if name.endswith(".") else name
+    if not name:
+        return False
+    try:
+        ipaddress.ip_address(name)
+        return False
+    except ValueError:
+        pass
+    try:
+        name = name.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    return bool(_DOMAIN_NAME_RE.fullmatch(name))
+
+
+def validate_private_address_hosts(entries: Collection[str]) -> None:
+    """Raise :class:`ArgumentError` for any entry that is not a valid host entry."""
+    for entry in entries:
+        if not is_private_address_host_entry(entry):
+            raise ArgumentError(
+                f"transport.private_address_hosts entry {entry!r} must be a bare hostname "
+                "or leading-dot suffix (no IP literal, port, scheme, path, or credentials)"
+            )
 
 
 def make_ssrf_safe_transport(
@@ -117,6 +153,7 @@ def make_ssrf_safe_transport(
 ) -> httpx.BaseTransport:
     """Build an HTTP transport that connects only to validated DNS results."""
     private_address_hosts = config.private_address_hosts if config else frozenset()
+    validate_private_address_hosts(private_address_hosts)
     ssl_context: ssl.SSLContext | None = None
     dns_host = ""
     dns_port = 53
@@ -130,9 +167,7 @@ def make_ssrf_safe_transport(
             dns_host = raw_host or dns_server
             dns_port = int(port_text) if port_text else 53
 
-    backend = _CheckedResolveBackend(
-        dns_host, dns_port, private_address_hosts, allow_loopback_host
-    )
+    backend = _CheckedResolveBackend(dns_host, dns_port, private_address_hosts, allow_loopback_host)
     pool = httpcore.ConnectionPool(
         ssl_context=ssl_context,
         network_backend=backend,
@@ -168,10 +203,15 @@ class _CheckedResolveBackend(httpcore.SyncBackend):
             private_address_hosts=self._private_address_hosts,
             allow_loopback_host=self._allow_loopback_host,
         )
-        return _BudgetStream(super().connect_tcp(
-            address, port, remaining_seconds(timeout if timeout is not None else 30.0),
-            local_address, socket_options
-        ))
+        return _BudgetStream(
+            super().connect_tcp(
+                address,
+                port,
+                remaining_seconds(timeout if timeout is not None else 30.0),
+                local_address,
+                socket_options,
+            )
+        )
 
 
 class _BudgetStream(httpcore.NetworkStream):
@@ -188,12 +228,19 @@ class _BudgetStream(httpcore.NetworkStream):
     def write(self, buffer: bytes, timeout: float | None = None) -> None:
         self._stream.write(buffer, remaining_seconds(timeout if timeout is not None else 30.0))
 
-    def start_tls(self, ssl_context: ssl.SSLContext, server_hostname: str | None = None,
-                  timeout: float | None = None) -> httpcore.NetworkStream:
-        return _BudgetStream(self._stream.start_tls(
-            ssl_context, server_hostname,
-            remaining_seconds(timeout if timeout is not None else 30.0),
-        ))
+    def start_tls(
+        self,
+        ssl_context: ssl.SSLContext,
+        server_hostname: str | None = None,
+        timeout: float | None = None,
+    ) -> httpcore.NetworkStream:
+        return _BudgetStream(
+            self._stream.start_tls(
+                ssl_context,
+                server_hostname,
+                remaining_seconds(timeout if timeout is not None else 30.0),
+            )
+        )
 
     def close(self) -> None:
         self._stream.close()
@@ -296,9 +343,10 @@ def _resolve_with_dns_server(host: str, dns_host: str, dns_port: int) -> list[st
     addresses: list[str] = []
     for record_type in ("A", "AAAA"):
         try:
-            addresses.extend(str(answer) for answer in resolver.resolve(
-                host, record_type, lifetime=remaining_seconds(10.0)
-            ))
+            addresses.extend(
+                str(answer)
+                for answer in resolver.resolve(host, record_type, lifetime=remaining_seconds(10.0))
+            )
         except dns.resolver.NoAnswer:
             # A hostname may legitimately have only one address family.
             continue
