@@ -351,6 +351,18 @@ KEY_ROTATION) that introduced the key.
 
 - `VerificationError`: With ``VerificationCode.LOG_ERROR`` if the thumbprint does not appear in the verified history or the history itself cannot be loaded and verified.
 
+### `preload_history`
+
+```python
+C2spTlogReader.preload_history(domain: str, entity_key: JWK) -> None
+```
+
+Fetch and verify the complete history for *domain* under *entity_key*.
+
+Warms the same cache `verify_bilateral_binding` reads, so callers
+can overlap the log fetch with other independent network work. Raises
+exactly what the later binding check would have raised.
+
 ### `verify_bilateral_binding`
 
 ```python

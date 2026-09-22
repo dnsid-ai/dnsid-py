@@ -5,20 +5,19 @@ from urllib.parse import urlsplit
 from dnsid import IdentityManager, IdentityManagerDependencies, TransportConfig
 from dnsid.c2sp_tlog import (
     C2spTlogVerificationOptions,
+    DnsidManagedVerificationOptions,
     SafeC2spResourceFetcher,
     create_c2sp_tlog_verification_registry,
+    create_dnsid_managed_verification_registry,
 )
 
-# Trusted configuration for DNSid's public test log. Production
-# applications should select their own independently trusted policy.
-# `dnsid local env` exports DNSID_LOG_POLICY_URL for the local registry.
-POLICY_URL = os.environ.get("DNSID_LOG_POLICY_URL") or "https://log.dnsid.dev/dnsid-policy"
+# `dnsid local env` exports DNSID_LOG_POLICY_URL for the local registry. When it
+# is unset the example trusts DNSid's managed production log (log.dnsid.ai),
+# whose embedded trust profile enables signed per-domain stream bundles instead
+# of a full log scan.
+POLICY_URL = os.environ.get("DNSID_LOG_POLICY_URL", "")
 
-if len(sys.argv) != 2:
-    print(f"usage: {sys.argv[0]} <dnsid-domain>", file=sys.stderr)
-    raise SystemExit(2)
-
-domain = sys.argv[1]
+domain = sys.argv[1] if len(sys.argv) == 2 else "2a7bcd5330fd.sandbox.dnsid.ai"
 
 # Local registry only (`eval "$(dnsid local env)"`): route DNS to its CoreDNS,
 # trust its CA, and allow its loopback zone. All empty in production.
@@ -32,15 +31,22 @@ transport = TransportConfig(
 )
 
 try:
-    registry = create_c2sp_tlog_verification_registry(
-        C2spTlogVerificationOptions(
-            policy_url=POLICY_URL,
-            resource_fetcher=SafeC2spResourceFetcher(
-                transport_config=transport,
-                allow_loopback_host=urlsplit(POLICY_URL).hostname if dns_server else None,
-            ),
+    if POLICY_URL:
+        registry = create_c2sp_tlog_verification_registry(
+            C2spTlogVerificationOptions(
+                policy_url=POLICY_URL,
+                resource_fetcher=SafeC2spResourceFetcher(
+                    transport_config=transport,
+                    allow_loopback_host=urlsplit(POLICY_URL).hostname if dns_server else None,
+                ),
+            )
         )
-    )
+    else:
+        registry = create_dnsid_managed_verification_registry(
+            DnsidManagedVerificationOptions(
+                resource_fetcher=SafeC2spResourceFetcher(transport_config=transport),
+            )
+        )
     idm = IdentityManager.for_verification(
         IdentityManagerDependencies(log_registry=registry), transport=transport
     )

@@ -186,3 +186,54 @@ def test_status_branch_inherits_and_cannot_extend_the_invocation_budget(ec_pair)
         manager.verify_domain(domain)
     manager.close()
     assert observed and observed[0] <= 2.0
+
+
+def test_history_preload_runs_concurrently_with_ku_and_failure_maps_to_log_error(ec_pair):
+    manager, resolver, counters, domain, fetch_jwks, fetch_status, _ = _manager_fixture(ec_pair)
+    _, ek_key = ec_pair
+    ku_started, ku_release, seen = threading.Event(), threading.Event(), {}
+    binding_cls = manager._log_registry._factories["microledger"]
+
+    def preload_history(self, fqdn, entity_key):
+        seen["preload"] = (fqdn, entity_key.thumbprint(), threading.current_thread().name)
+
+    def gated_jwks(uri, allowed_host, **kwargs):
+        if uri.startswith(f"https://{domain}/"):
+            ku_started.set()
+            assert ku_release.wait(5)
+        return fetch_jwks(uri, allowed_host, **kwargs)
+
+    with (
+        patch.object(binding_cls, "preload_history", preload_history, create=True),
+        patch("dnsid.manager._fetch_jwks", side_effect=gated_jwks),
+        patch("dnsid.manager._fetch_strict_json_status", side_effect=fetch_status),
+    ):
+        thread, box = _run_in_thread(lambda: manager.verify_domain(domain))
+        assert ku_started.wait(5)
+        for _ in range(100):
+            if "preload" in seen:
+                break
+            threading.Event().wait(0.01)
+        # Preload finished (off the main thread, keyed on the ek key) while ku was still blocked.
+        assert seen["preload"][:2] == (domain, ek_key.thumbprint())
+        assert seen["preload"][2] != threading.current_thread().name
+        ku_release.set()
+        thread.join(5)
+    assert "error" not in box, box.get("error")
+    assert counters["bilateral"] == 1
+
+    # A preload failure surfaces like the binding failure it pre-empts.
+    manager.evict_domain(domain)
+
+    def failing_preload(self, fqdn, entity_key):
+        raise VerificationError(VerificationCode.LOG_ERROR, "stream unavailable")
+
+    with (
+        patch.object(binding_cls, "preload_history", failing_preload, create=True),
+        patch("dnsid.manager._fetch_jwks", side_effect=fetch_jwks),
+        patch("dnsid.manager._fetch_strict_json_status", side_effect=fetch_status),
+    ):
+        with pytest.raises(VerificationError) as info:
+            manager.verify_domain(domain)
+    manager.close()
+    assert info.value.code == VerificationCode.LOG_ERROR

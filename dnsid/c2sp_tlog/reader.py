@@ -448,6 +448,16 @@ class C2spTlogReader(LogReader):
         raise _log_error("key thumbprint not found in C2SP lifecycle history")
 
     @_verification_boundary
+    def preload_history(self, domain: str, entity_key: JWK) -> None:
+        """Fetch and verify the complete history for *domain* under *entity_key*.
+
+        Warms the same cache :meth:`verify_bilateral_binding` reads, so callers
+        can overlap the log fetch with other independent network work. Raises
+        exactly what the later binding check would have raised.
+        """
+        self._load_complete_history(domain, entity_key)
+
+    @_verification_boundary
     def verify_bilateral_binding(
         self,
         record: object,
