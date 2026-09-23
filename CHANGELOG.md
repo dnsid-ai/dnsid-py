@@ -1,4 +1,11 @@
 
+## [0.21.0] - 2026-09-23
+
+### Features
+
+- feat!: explicit private_address_hosts, no implicit .test ([#24](https://github.com/dnsid-ai/dnsid-py/pull/24))
+
+
 ## [Unreleased]
 
 ### Breaking
