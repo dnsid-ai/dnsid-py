@@ -133,7 +133,7 @@ Sections are always present as values; a field equal to its default is absent.
 
 **Attributes:**
 
-- `registry_credential` (`str | None`): Registry bearer credential. Never placed in a loggable config object.
+- `registry_credential` (`str | None`): Registry bearer credential. Excluded from ``repr`` so a logged config never leaks it.
 
 ## `LogTrust`
 
