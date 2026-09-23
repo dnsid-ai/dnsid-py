@@ -805,3 +805,26 @@ def test_loaded_config_repr_hides_registry_credential() -> None:
     loaded = load_environment({"DNSID_API_KEY": "secret-token"})
     assert loaded.registry_credential == "secret-token"
     assert "secret-token" not in repr(loaded)
+
+
+def test_cli_root_pointer_resolves_to_per_identity_config(tmp_path):
+    """The CLI reads <domain>/config.json as authoritative; the root file is a pointer."""
+    root_cfg = _cli_config()
+    root_cfg["log_ref"] = "stale:root"
+    root_cfg["entity_key_path"] = "root-entity.jwk"
+    _write_cli_dir(tmp_path, root_cfg)
+    domain_dir = tmp_path / str(root_cfg["domain"])
+    leaf_cfg = _cli_config()
+    leaf_cfg["log_ref"] = "c2sp-tlog:public:https://log.example#leaf"
+    leaf_cfg["entity_key_path"] = "entity.jwk"
+    (domain_dir / "config.json").write_text(json.dumps(leaf_cfg))
+
+    loaded = load_cli_directory(tmp_path)
+    assert loaded.dnsid.identity.log_ref == "c2sp-tlog:public:https://log.example#leaf"
+    assert loaded.key_source.cli_directory == str(tmp_path)
+    assert loaded.key_source.entity_key_path == str(domain_dir / "entity.jwk")
+
+    # A leaf directory (no <domain>/ subdirectory) is read as-is.
+    leaf_loaded = load_cli_directory(domain_dir)
+    assert leaf_loaded.dnsid.identity.log_ref == loaded.dnsid.identity.log_ref
+    assert leaf_loaded.key_source.cli_directory == str(domain_dir)

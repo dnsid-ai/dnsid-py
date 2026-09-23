@@ -290,7 +290,13 @@ def load_cli_directory(directory: Path | str | None = None) -> LoadedConfig:
     Persisted snake_case publication fields map into ``dnsid.identity`` exactly
     as written: ``status_url`` is never derived from ``server_url`` and no log
     reference is substituted. The directory becomes ``key_source.cli_directory``
-    and a relative ``entity_key_path`` resolves against it.
+    and a relative ``entity_key_path`` resolves against the directory of the
+    ``config.json`` that carries it.
+
+    The CLI treats a root ``config.json`` as the current-identity pointer: when
+    it names a ``domain`` and ``<directory>/<domain>/config.json`` exists, that
+    per-identity file is read instead. A leaf identity directory (no such
+    subdirectory) is read as-is.
 
     Raises:
         FileNotFoundError: ``config.json`` does not exist.
@@ -305,6 +311,14 @@ def load_cli_directory(directory: Path | str | None = None) -> LoadedConfig:
             f"DNSid CLI config not found: {config_path}; "
             "run the DNSid CLI to register your domain first"
         ) from None
+    pointer = raw.get("domain")
+    if isinstance(pointer, str) and pointer:
+        from ._utils import normalize_fqdn
+
+        identity_path = base / normalize_fqdn(pointer, agent_fqdn=True) / "config.json"
+        if identity_path.is_file():
+            config_path = identity_path
+            raw = _json_object(config_path.read_bytes(), str(config_path))
 
     def get(key: str) -> str | None:
         return (_typed(raw, key, str, str(config_path)) or "").strip() or None
@@ -312,7 +326,7 @@ def load_cli_directory(directory: Path | str | None = None) -> LoadedConfig:
     identity_fields = {f: v for f in _CLI_IDENTITY_FIELDS if (v := get(f))}
     entity_key_path = get("entity_key_path")
     if entity_key_path is not None:
-        entity_key_path = str(base / Path(entity_key_path).expanduser())
+        entity_key_path = str(config_path.parent / Path(entity_key_path).expanduser())
     return LoadedConfig(
         dnsid=DnsidConfig(identity=IdentityConfig(**identity_fields) if identity_fields else None),
         key_source=KeySource(cli_directory=str(base), entity_key_path=entity_key_path),
