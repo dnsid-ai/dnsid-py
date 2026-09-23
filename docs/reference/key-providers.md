@@ -52,7 +52,7 @@ LocalKeyProvider(store: _KeyStore, file_path: Path | None) -> None
 
 Initialize from an in-memory key store.
 
-Prefer the factory methods (`load`, `from_environment`,
+Prefer the factory methods (`load`,
 `from_cli_directory`, `from_domain`, `generate`).
 
 **Arguments:**
@@ -73,19 +73,6 @@ Load from *path*.
 - `path` (`Path | str`): Path to the JSON key-store file.
 - `create_if_missing` (`bool`): When ``True``, create and persist a fresh key store if the file does not exist. When ``False`` (default), raise `FileNotFoundError` if the file is absent. — default `False`
 - `algorithm` (`str`): Algorithm for a newly created store: ``EdDSA`` (default) or ``ES256``. Ignored when loading an existing store. — default `'EdDSA'`
-
-### `from_environment`
-
-```python
-LocalKeyProvider.from_environment(env: dict[str, str] | None = None, options: LocalKeyProviderEnvironmentOptions | None = None) -> LocalKeyProvider
-```
-
-Load using an env dict, falling back to ``options.default_path`` when absent.
-
-**Arguments:**
-
-- `env` (`dict[str, str] | None`): Mapping of environment variables (defaults to ``os.environ``). — default `None`
-- `options` (`LocalKeyProviderEnvironmentOptions | None`): Optional `LocalKeyProviderEnvironmentOptions`. — default `None`
 
 ### `from_cli_directory`
 
@@ -240,14 +227,6 @@ Persists the updated store when the provider is file-backed.
 **Raises:**
 
 - `ArgumentError`: If *kid* is the active key or not a retained key.
-
-## `LocalKeyProviderEnvironmentOptions`
-
-```python
-from dnsid import LocalKeyProviderEnvironmentOptions
-```
-
-Options for `LocalKeyProvider.from_environment`.
 
 ## `AwsKmsKeyProvider`
 

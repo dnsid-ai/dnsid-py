@@ -1,6 +1,6 @@
 ---
 title: "Python: Configuration"
-description: "Protocol, transport, and registry configuration, plus CLI-directory and environment-variable config helpers."
+description: "Protocol, transport, and registry configuration, plus loading from environment variables, deployment files, and DNSid CLI directories."
 ---
 
 <!-- GENERATED FILE — do not edit. Regenerate with `python scripts/gen_docs.py` in dnsid-ai/dnsid-py. -->
@@ -32,6 +32,10 @@ policy lives in VerificationConfig; transport in TransportConfig.
 
 NormalizeFQDN is applied to *domain* and *governance_id* (when it is a domain
 name) during IdentityManager.__init__.
+
+Every field defaults to ``""`` (absent) so configuration loaders and code
+overlays can carry a partial identity; the IdentityManager constructor
+rejects an absent required field with ArgumentError naming it.
 
 **Attributes:**
 
@@ -105,6 +109,10 @@ Control-plane configuration for managing the local identity's registry records.
 Never used by VerifyDomain to validate external identities; verification always
 fetches the signed record.su endpoint.
 
+**Attributes:**
+
+- `registry_url` (`str`): Registry base URL. ``""`` (absent) lets the RegistryClient constructor default to ``DEFAULT_REGISTRY_URL``.
+
 ## `PublicationConfig`
 
 ```python
@@ -113,162 +121,157 @@ from dnsid import PublicationConfig
 
 Authoritative identity-record values returned by the registry.
 
-## `config_from_cli_directory`
+## `LoadedConfig`
 
 ```python
-from dnsid import config_from_cli_directory
+from dnsid import LoadedConfig
 ```
 
-```python
-config_from_cli_directory(path: Path | str | None = None, config: DnsidConfig | None = None) -> CliConfigResult
-```
+Partial configuration from one source, or the merge of several.
 
-Build SDK config objects from DNSid CLI identity files.
-
-Reads the DNSid CLI identity directory (defaulting to ``~/.dnsid``) and
-maps ``config.json`` publication fields into ``DnsidConfig.identity``.
-Both snake_case and camelCase field names are accepted for every field,
-matching the TypeScript SDK and the CLI config contract.
-
-Two directory shapes are accepted:
-
-* **Root identity directory** (e.g. ``~/.dnsid``): ``config.json`` at the
-  root is the current-identity pointer; key files live under ``<domain>/``.
-* **Per-identity directory** (e.g. ``~/.dnsid/agent.example.com``):
-  ``config.json`` is read directly; key files are in the same directory.
-
-CLI ``config.json`` → SDK mapping (snake_case / camelCase aliases):
-
-* ``domain`` / ``fqdn``                       → ``identity.domain``
-* ``governance_id`` / ``governanceId``         → ``identity.governance_id``
-* ``status_url`` / ``statusUrl``               → ``identity.status_url``
-* ``server_url`` / ``registry_url`` / ``registryUrl`` → ``RegistryConfig.registry_url``
-  and used to derive ``status_url`` when absent
-* ``log_ref`` / ``logRef``                     → ``identity.log_ref``
-* ``ek_url`` / ``ekUrl``                       → ``identity.ek_url``
-* ``ku_url`` / ``kuUrl``                       → ``identity.ku_url``
-* ``capabilities_url`` / ``capabilitiesUrl``   → ``identity.capabilities_url``
-* ``publish_profile`` / ``publishProfile``     → ``identity.publish_profile``
-* ``max_key_age`` / ``maxKeyAge``              → ``identity.max_key_age``
-* ``entity_key_path`` / ``entityKeyPath``      → accountable-entity key provider
-
-Verification and transport settings are never read from the CLI files;
-they come only from *config*.
-
-**Arguments:**
-
-- `path` (`Path | str | None`): Path to the DNSid identity directory. Defaults to ``DNSID_CONFIG_DIR`` when set, otherwise ``~/.dnsid``. — default `None`
-- `config` (`DnsidConfig | None`): Optional caller configuration. Non-empty ``config.identity`` fields override the loaded values before normalization or derivation; ``verification`` and ``transport`` are used as-is. — default `None`
-
-**Returns:**
-
-- `CliConfigResult` — class:`CliConfigResult` with ``config``, ``registry_config``, and
-- `CliConfigResult` — ``key_directory``.
-
-**Raises:**
-
-- `FileNotFoundError`: If ``config.json`` does not exist in *path*.
-- `ValueError`: If ``config.json`` is not valid JSON, is not a JSON object, contains non-string values for expected string fields, or is missing required fields (``domain``, ``governance_id``).
-
-## `identity_manager_from_cli_directory`
-
-```python
-from dnsid import identity_manager_from_cli_directory
-```
-
-```python
-identity_manager_from_cli_directory(path: Path | str | None = None, config: DnsidConfig | None = None, deps: IdentityManagerDependencies | None = None) -> IdentityManager
-```
-
-Build a fully-initialized ``IdentityManager`` from DNSid CLI identity files.
-
-Convenience wrapper that combines `config_from_cli_directory` and
-`from_cli_directory` into a single call,
-returning the same object as explicitly constructing
-``IdentityManager(config, key_provider, deps)``.
-
-When ``entity_key_path`` is configured, its private JWK is loaded as the
-accountable-entity provider unless *deps* already supplies one.
-
-**Arguments:**
-
-- `path` (`Path | str | None`): Path to the DNSid identity directory. Defaults to ``DNSID_CONFIG_DIR`` when set, otherwise ``~/.dnsid``. — default `None`
-- `config` (`DnsidConfig | None`): Optional caller configuration; see `config_from_cli_directory` for precedence. — default `None`
-- `deps` (`IdentityManagerDependencies | None`): Optional `IdentityManagerDependencies` bundle. — default `None`
-
-**Returns:**
-
-- `IdentityManager` — A fully-initialized `IdentityManager`.
-
-**Raises:**
-
-- `FileNotFoundError`: If ``config.json`` or the key file does not exist.
-- `ValueError`: If any config or key file is invalid.
-
-## `CliConfigResult`
-
-```python
-from dnsid import CliConfigResult
-```
-
-Return value of `config_from_cli_directory`.
+Sections are always present as values; a field equal to its default is absent.
 
 **Attributes:**
 
-- `config` (`DnsidConfig`): Core config with ``identity`` populated from the CLI files (plus any caller overlay).
-- `key_directory` (`Path`): Directory containing the identity's key files (``private.jwk``, ``private.pem``, etc.).
-- `entity_key_path` (`Path | None`): Resolved accountable-entity private JWK path, when configured by the CLI.
+- `registry_credential` (`str | None`): Registry bearer credential. Never placed in a loggable config object.
 
-## `config_from_environment`
+## `LogTrust`
 
 ```python
-from dnsid import config_from_environment
+from dnsid import LogTrust
+```
+
+Lifecycle-log trust used to build ``deps.log_registry`` when the caller supplies none.
+
+Exactly one variant must be set when `construct_identity_manager` uses it. Under
+`merge_loaded_config` the section is replaced as a whole when the overlay sets any
+variant.
+
+**Attributes:**
+
+- `managed` (`bool | None`): ``True`` selects the embedded DNSid-managed trust catalog.
+- `profile` (`C2spTlogTrustProfile | None`): Parsed ``dnsid-c2sp-tlog-trust-profile@v1`` document.
+- `policy_document` (`bytes | None`): Independently trusted C2SP ``tlog-policy`` bytes.
+- `policy_url` (`str | None`): Independently trusted C2SP ``tlog-policy`` HTTPS URL.
+
+## `KeySource`
+
+```python
+from dnsid import KeySource
+```
+
+Where local key material lives. Variants are not exclusive.
+
+``cli_directory`` supplies the operational key when present, otherwise
+``key_store_path``; ``entity_key_path`` supplies the entity key whenever set.
+
+**Attributes:**
+
+- `cli_directory` (`str | None`): DNSid CLI identity directory holding ``private.jwk`` or ``<domain>/private.jwk``.
+- `entity_key_path` (`str | None`): Accountable-entity private JWK file.
+- `key_store_path` (`str | None`): :meth:`LocalKeyProvider.load` key-store file; used only without ``cli_directory``.
+
+## `load_environment`
+
+```python
+from dnsid import load_environment
 ```
 
 ```python
-config_from_environment(env: dict[str, str] | None = None, require: list[str] = []) -> EnvironmentConfigResult
+load_environment(env: Mapping[str, str] | None = None) -> LoadedConfig
 ```
 
-Build SDK config objects from ``DNSID_*`` environment variables.
+Read the ``DNSID_*`` environment schema into a `LoadedConfig`.
 
-Required variables:
-
-* ``DNSID_DOMAIN`` — agent FQDN
-* ``DNSID_GOVERNANCE_ID`` — governance domain or URI
-* ``DNSID_STATUS_URL`` — direct agent status URL (if omitted, derived from
-  ``DNSID_REGISTRY_URL`` which itself defaults to the local registry,
-  ``http://127.0.0.1:7755``)
-
-Optional variables:
-
-* ``DNSID_LOG_REF`` — log reference (default: ``"noop:0"``)
-* ``DNSID_REGISTRY_URL`` — registry base URL (hosted use sets this)
-* ``DNSID_API_KEY`` — owner API key for registry workflows
-* ``DNSID_KU_URL`` — explicit JWKS URL override
-* ``DNSID_DNS_SERVER`` — custom DNS server in ``host:port`` form
-* ``DNSID_CA_BUNDLE`` — path to a CA bundle for TLS trust augmentation
-* ``DNSID_PRIVATE_HOSTS`` — comma-separated hostnames or ``.suffix`` entries
-  allowed to resolve to loopback/private addresses (e.g. ``.test``)
-* ``DNSID_DNSSEC_MODE`` — ``"auto"`` | ``"validated"`` | ``"required"``
-* ``DNSID_PUBLIC_URL`` — public base URL of the agent
-* ``DNSID_KEY_STORE`` — local key-store file path
-* ``DNSID_AGENT_NAME`` — display name for the agent
-* ``DNSID_AGENT_PORT`` — HTTP port the agent listens on
+Values are trimmed; unset, empty, or whitespace-only variables are absent.
+Unknown ``DNSID_*`` variables (deployment tooling such as ``DNSID_PUBLIC_URL``)
+are ignored. ``DNSID_LOG_POLICY_FILE`` is read as bytes and
+``DNSID_LOG_TRUST_PROFILE_FILE`` is read and parsed here.
 
 **Arguments:**
 
-- `env` (`dict[str, str] | None`): Mapping of environment variables. Defaults to ``os.environ``. — default `None`
-- `require` (`list[str]`): List of field names from `dnsid_environment_variables` that must be present and non-empty. Raises `ValueError` if any are missing. — default `[]`
-
-**Returns:**
-
-- `EnvironmentConfigResult` — class:`EnvironmentConfigResult` with ``config`` (identity, verification,
-- `EnvironmentConfigResult` — transport), ``registry_config``, and optional ``public_url``,
-- `EnvironmentConfigResult` — ``key_store_path``, ``agent_name``, and ``agent_port``.
+- `env` (`Mapping[str, str] | None`): Environment mapping. Defaults to ``os.environ``. — default `None`
 
 **Raises:**
 
-- `ValueError`: If a required variable is missing or ``DNSID_DNSSEC_MODE`` is invalid.
+- `ArgumentError`: ``DNSID_DNSSEC_MODE`` is not ``auto``, ``validated``, or ``required``.
+
+## `load_file`
+
+```python
+from dnsid import load_file
+```
+
+```python
+load_file(path: Path | str) -> LoadedConfig
+```
+
+Read a JSON deployment file: ``{"dnsid"?, "logTrust"?, "registry"?}``.
+
+Members are camelCase, the JSON encoding of `LoadedConfig` minus the
+secret ``registryCredential`` and ``keySource``. Unknown members, mistyped
+values, and duplicate members are rejected with ArgumentError; ``dnsid``
+contents are otherwise validated by the IdentityManager constructor.
+
+## `load_cli_directory`
+
+```python
+from dnsid import load_cli_directory
+```
+
+```python
+load_cli_directory(directory: Path | str | None = None) -> LoadedConfig
+```
+
+Read ``<directory>/config.json`` written by the DNSid CLI.
+
+*directory* defaults to ``~/.dnsid``; ``DNSID_CONFIG_DIR`` is not consulted
+here (`load_environment` carries it as ``key_source.cli_directory``).
+Persisted snake_case publication fields map into ``dnsid.identity`` exactly
+as written: ``status_url`` is never derived from ``server_url`` and no log
+reference is substituted. The directory becomes ``key_source.cli_directory``
+and a relative ``entity_key_path`` resolves against it.
+
+**Raises:**
+
+- `FileNotFoundError`: ``config.json`` does not exist.
+- `ArgumentError`: ``config.json`` is not a JSON object or a field is not a string.
+
+## `merge_loaded_config`
+
+```python
+from dnsid import merge_loaded_config
+```
+
+```python
+merge_loaded_config(base: LoadedConfig, overlay: LoadedConfig) -> LoadedConfig
+```
+
+Apply *overlay* onto *base* field-wise; a present overlay field wins.
+
+Presence, not truthiness: ``trusted_entities=[]`` replaces a loaded list.
+Lists replace, never concatenate. ``log_trust`` is replaced as a whole when
+the overlay sets any variant. See the module docstring for the default
+values that cannot express presence.
+
+## `construct_identity_manager`
+
+```python
+from dnsid import construct_identity_manager
+```
+
+```python
+construct_identity_manager(loaded: LoadedConfig, key_provider: KeyProvider | None = None, deps: IdentityManagerDependencies | None = None) -> IdentityManager
+```
+
+Build an `IdentityManager` from a merged `LoadedConfig`.
+
+Caller dependencies win: ``deps.log_registry`` is built from ``log_trust``
+only when absent (the trust section is then not inspected), and key
+providers are built from ``key_source`` only when ``dnsid.identity`` is
+present and the corresponding provider is absent. ``loaded.dnsid`` is
+validated first so invalid configuration never reads a key file or fetches
+a policy. Adds no configuration values.
 
 ## `identity_manager_from_environment`
 
@@ -277,24 +280,37 @@ from dnsid import identity_manager_from_environment
 ```
 
 ```python
-identity_manager_from_environment(env: dict[str, str] | None = None, deps: IdentityManagerDependencies | None = None) -> IdentityManager
+identity_manager_from_environment(env: Mapping[str, str] | None = None, overlay: DnsidConfig | None = None, key_provider: KeyProvider | None = None, deps: IdentityManagerDependencies | None = None) -> IdentityManager
 ```
 
-Build an ``IdentityManager`` from ``DNSID_*`` environment variables.
+Load → Merge → Construct over ``load_environment(env)``.
 
-``DNSID_CONFIG_DIR`` selects CLI/testnet key files when present; otherwise
-``DNSID_KEY_STORE`` selects the SDK key store. Environment DNS/TLS settings
-become ``config.transport``. Lifecycle-log trust remains an explicit
-dependency; pass a ``LogRegistry`` through *deps*.
+Without ``DNSID_DOMAIN`` the result is a verification-only manager; under
+``dnsid local run``, ``DNSID_CONFIG_DIR`` supplies the key files.
 
-**Arguments:**
+## `identity_manager_from_dnsid`
 
-- `env` (`dict[str, str] | None`): Environment mapping. Defaults to ``os.environ``. — default `None`
-- `deps` (`IdentityManagerDependencies | None`): Optional explicit manager dependencies. — default `None`
+```python
+from dnsid import identity_manager_from_dnsid
+```
 
-**Returns:**
+```python
+identity_manager_from_dnsid(directory: Path | str | None = None, overlay: DnsidConfig | None = None, key_provider: KeyProvider | None = None, deps: IdentityManagerDependencies | None = None) -> IdentityManager
+```
 
-- `IdentityManager` — A fully initialized ``IdentityManager``.
+Load → Merge → Construct over ``load_cli_directory(directory)``.
+
+## `identity_manager_from_file`
+
+```python
+from dnsid import identity_manager_from_file
+```
+
+```python
+identity_manager_from_file(path: Path | str, overlay: DnsidConfig | None = None, key_provider: KeyProvider | None = None, deps: IdentityManagerDependencies | None = None) -> IdentityManager
+```
+
+Load → Merge → Construct over ``load_file(path)``.
 
 ## `registry_client_from_environment`
 
@@ -303,50 +319,9 @@ from dnsid import registry_client_from_environment
 ```
 
 ```python
-registry_client_from_environment(env: dict[str, str] | None = None) -> RegistryClient
+registry_client_from_environment(env: Mapping[str, str] | None = None) -> RegistryClient
 ```
 
-Build a `RegistryClient` from ``DNSID_REGISTRY_URL`` and ``DNSID_API_KEY``.
+`RegistryClient` from ``DNSID_REGISTRY_URL`` and ``DNSID_API_KEY``.
 
-These are the variables ``dnsid local env`` exports. Unset means the local
-registry with no credential. Unlike `config_from_environment` this
-needs no identity variables, so it works before an agent exists. It is the
-only place the registry client reads the environment.
-
-## `EnvironmentConfigResult`
-
-```python
-from dnsid import EnvironmentConfigResult
-```
-
-Return value of `config_from_environment`.
-
-## `EnvironmentFieldName`
-
-```python
-from dnsid import EnvironmentFieldName
-```
-
-*Value:* `str`
-
-## `dnsid_environment_variables`
-
-```python
-from dnsid import dnsid_environment_variables
-```
-
-*Type:* `dict[str, str]`
-
-*Value:* `{'domain': 'DNSID_DOMAIN', 'governance_id': 'DNSID_GOVERNANCE_ID', 'registry_url': 'DNSID_REGISTRY_URL', 'api_key': 'DNSID_API_KEY', 'status_url': 'DNSID_STATUS_URL', 'log_ref': 'DNSID_LOG_REF', 'ek_url': 'DNSID_EK_URL', 'ku_url': 'DNSID_KU_URL', 'publish_profile': 'DNSID_PUBLISH_PROFILE', 'dns_server': 'DNSID_DNS_SERVER', 'ca_bundle_path': 'DNSID_CA_BUNDLE', 'private_address_hosts': 'DNSID_PRIVATE_HOSTS', 'dnssec_mode': 'DNSID_DNSSEC_MODE', 'public_url': 'DNSID_PUBLIC_URL', 'key_store_path': 'DNSID_KEY_STORE', 'agent_port': 'DNSID_AGENT_PORT', 'agent_name': 'DNSID_AGENT_NAME'}`
-
-## `key_store_path_from_environment`
-
-```python
-from dnsid import key_store_path_from_environment
-```
-
-```python
-key_store_path_from_environment(env: dict[str, str] | None = None, default_path: str = '.dnsid/keys.json') -> str
-```
-
-Return the key-store file path from ``DNSID_KEY_STORE``, or *default_path*.
+The constructor applies the local-registry default when the URL is absent.

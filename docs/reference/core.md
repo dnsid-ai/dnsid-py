@@ -24,6 +24,7 @@ verification-only use, these methods raise ArgumentError.
 
 - `config` (`DnsidConfig`): Return an independent copy of the manager's validated configuration.
 - `local_domain` (`str`): Return the local identity FQDN, or ``""`` for a verification-only manager.
+- `key_provider` (`KeyProvider | None`): Return the operational key provider, or ``None`` for a verification-only manager.
 
 ### `IdentityManager` constructor
 

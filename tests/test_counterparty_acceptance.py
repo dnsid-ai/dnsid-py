@@ -180,8 +180,10 @@ class TestConfiguration:
             TransportConfig(allow_private=True)  # type: ignore[call-arg]
         with pytest.raises(ArgumentError, match="governance_id"):
             TrustedEntity()  # type: ignore[call-arg]
-        with pytest.raises(ArgumentError, match="domain"):
-            IdentityConfig()  # type: ignore[call-arg]
+        with pytest.raises(ArgumentError, match="fqdn"):
+            IdentityConfig(fqdn="a.example")  # type: ignore[call-arg]
+        with pytest.raises(ArgumentError, match="identity.domain is required"):
+            IdentityManager(DnsidConfig(identity=IdentityConfig()), key_provider=MagicMock())
 
     def test_dns_server_with_only_resolver_injected_configures_fetcher(self):
         with patch("dnsid.manager._make_sdk_transport") as make_transport:

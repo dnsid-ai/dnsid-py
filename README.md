@@ -271,6 +271,7 @@ dnsid/
 ├── interfaces.py        # ABCs to implement: KeyProvider, Log, LogReader, DNSResolver, IdentityCache
 ├── registry.py          # LogRegistry — plug in ledger method implementations
 ├── registry_client.py   # RegistryClient — operator-side registry workflows
+├── config_loading.py    # load_environment / load_file / load_cli_directory → merge → construct
 ├── c2sp_tlog/           # C2SP tile-log LogReader binding (lr=c2sp-tlog:...)
 ├── web_bot_auth.py      # WebBotAuthProfile — web bot/agent HTTP authentication
 ├── _crypto.py           # JWK thumbprint (RFC 7638) and signature verification
@@ -544,8 +545,7 @@ duplicate normalized entities, or malformed pins raise `ArgumentError` before
 any network work). Transport settings with no SDK-managed consumer are rejected:
 `dns_server` when both `dns_resolver` and `https_fetcher` are injected,
 `ca_bundle_path` when `https_fetcher` is injected. Constructors never read files
-or environment variables; use `config_from_environment` /
-`config_from_cli_directory` explicitly.
+or environment variables; loading is a separate step, below.
 
 `TransportConfig` fields:
 
@@ -559,7 +559,47 @@ or environment variables; use `config_from_environment` /
 
 | Field | Default | Description |
 |---|---|---|
-| `registry_url` | `"http://127.0.0.1:7755"` | DNSid registry base URL; the local registry by default, set `DNSID_REGISTRY_URL` for hosted |
+| `registry_url` | `""` | DNSid registry base URL; absent lets `RegistryClient` default to the local registry (`http://127.0.0.1:7755`), set `DNSID_REGISTRY_URL` for hosted |
+
+### Loading configuration
+
+Loaders parse; constructors default. Each source has one loader returning a
+`LoadedConfig` with only the fields the source actually carries; `merge_loaded_config`
+combines them field-wise (later wins, lists replace, `log_trust` is atomic);
+`construct_identity_manager` fills `deps.log_registry` from `log_trust` and key providers from
+`key_source` when the caller did not supply them, then calls the ordinary
+`IdentityManager` constructor. The one-call constructors are exactly
+`construct_identity_manager(merge_loaded_config(load_…(), LoadedConfig(dnsid=overlay)), key_provider, deps)`.
+
+```python
+from dnsid import (
+    identity_manager_from_environment,  # DNSID_* variables
+    identity_manager_from_dnsid,        # ~/.dnsid or a DNSid CLI identity directory
+    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry"}
+    load_environment, load_file, load_cli_directory, merge_loaded_config, construct_identity_manager, LoadedConfig,
+)
+
+idm = identity_manager_from_environment()          # under `dnsid local run`: keys, transport, log trust
+idm = construct_identity_manager(merge_loaded_config(load_file("dnsid.json"), load_environment()))
+```
+
+| Variable | Maps to |
+|---|---|
+| `DNSID_DOMAIN`, `DNSID_GOVERNANCE_ID`, `DNSID_STATUS_URL`, `DNSID_LOG_REF`, `DNSID_EK_URL`, `DNSID_KU_URL`, `DNSID_PUBLISH_PROFILE`, `DNSID_CAPABILITIES_URL` | `dnsid.identity.*` |
+| `DNSID_DNSSEC_MODE` | `dnsid.verification.dnssec_mode` (`auto`, `validated`, `required`) |
+| `DNSID_DNS_SERVER`, `DNSID_CA_BUNDLE`, `DNSID_PRIVATE_HOSTS` (comma-separated) | `dnsid.transport.*` |
+| `DNSID_LOG_POLICY_URL`, `DNSID_LOG_POLICY_FILE`, `DNSID_LOG_TRUST_PROFILE_FILE` | `log_trust` (exactly one variant; `{"managed": true}` is file/code only) |
+| `DNSID_REGISTRY_URL`, `DNSID_API_KEY` | `registry.registry_url`, `registry_credential` |
+| `DNSID_CONFIG_DIR`, `DNSID_KEY_STORE` | `key_source.cli_directory`, `key_source.key_store_path` |
+
+Empty or whitespace-only values are absent. No loader defaults or derives a
+value: without `DNSID_DOMAIN` the manager is verification-only; with
+`DNSID_DOMAIN` but no `DNSID_LOG_REF`, construction fails with `ArgumentError`
+(no placeholder log reference, no `status_url` derived from the registry URL).
+Tooling variables (`DNSID_PUBLIC_URL`, `DNSID_AGENT_PORT`, `DNSID_SERVER`, …)
+are ignored. In `merge_loaded_config`, a value equal to the type default (`""`, `AUTO`, zero
+interval, empty `private_address_hosts`) is absent and cannot reset a loaded
+value; `trusted_entities=[]` is present and denies all.
 
 ## Examples
 

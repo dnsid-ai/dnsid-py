@@ -54,10 +54,11 @@ files under `~/.dnsid-testnet`, registers each local upstream, and injects the f
 the registry session credential (`DNSID_API_KEY`), the independently trusted C2SP
 policy location (`DNSID_LOG_POLICY_URL`), and the provisioned identity directory
 (`DNSID_CONFIG_DIR`) whose `private.jwk` carries the RFC 7638 thumbprint `kid` the
-registry requires. The example requires that separate policy URL and never derives
-it from `DNSID_LOG_REF` or the log prefix, preserving custom testnet proxy ports.
-Production applications must likewise keep official or pinned policy trust
-independently configured rather than discovering it from log-provided data.
+registry requires. The SDK's `load_environment()` reads all of it and `construct_identity_manager()`
+wires the key files and the C2SP policy fetch; the example adds only the agent-card
+URL as a code overlay. The policy URL is never derived from `DNSID_LOG_REF` or the
+log prefix. Production applications must likewise keep official or pinned policy
+trust independently configured rather than discovering it from log-provided data.
 
 The CLI also owns the testnet lifecycle and state:
 
@@ -103,7 +104,7 @@ instead of `published identity record`.
 
 | Step | What happens |
 |------|-------------|
-| Startup | Agent loads its Ed25519 key from the `DNSID_CONFIG_DIR` identity directory and the independently supplied C2SP policy URL from `DNSID_LOG_POLICY_URL` (falling back only to a self-managed `.testnet/agents/{name}.keys.json` key store) |
+| Startup | `load_environment()` → `merge_loaded_config()` → `construct_identity_manager()` builds the `IdentityManager`: Ed25519 key from the `DNSID_CONFIG_DIR` identity directory, log trust from the independently supplied `DNSID_LOG_POLICY_URL` |
 | Registration | `RegistryClient.register_agent()` registers with the registry |
 | Verification | The agent requests verification, polls the status document for the challenge nonce, signs the decoded nonce with its active key, and submits it via `RegistryClient.submit_challenge_signature()`; the registry transitions `VERIFICATION → VERIFIED` |
 | Publish | `IdentityManager.publish_to_registry()` validates and signs the registry's canonical content, then submits the signature |
