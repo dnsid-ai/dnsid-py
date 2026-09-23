@@ -92,8 +92,8 @@ class LoadedConfig:
     dnsid: DnsidConfig = field(default_factory=DnsidConfig)
     log_trust: LogTrust = field(default_factory=LogTrust)
     registry: RegistryConfig = field(default_factory=RegistryConfig)
-    registry_credential: str | None = None
-    """Registry bearer credential. Never placed in a loggable config object."""
+    registry_credential: str | None = field(default=None, repr=False)
+    """Registry bearer credential. Excluded from ``repr`` so a logged config never leaks it."""
     key_source: KeySource = field(default_factory=KeySource)
 
 

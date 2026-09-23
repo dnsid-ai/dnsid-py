@@ -10,6 +10,11 @@
 
 ### Breaking
 
+- Configuration loading follows SDK design 12 (loaders parse; constructors default). New module `dnsid.config_loading`: `load_environment`, `load_file`, `load_cli_directory`, `merge_loaded_config`, `construct_identity_manager`, `identity_manager_from_environment`, `identity_manager_from_dnsid`, `identity_manager_from_file`, `registry_client_from_environment`. Removed `dnsid.environment` (`config_from_environment`, `key_store_path_from_environment`), `dnsid.cli_config` (`config_from_cli_directory`, `identity_manager_from_cli_directory`), and `LocalKeyProvider.from_environment`.
+- Loaders no longer substitute a `noop:0` log reference or derive `status_url` from `server_url`/`DNSID_REGISTRY_URL`; a local identity now needs `DNSID_LOG_REF` and `DNSID_STATUS_URL` (or the persisted CLI values) or construction fails with `ArgumentError`.
+- `identity_manager_from_dnsid()` with no directory reads `~/.dnsid` and no longer consults `DNSID_CONFIG_DIR`. Under `dnsid local run` use `identity_manager_from_environment()`, which takes keys from `DNSID_CONFIG_DIR`.
+- `IdentityConfig` fields default to `""` (absent); `VerificationConfig.dnssec_mode` defaults to `None` (resolves to `AUTO` at construction); `RegistryConfig.registry_url` defaults to `""` (the `RegistryClient` constructor applies the loopback default).
+- New variables: `DNSID_PUBLISH_PROFILE`, `DNSID_CAPABILITIES_URL`, `DNSID_LOG_POLICY_URL`, `DNSID_LOG_POLICY_FILE`, `DNSID_LOG_TRUST_PROFILE_FILE`, `DNSID_CONFIG_DIR`. `DNSID_PUBLIC_URL`, `DNSID_AGENT_PORT`, `DNSID_AGENT_NAME` are no longer read by the SDK.
 - `.test` names are no longer implicitly allowed to resolve to loopback/private addresses; configure `TransportConfig.private_address_hosts={".test"}` (or `DNSID_PRIVATE_HOSTS=.test`) explicitly.
 - A `private_address_hosts` match may now resolve only to loopback or private-use (RFC 1918/4193) addresses; link-local, multicast, reserved, unspecified, and mixed public+non-public resolutions are rejected. IP-literal URLs are never exempted.
 - The C2SP verification factory's built-in resource fetcher now honours `transport_config.private_address_hosts` instead of stripping it.
@@ -18,7 +23,7 @@
 
 ### Features
 
-- `config_from_environment` reads `DNSID_PRIVATE_HOSTS` (comma-separated) into `TransportConfig.private_address_hosts`.
+- `load_environment` reads `DNSID_PRIVATE_HOSTS` (comma-separated) into `TransportConfig.private_address_hosts`.
 
 
 ## [0.20.0] - 2026-09-22

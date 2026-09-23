@@ -799,3 +799,9 @@ def test_removed_environment_readers_are_gone():
     ):
         assert not hasattr(dnsid, name), name
     assert not hasattr(LocalKeyProvider, "from_environment")
+
+
+def test_loaded_config_repr_hides_registry_credential() -> None:
+    loaded = load_environment({"DNSID_API_KEY": "secret-token"})
+    assert loaded.registry_credential == "secret-token"
+    assert "secret-token" not in repr(loaded)
