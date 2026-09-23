@@ -497,13 +497,9 @@ class TestPublishToRegistry:
         """The dated draft profile is no longer publishable (design:
         SupportedPublishProfiles = ["dnsid-draft-01"])."""
         cfg = _make_config(publish_profile=_LEGACY_PROFILE)
-        manager = self._manager(cfg)
-        registry = _make_registry(_BASE_CANONICAL)
-
+        # Rejected at construction, before any network work.
         with pytest.raises(ArgumentError, match="unsupported DNSid publish profile"):
-            manager.publish_to_registry(registry)
-
-        registry.canonical_record_content.assert_not_called()
+            self._manager(cfg)
 
 
 class TestAwaitRegistryManagedPublication:

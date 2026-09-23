@@ -6,6 +6,7 @@
 - `.test` names are no longer implicitly allowed to resolve to loopback/private addresses; configure `TransportConfig.private_address_hosts={".test"}` (or `DNSID_PRIVATE_HOSTS=.test`) explicitly.
 - A `private_address_hosts` match may now resolve only to loopback or private-use (RFC 1918/4193) addresses; link-local, multicast, reserved, unspecified, and mixed public+non-public resolutions are rejected. IP-literal URLs are never exempted.
 - The C2SP verification factory's built-in resource fetcher now honours `transport_config.private_address_hosts` instead of stripping it.
+- `IdentityManager` type-checks `IdentityConfig` and `TransportConfig` fields at construction and rejects an unsupported `publish_profile`, invalid `max_key_age`, or non-HTTPS `status_url`/`ek_url`/`ku_url`/`capabilities_url` with `ArgumentError` before any network work (previously surfaced on first publish).
 - `IdentityManager` rejects `private_address_hosts` entries that are not a bare hostname or leading-dot suffix (IP literals, ports, schemes, paths, credentials, empty) with `ArgumentError`, and rejects a non-empty set when `https_fetcher` is injected.
 
 ### Features

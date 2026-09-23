@@ -179,6 +179,7 @@ class IdentityManager:
         else:
             if key_provider is None:
                 raise ArgumentError("config.identity requires a key_provider")
+            _validate_identity_config(identity)
             identity.domain = normalize_fqdn(identity.domain, agent_fqdn=True)
             identity.governance_id = _maybe_normalize_fqdn(identity.governance_id)
         config.verification = _validate_verification_config(config.verification)
@@ -1941,12 +1942,42 @@ def _validate_verification_config(cfg: VerificationConfig) -> VerificationConfig
     )
 
 
+def _validate_identity_config(cfg: IdentityConfig) -> None:
+    """Type-check identity fields and reject unusable profile/ka/URL values early."""
+    from dataclasses import fields
+
+    from ._utils import PERMITTED_KA_VALUES
+    from .models import _parse_https_uri_host, publish_allowed_version
+
+    if not isinstance(cfg, IdentityConfig):
+        raise ArgumentError("config.identity must be an IdentityConfig")
+    for f in fields(IdentityConfig):
+        if not isinstance(getattr(cfg, f.name), str):
+            raise ArgumentError(f"identity.{f.name} must be a string")
+    if cfg.publish_profile and not publish_allowed_version(cfg.publish_profile):
+        raise ArgumentError(f"unsupported DNSid publish profile: {cfg.publish_profile!r}")
+    if cfg.max_key_age and cfg.max_key_age not in PERMITTED_KA_VALUES:
+        raise ArgumentError(f"identity.max_key_age must be one of: {sorted(PERMITTED_KA_VALUES)}")
+    for name in ("status_url", "ek_url", "ku_url", "capabilities_url"):
+        value = getattr(cfg, name)
+        if value:
+            try:
+                _parse_https_uri_host(value, field_name=f"identity.{name}")
+            except ValidationError as exc:
+                raise ArgumentError(str(exc)) from exc
+
+
 def _validate_transport_config(
     cfg: TransportConfig, *, resolver_injected: bool, fetcher_injected: bool
 ) -> None:
-    """Reject transport settings whose only SDK-managed consumers are injected."""
+    """Type-check transport settings and reject those whose only consumers are injected."""
     if not isinstance(cfg, TransportConfig):
         raise ArgumentError("config.transport must be a TransportConfig")
+    for name in ("dns_server", "ca_bundle_path"):
+        if not isinstance(getattr(cfg, name), str):
+            raise ArgumentError(f"transport.{name} must be a string")
+    if not isinstance(cfg.private_address_hosts, frozenset | set | list | tuple):
+        raise ArgumentError("transport.private_address_hosts must be a set of strings")
     if cfg.dns_server and resolver_injected and fetcher_injected:
         raise ArgumentError(
             "transport.dns_server has no SDK-managed consumer: both dns_resolver "

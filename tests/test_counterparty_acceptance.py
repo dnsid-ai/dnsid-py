@@ -222,6 +222,66 @@ class TestConfiguration:
             ).close()
         assert make_transport.call_args.args[0].ca_bundle_path == "/ca.pem"
 
+    @pytest.mark.parametrize(
+        "transport",
+        [
+            TransportConfig(dns_server=None),  # type: ignore[arg-type]
+            TransportConfig(dns_server=5353),  # type: ignore[arg-type]
+            TransportConfig(ca_bundle_path=b"/ca.pem"),  # type: ignore[arg-type]
+            TransportConfig(private_address_hosts=".test"),  # type: ignore[arg-type]
+            TransportConfig(private_address_hosts=frozenset({1})),  # type: ignore[arg-type]
+        ],
+    )
+    def test_mistyped_transport_fields_fail_before_network(self, transport):
+        resolver = MagicMock(spec=DNSResolver)
+        with pytest.raises(ArgumentError, match="transport\\."):
+            IdentityManager(
+                DnsidConfig(transport=transport),
+                deps=IdentityManagerDependencies(dns_resolver=resolver),
+            )
+        resolver.fetch_txt.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("overrides", "match"),
+        [
+            ({"status_url": None}, "identity.status_url must be a string"),
+            ({"ek_url": 42}, "identity.ek_url must be a string"),
+            ({"ku_url": ["https://agent.example.com/jwks"]}, "identity.ku_url must be a string"),
+            ({"publish_profile": 1}, "identity.publish_profile must be a string"),
+            ({"max_key_age": 7}, "identity.max_key_age must be a string"),
+            ({"policy_flags": b"mtls"}, "identity.policy_flags must be a string"),
+            ({"publish_profile": "dnsid-draft-99"}, "unsupported DNSid publish profile"),
+            ({"max_key_age": "1y"}, "identity.max_key_age must be one of"),
+            ({"status_url": "http://agent.example.com/status"}, "identity.status_url"),
+            ({"ek_url": "ftp://example.com/jwks"}, "identity.ek_url"),
+            ({"ku_url": "not a url"}, "identity.ku_url"),
+            ({"capabilities_url": "https:///nohost"}, "identity.capabilities_url"),
+        ],
+    )
+    def test_invalid_identity_config_fails_before_network(self, ec_provider, overrides, match):
+        resolver = MagicMock(spec=DNSResolver)
+        with pytest.raises(ArgumentError, match=match):
+            IdentityManager(
+                DnsidConfig(identity=_identity(**overrides)),
+                ec_provider,
+                deps=IdentityManagerDependencies(dns_resolver=resolver),
+            )
+        resolver.fetch_txt.assert_not_called()
+
+    def test_valid_identity_config_accepted(self, ec_provider):
+        IdentityManager(
+            DnsidConfig(
+                identity=_identity(
+                    ek_url="https://example.com/jwks",
+                    ku_url="https://agent.example.com/jwks",
+                    max_key_age="30d",
+                    publish_profile="dnsid-draft-01",
+                )
+            ),
+            ec_provider,
+            deps=IdentityManagerDependencies(dns_resolver=MagicMock(spec=DNSResolver)),
+        ).close()
+
     def test_private_address_hosts_with_fetcher_injected_is_rejected(self):
         with pytest.raises(ArgumentError, match="private_address_hosts"):
             IdentityManager(
