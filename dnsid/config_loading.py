@@ -12,7 +12,7 @@ validation.
 Presence is "differs from the dataclass default". Core config types cannot
 express presence for their defaults, so in :func:`merge_loaded_config` an overlay value equal
 to the default is absent and cannot reset a loaded value: ``""`` identity and
-transport strings, ``dnssec_mode=AUTO``, ``status_check_interval=0``, and an
+transport strings, ``status_check_interval=0``, and an
 empty ``private_address_hosts``. ``trusted_entities=[]`` is present (deny all);
 ``None`` is absent.
 """
@@ -135,7 +135,7 @@ def load_environment(env: Mapping[str, str] | None = None) -> LoadedConfig:
     identity_fields = {f: v for var, f in _IDENTITY_VARIABLES.items() if (v := get(var))}
     mode = get("DNSID_DNSSEC_MODE")
     try:
-        dnssec_mode = DNSSECMode(mode) if mode else DNSSECMode.AUTO
+        dnssec_mode = DNSSECMode(mode) if mode else None
     except ValueError:
         raise ArgumentError(
             f"invalid DNSID_DNSSEC_MODE {mode!r}; expected one of: "

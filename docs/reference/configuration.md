@@ -64,7 +64,7 @@ managers.
 **Attributes:**
 
 - `status_check_interval` (`datetime.timedelta`): Maximum age of cached status before verify_domain re-fetches ``su``. Zero (default) re-fetches on every invocation (spec-strict interactive verification). Must be non-negative.
-- `dnssec_mode` (`DNSSECMode`): DNSSEC enforcement mode; ``FAILED`` always aborts.
+- `dnssec_mode` (`DNSSECMode | None`): DNSSEC enforcement mode; ``FAILED`` always aborts. ``None`` (absent) resolves to ``AUTO`` at construction.
 - `trusted_entities` (`list[TrustedEntity] | tuple[TrustedEntity, ...] | None`): Optional counterparty allowlist. ``None`` makes no acceptance decision; an empty list denies every counterparty.
 
 ## `TrustedEntity`

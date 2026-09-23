@@ -140,6 +140,7 @@ def _tls_server(tmp_path: Path, body: bytes):
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(cert_pem, key_pem)
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -240,6 +241,31 @@ def test_overlay_omitting_trusted_entities_keeps_file_list(tmp_path):
     )
     merged = merge_loaded_config(load_file(path), LoadedConfig(dnsid=DnsidConfig()))
     assert merged.dnsid.verification.trusted_entities == [TrustedEntity("acme.example")]
+
+
+def test_overlay_auto_dnssec_mode_replaces_file_required(tmp_path):
+    path = _write_file(tmp_path, {"dnsid": {"verification": {"dnssecMode": "required"}}})
+    auto = DnsidConfig(verification=VerificationConfig(dnssec_mode=DNSSECMode.AUTO))
+    merged = merge_loaded_config(load_file(path), LoadedConfig(dnsid=auto))
+    assert merged.dnsid.verification.dnssec_mode is DNSSECMode.AUTO
+    manager = construct_identity_manager(merged)
+    assert manager.config.verification.dnssec_mode is DNSSECMode.AUTO
+    manager.close()
+
+
+def test_overlay_omitting_dnssec_mode_keeps_file_required(tmp_path):
+    path = _write_file(tmp_path, {"dnsid": {"verification": {"dnssecMode": "required"}}})
+    merged = merge_loaded_config(load_file(path), LoadedConfig(dnsid=DnsidConfig()))
+    assert merged.dnsid.verification.dnssec_mode is DNSSECMode.REQUIRED
+    manager = construct_identity_manager(merged)
+    assert manager.config.verification.dnssec_mode is DNSSECMode.REQUIRED
+    manager.close()
+
+
+def test_absent_dnssec_mode_resolves_to_auto_in_snapshot():
+    manager = IdentityManager(DnsidConfig())
+    assert manager.config.verification.dnssec_mode is DNSSECMode.AUTO
+    manager.close()
 
 
 def test_environment_policy_url_replaces_file_managed_trust_atomically(tmp_path):

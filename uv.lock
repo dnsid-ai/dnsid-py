@@ -285,7 +285,7 @@ wheels = [
 
 [[package]]
 name = "dnsid"
-version = "0.19.3"
+version = "0.21.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

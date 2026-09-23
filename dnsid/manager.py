@@ -1918,11 +1918,12 @@ def _validate_verification_config(cfg: VerificationConfig) -> VerificationConfig
     interval = cfg.status_check_interval
     if not isinstance(interval, datetime.timedelta) or interval < datetime.timedelta(0):
         raise ArgumentError("status_check_interval must be a non-negative timedelta")
-    if not isinstance(cfg.dnssec_mode, DNSSECMode):
-        raise ArgumentError(f"invalid DNSSEC mode: {cfg.dnssec_mode!r}")
+    mode = cfg.dnssec_mode if cfg.dnssec_mode is not None else DNSSECMode.AUTO
+    if not isinstance(mode, DNSSECMode):
+        raise ArgumentError(f"invalid DNSSEC mode: {mode!r}")
     entities = cfg.trusted_entities
     if entities is None:
-        return cfg
+        return VerificationConfig(status_check_interval=interval, dnssec_mode=mode)
     if isinstance(entities, str | bytes) or not isinstance(entities, list | tuple):
         raise ArgumentError("trusted_entities must be a list of TrustedEntity or None")
     normalized: list[TrustedEntity] = []
@@ -1957,7 +1958,7 @@ def _validate_verification_config(cfg: VerificationConfig) -> VerificationConfig
         normalized.append(TrustedEntity(governance_id=gi, entity_key_thumbprints=pins))
     return VerificationConfig(
         status_check_interval=interval,
-        dnssec_mode=cfg.dnssec_mode,
+        dnssec_mode=mode,
         trusted_entities=tuple(normalized),
     )
 

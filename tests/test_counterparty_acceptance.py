@@ -121,7 +121,9 @@ class TestConfiguration:
         only = IdentityManager(DnsidConfig(verification=verification), deps=deps)
         assert local.config.verification == only.config.verification
         assert only.config.verification.trusted_entities == (TrustedEntity("example.com"),)
-        assert IdentityManager(deps=deps).config.verification == VerificationConfig()
+        assert IdentityManager(deps=deps).config.verification == VerificationConfig(
+            dnssec_mode=DNSSECMode.AUTO
+        )
 
     def test_caller_mutation_after_construction_does_not_affect_manager(self):
         entities = [TrustedEntity(GI)]

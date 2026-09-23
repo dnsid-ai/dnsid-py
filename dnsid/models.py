@@ -133,12 +133,13 @@ class VerificationConfig:
             every invocation (spec-strict interactive verification).  Must be
             non-negative.
         dnssec_mode: DNSSEC enforcement mode; ``FAILED`` always aborts.
+            ``None`` (absent) resolves to ``AUTO`` at construction.
         trusted_entities: Optional counterparty allowlist.  ``None`` makes no
             acceptance decision; an empty list denies every counterparty.
     """
 
     status_check_interval: datetime.timedelta = field(default_factory=lambda: datetime.timedelta(0))
-    dnssec_mode: DNSSECMode = DNSSECMode.AUTO
+    dnssec_mode: DNSSECMode | None = None
     trusted_entities: list[TrustedEntity] | tuple[TrustedEntity, ...] | None = None
 
 
