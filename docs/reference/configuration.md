@@ -92,7 +92,7 @@ default components only and never mutate injected dependencies.
 
 - `dns_server` (`str`): Custom DNS server: ``"host:port"`` form (e.g. ``"8.8.8.8:53"``) for standard DNS, or an ``http(s)://`` URL for DNSid TXT lookups via DNS-over-HTTPS (which reports DNSSEC state from the AD bit); empty uses the system resolver. SDK-created HTTP clients use custom DNS only for ``"host:port"`` values; a DoH URL does not replace their system hostname resolver.
 - `ca_bundle_path` (`str`): Path to a CA bundle used to augment TLS trust for SDK-managed HTTPS fetches.
-- `private_address_hosts` (`frozenset[str]`): Hostnames permitted to resolve to non-public addresses. An exact entry (``"registry.dnsid.test"``) matches that host only; a leading-dot entry (``".dnsid.test"``) matches the domain and every name beneath it. Empty by default; use only for intended private services such as a loopback testnet zone.
+- `private_address_hosts` (`frozenset[str]`): Hostnames whose SDK-managed HTTPS destinations may resolve to loopback or private-use (RFC 1918/4193) addresses. An exact entry (``"registry.dnsid.test"``) matches that host only; a leading-dot entry (``".test"``) matches ``test`` and every name beneath it, label-bounded and case-insensitive. Link-local, multicast, reserved, and unspecified addresses stay rejected, as does a resolution mixing public and non-public addresses. IP-literal URLs are never exempted. Empty by default with no built-in exemption: ``.test`` is an ordinary suffix entry (the expected one for a local ``dnsid`` stack). Entries must be bare hostnames or leading-dot suffixes; IP literals, ports, schemes, paths, and credentials are rejected at construction. Applies to every fetch made with this config, including the C2SP default resource fetcher; ignored by injected fetchers.
 
 ## `RegistryConfig`
 
@@ -247,6 +247,8 @@ Optional variables:
 * ``DNSID_KU_URL`` — explicit JWKS URL override
 * ``DNSID_DNS_SERVER`` — custom DNS server in ``host:port`` form
 * ``DNSID_CA_BUNDLE`` — path to a CA bundle for TLS trust augmentation
+* ``DNSID_PRIVATE_HOSTS`` — comma-separated hostnames or ``.suffix`` entries
+  allowed to resolve to loopback/private addresses (e.g. ``.test``)
 * ``DNSID_DNSSEC_MODE`` — ``"auto"`` | ``"validated"`` | ``"required"``
 * ``DNSID_PUBLIC_URL`` — public base URL of the agent
 * ``DNSID_KEY_STORE`` — local key-store file path
@@ -335,7 +337,7 @@ from dnsid import dnsid_environment_variables
 
 *Type:* `dict[str, str]`
 
-*Value:* `{'domain': 'DNSID_DOMAIN', 'governance_id': 'DNSID_GOVERNANCE_ID', 'registry_url': 'DNSID_REGISTRY_URL', 'api_key': 'DNSID_API_KEY', 'status_url': 'DNSID_STATUS_URL', 'log_ref': 'DNSID_LOG_REF', 'ek_url': 'DNSID_EK_URL', 'ku_url': 'DNSID_KU_URL', 'publish_profile': 'DNSID_PUBLISH_PROFILE', 'dns_server': 'DNSID_DNS_SERVER', 'ca_bundle_path': 'DNSID_CA_BUNDLE', 'dnssec_mode': 'DNSID_DNSSEC_MODE', 'public_url': 'DNSID_PUBLIC_URL', 'key_store_path': 'DNSID_KEY_STORE', 'agent_port': 'DNSID_AGENT_PORT', 'agent_name': 'DNSID_AGENT_NAME'}`
+*Value:* `{'domain': 'DNSID_DOMAIN', 'governance_id': 'DNSID_GOVERNANCE_ID', 'registry_url': 'DNSID_REGISTRY_URL', 'api_key': 'DNSID_API_KEY', 'status_url': 'DNSID_STATUS_URL', 'log_ref': 'DNSID_LOG_REF', 'ek_url': 'DNSID_EK_URL', 'ku_url': 'DNSID_KU_URL', 'publish_profile': 'DNSID_PUBLISH_PROFILE', 'dns_server': 'DNSID_DNS_SERVER', 'ca_bundle_path': 'DNSID_CA_BUNDLE', 'private_address_hosts': 'DNSID_PRIVATE_HOSTS', 'dnssec_mode': 'DNSID_DNSSEC_MODE', 'public_url': 'DNSID_PUBLIC_URL', 'key_store_path': 'DNSID_KEY_STORE', 'agent_port': 'DNSID_AGENT_PORT', 'agent_name': 'DNSID_AGENT_NAME'}`
 
 ## `key_store_path_from_environment`
 

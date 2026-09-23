@@ -956,7 +956,7 @@ Create a fetcher with a finite timeout and optional DNS/TLS configuration.
 **Arguments:**
 
 - `timeout_seconds` (`float`): Finite timeout for each resource request. — default `10.0`
-- `transport_config` (`TransportConfig | None`): Optional custom DNS server and additional CA bundle. Its private-host allowlist is ignored; this safe fetcher only permits loopback for the exact *allow_loopback_host*. — default `None`
+- `transport_config` (`TransportConfig | None`): Optional custom DNS server, additional CA bundle, and ``private_address_hosts`` allowlist, applied exactly as the core HTTPS fetcher does. — default `None`
 - `allow_loopback_host` (`str | None`): Exact hostname allowed to resolve to loopback for an explicitly configured local testnet. — default `None`
 
 ### `fetch_bounded`

@@ -19,6 +19,7 @@ from dnsid.models import TransportConfig
 from dnsid.safe_transport import (
     _is_allowed_loopback_resolution,
     is_disallowed_ip,
+    is_private_or_loopback_ip,
     make_ssrf_safe_transport,
     resolve_checked_address,
 )
@@ -58,6 +59,45 @@ class TestIsDisallowedIp:
         assert is_disallowed_ip(ip) is True
 
 
+class TestIsPrivateOrLoopbackIp:
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            "127.0.0.1",
+            "127.5.6.7",
+            "::1",
+            "10.0.0.5",
+            "172.16.0.1",
+            "192.168.1.1",
+            "fc00::1",
+            "fd12::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+        ],
+    )
+    def test_loopback_and_private_use(self, ip):
+        assert is_private_or_loopback_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            "8.8.8.8",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "240.0.0.1",
+            "fe80::1",
+            "ff02::1",
+            "::",
+            "::ffff:169.254.1.1",
+            "not-an-ip",
+        ],
+    )
+    def test_other_classes_excluded(self, ip):
+        assert is_private_or_loopback_ip(ip) is False
+
+
 class TestResolveChecked:
     def test_blocks_private_resolution(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
@@ -85,15 +125,44 @@ class TestResolveChecked:
                 with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
                     resolve_checked_address(host, private_address_hosts={".dnsid.internal"})
 
-    def test_reserved_test_tld_always_allows_private_resolution(self):
-        # RFC 2606: .test never resolves publicly, so a loopback answer is local
-        # configuration (dnsid local), not rebinding. No allowlist entry needed.
+    def test_test_tld_has_no_implicit_exemption(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
             for host in ("alice.dev.dnsid.test", "registry.dev.dnsid.test.", "TEST"):
-                assert resolve_checked_address(host) == "127.0.0.1"
-            for host in ("alice.dev.dnsid.testing", "dnsid.test.attacker.example"):
                 with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
                     resolve_checked_address(host)
+
+    def test_test_suffix_entry_is_an_ordinary_label_bounded_suffix(self):
+        with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
+            for host in ("alice.dev.dnsid.test", "registry.dev.dnsid.test.", "TEST"):
+                assert resolve_checked_address(host, private_address_hosts={".test"}) == "127.0.0.1"
+            for host in ("evil-test", "alice.dev.dnsid.testing", "dnsid.test.attacker.example"):
+                with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
+                    resolve_checked_address(host, private_address_hosts={".test"})
+
+    def test_exact_entry_does_not_match_subdomain(self):
+        with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
+            with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
+                resolve_checked_address("sub.dnsid.test", private_address_hosts={"dnsid.test"})
+
+    @pytest.mark.parametrize(
+        "addresses",
+        [["169.254.169.254"], ["18.67.65.117", "127.0.0.1"], ["10.0.0.1", "169.254.1.1"]],
+    )
+    def test_matching_host_still_rejects_link_local_and_mixed(self, addresses):
+        with patch("dnsid.safe_transport._resolve_addresses", return_value=addresses):
+            with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
+                resolve_checked_address("agent.test", private_address_hosts={".test"})
+
+    def test_matching_host_allows_private_use(self):
+        with patch("dnsid.safe_transport._resolve_addresses", return_value=["10.1.2.3"]):
+            assert (
+                resolve_checked_address("agent.test", private_address_hosts={".test"}) == "10.1.2.3"
+            )
+
+    @pytest.mark.parametrize("literal", ["127.0.0.1", "10.0.0.1", "::1"])
+    def test_ip_literal_never_exempted(self, literal):
+        with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
+            resolve_checked_address(literal, private_address_hosts={literal, ".test", ""})
 
     def test_private_host_allowlist_does_not_apply_to_other_hosts(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
@@ -104,9 +173,7 @@ class TestResolveChecked:
                 )
 
     def test_returns_public_ip(self):
-        with patch(
-            "dnsid.safe_transport._resolve_addresses", return_value=["18.67.65.117"]
-        ):
+        with patch("dnsid.safe_transport._resolve_addresses", return_value=["18.67.65.117"]):
             assert resolve_checked_address("app.dnsid.dev") == "18.67.65.117"
 
     def test_rejects_entire_dns_answer_when_any_address_is_unsafe(self):
@@ -124,16 +191,14 @@ class TestResolveChecked:
 
     def test_explicit_loopback_host_allows_only_loopback_resolution(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
-            assert resolve_checked_address(
-                "localhost", allow_loopback_host="localhost"
-            ) == "127.0.0.1"
+            assert (
+                resolve_checked_address("localhost", allow_loopback_host="localhost") == "127.0.0.1"
+            )
 
     def test_explicit_loopback_host_rejects_non_loopback_resolution(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["10.0.0.1"]):
             with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
-                resolve_checked_address(
-                    "localhost", allow_loopback_host="localhost"
-                )
+                resolve_checked_address("localhost", allow_loopback_host="localhost")
 
     def test_loopback_exception_does_not_apply_to_other_hosts(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
@@ -159,9 +224,7 @@ class TestStatusFetchSsrf:
             return_value=["169.254.169.254"],
         ):
             with pytest.raises(VerificationError) as exc:
-                fetch_agent_status(
-                    "https://metadata.attacker.example/status", transport=transport
-                )
+                fetch_agent_status("https://metadata.attacker.example/status", transport=transport)
         assert exc.value.code == VerificationCode.TLS_ERROR
         assert exc.value.transient is False
         assert "SSRF" in str(exc.value)
@@ -170,19 +233,22 @@ class TestStatusFetchSsrf:
         # The configured hostname may resolve privately; the connection then
         # fails on its own, but never via the SSRF guard.
         transport = make_ssrf_safe_transport(
-            TransportConfig(
-                private_address_hosts=frozenset({"registry.test.dnsid.test"})
-            )
+            TransportConfig(private_address_hosts=frozenset({"registry.test.dnsid.test"}))
         )
-        with patch(
-            "dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]
-        ):
+        with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
             with pytest.raises(VerificationError) as exc:
-                fetch_agent_status(
-                    "https://registry.test.dnsid.test/status", transport=transport
-                )
+                fetch_agent_status("https://registry.test.dnsid.test/status", transport=transport)
         # Not the SSRF path: either a transient connection error or similar.
         assert "SSRF" not in str(exc.value)
+
+    def test_ip_literal_url_rejected_regardless_of_allowlist(self):
+        transport = make_ssrf_safe_transport(
+            TransportConfig(private_address_hosts=frozenset({".test", "localhost"}))
+        )
+        with pytest.raises(VerificationError) as exc:
+            fetch_agent_status("https://127.0.0.1/status", transport=transport)
+        assert exc.value.code == VerificationCode.TLS_ERROR
+        assert "SSRF" in str(exc.value)
 
     def test_private_jwks_host_uses_same_guard(self):
         transport = make_ssrf_safe_transport()
@@ -202,3 +268,41 @@ class TestStatusFetchSsrf:
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+class TestPrivateAddressHostEntryValidation:
+    """Entry validation runs at the transport choke point, not only in IdentityManager."""
+
+    @pytest.mark.parametrize("entry", ["127.0.0.1", "agent.test:443", "", "a..test"])
+    def test_make_ssrf_safe_transport_rejects_invalid_entry(self, entry):
+        from dnsid.exceptions import ArgumentError
+        from dnsid.models import TransportConfig
+        from dnsid.safe_transport import make_ssrf_safe_transport
+
+        with pytest.raises(ArgumentError, match="private_address_hosts"):
+            make_ssrf_safe_transport(TransportConfig(private_address_hosts=frozenset({entry})))
+
+    def test_c2sp_factory_rejects_invalid_entry(self):
+        from dnsid.c2sp_tlog import (
+            C2spTlogVerificationOptions,
+            create_c2sp_tlog_verification_registry,
+        )
+        from dnsid.exceptions import ArgumentError
+        from dnsid.models import TransportConfig
+
+        with pytest.raises(ArgumentError, match="private_address_hosts"):
+            create_c2sp_tlog_verification_registry(
+                C2spTlogVerificationOptions(
+                    policy_document=b"unused",
+                    transport_config=TransportConfig(
+                        private_address_hosts=frozenset({"127.0.0.1"})
+                    ),
+                )
+            )
+
+    def test_idn_entry_matches_a_label_host(self):
+        from dnsid.safe_transport import _matches_private_allowlist, is_private_address_host_entry
+
+        assert is_private_address_host_entry("münchen.test")
+        assert _matches_private_allowlist("xn--mnchen-3ya.test", {"münchen.test"})
+        assert _matches_private_allowlist("a.xn--mnchen-3ya.test", {".münchen.test"})

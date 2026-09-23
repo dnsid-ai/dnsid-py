@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -58,9 +58,9 @@ class SafeC2spResourceFetcher:
 
         Args:
             timeout_seconds: Finite timeout for each resource request.
-            transport_config: Optional custom DNS server and additional CA bundle.
-                Its private-host allowlist is ignored; this safe fetcher only
-                permits loopback for the exact *allow_loopback_host*.
+            transport_config: Optional custom DNS server, additional CA bundle,
+                and ``private_address_hosts`` allowlist, applied exactly as the
+                core HTTPS fetcher does.
             allow_loopback_host: Exact hostname allowed to resolve to loopback for
                 an explicitly configured local testnet.
         """
@@ -73,14 +73,9 @@ class SafeC2spResourceFetcher:
             raise ArgumentError("c2sp-tlog timeout_seconds must be a finite positive number")
         self._timeout_seconds = float(timeout_seconds)
         self._clock = time.monotonic
-        safe_config = (
-            replace(transport_config, private_address_hosts=frozenset())
-            if transport_config is not None
-            else None
-        )
         self._client = httpx.Client(
             transport=make_ssrf_safe_transport(
-                safe_config, allow_loopback_host=allow_loopback_host
+                transport_config, allow_loopback_host=allow_loopback_host
             ),
             follow_redirects=False,
             timeout=self._timeout_seconds,

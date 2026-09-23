@@ -156,16 +156,25 @@ class TransportConfig:
             does not replace their system hostname resolver.
         ca_bundle_path: Path to a CA bundle used to augment TLS trust for
             SDK-managed HTTPS fetches.
-        private_address_hosts: Hostnames permitted to resolve to non-public
-            addresses. An exact entry (``"registry.dnsid.test"``) matches that
-            host only; a leading-dot entry (``".dnsid.test"``) matches the
-            domain and every name beneath it. Empty by default; use only for
-            intended private services such as a loopback testnet zone.
+        private_address_hosts: Hostnames whose SDK-managed HTTPS destinations
+            may resolve to loopback or private-use (RFC 1918/4193) addresses.
+            An exact entry (``"registry.dnsid.test"``) matches that host only; a
+            leading-dot entry (``".test"``) matches ``test`` and every name
+            beneath it, label-bounded and case-insensitive. Link-local,
+            multicast, reserved, and unspecified addresses stay rejected, as does
+            a resolution mixing public and non-public addresses. IP-literal URLs
+            are never exempted. Empty by default with no built-in exemption:
+            ``.test`` is an ordinary suffix entry (the expected one for a local
+            ``dnsid`` stack). Entries must be bare hostnames or leading-dot
+            suffixes; IP literals, ports, schemes, paths, and credentials are
+            rejected at construction. Applies to every fetch made with this
+            config, including the C2SP default resource fetcher; ignored by
+            injected fetchers.
     """
 
     dns_server: str = ""
     ca_bundle_path: str = ""
-    #: Exact hostnames, or ``.suffix`` entries, permitted to resolve to non-public addresses.
+    #: Exact hostnames, or ``.suffix`` entries, permitted to resolve to loopback/private-use.
     private_address_hosts: frozenset[str] = field(default_factory=frozenset)
 
 
