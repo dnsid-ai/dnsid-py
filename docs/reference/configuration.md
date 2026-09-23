@@ -230,7 +230,13 @@ here (`load_environment` carries it as ``key_source.cli_directory``).
 Persisted snake_case publication fields map into ``dnsid.identity`` exactly
 as written: ``status_url`` is never derived from ``server_url`` and no log
 reference is substituted. The directory becomes ``key_source.cli_directory``
-and a relative ``entity_key_path`` resolves against it.
+and a relative ``entity_key_path`` resolves against the directory of the
+``config.json`` that carries it.
+
+The CLI treats a root ``config.json`` as the current-identity pointer: when
+it names a ``domain`` and ``<directory>/<domain>/config.json`` exists, that
+per-identity file is read instead. A leaf identity directory (no such
+subdirectory) is read as-is.
 
 **Raises:**
 
