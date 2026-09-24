@@ -116,7 +116,7 @@ Initialize the client with a registry base URL and optional credential.
 
 **Arguments:**
 
-- `base_url` (`str | None`): HTTPS registry base URL, or HTTP loopback URL for the local registry; defaults to ``DEFAULT_REGISTRY_URL`` (the local registry from ``dnsid local up``). Hosted use requires an explicit URL; see `dnsid.registry_client_options_from_environment`. A trailing slash is stripped. — default `None`
+- `base_url` (`str | None`): HTTPS registry base URL, or HTTP loopback URL for the local registry; defaults to ``DEFAULT_REGISTRY_URL`` (the local registry from ``dnsid local up``). Hosted use requires an explicit URL; see `dnsid.registry_client_from_environment`. A trailing slash is stripped. — default `None`
 - `api_key` (`str | None`): Owner session or organization API-key credential sent as an ``Authorization: Bearer`` header. Whitespace-only values are treated as absent; without one only legacy status reads are available. Constructors never read the environment themselves. — default `None`
 
 **Raises:**
@@ -420,30 +420,6 @@ the same idempotency key.  The registry's durable idempotency mapping
 returns the original pending/accepted result for the same
 (identity, key, byte-hash) triple and rejects key reuse with
 different bytes.
-
-## `required`
-
-```python
-from dnsid import required
-```
-
-```python
-required(name: str, values: dict[str, str]) -> str
-```
-
-Return *values[name]* or raise `ValueError` if absent or empty.
-
-## `required_int`
-
-```python
-from dnsid import required_int
-```
-
-```python
-required_int(name: str, values: dict[str, str]) -> int
-```
-
-Return *values[name]* parsed as a positive integer, or raise `ValueError`.
 
 ## `AgentRegistrationInput`
 

@@ -91,7 +91,7 @@ class RegistryClient(AbstractRegistryClient):
             base_url: HTTPS registry base URL, or HTTP loopback URL for the
                 local registry; defaults to ``DEFAULT_REGISTRY_URL`` (the local
                 registry from ``dnsid local up``). Hosted use requires an explicit
-                URL; see :func:`dnsid.registry_client_options_from_environment`.
+                URL; see :func:`dnsid.registry_client_from_environment`.
                 A trailing slash is stripped.
             api_key: Owner session or organization API-key credential sent as
                 an ``Authorization: Bearer`` header. Whitespace-only values are
@@ -1171,26 +1171,6 @@ def _parse_json(resp: object, label: str) -> dict[str, Any]:
             f"{label}: expected JSON object",
         )
     return data
-
-
-def required(name: str, values: dict[str, str]) -> str:
-    """Return *values[name]* or raise :exc:`ValueError` if absent or empty."""
-    value = values.get(name, "").strip()
-    if not value:
-        raise ValueError(f"{name} is required")
-    return value
-
-
-def required_int(name: str, values: dict[str, str]) -> int:
-    """Return *values[name]* parsed as a positive integer, or raise :exc:`ValueError`."""
-    raw = required(name, values)
-    try:
-        value = int(raw)
-    except ValueError:
-        raise ValueError(f"{name} must be a positive integer") from None
-    if value <= 0:
-        raise ValueError(f"{name} must be a positive integer")
-    return value
 
 
 def _require_string(data: dict[str, Any], field: str, label: str) -> str:

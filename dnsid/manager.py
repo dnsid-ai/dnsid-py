@@ -163,12 +163,12 @@ class IdentityManager:
 
         if deps is None:
             deps = IdentityManagerDependencies()
-        if config is not None and not isinstance(config, DnsidConfig):
-            raise ArgumentError(
-                f"config must be a DnsidConfig, got {type(config).__name__}; "
-                "wrap identity settings as DnsidConfig(identity=IdentityConfig(...))"
-            )
         config = copy.deepcopy(config) if config is not None else DnsidConfig()
+        validate_dnsid_config(
+            config,
+            resolver_injected=deps.dns_resolver is not None,
+            fetcher_injected=deps.https_fetcher is not None,
+        )
 
         identity = config.identity
         if identity is None:
@@ -179,15 +179,9 @@ class IdentityManager:
         else:
             if key_provider is None:
                 raise ArgumentError("config.identity requires a key_provider")
-            _validate_identity_config(identity)
             identity.domain = normalize_fqdn(identity.domain, agent_fqdn=True)
             identity.governance_id = _maybe_normalize_fqdn(identity.governance_id)
         config.verification = _validate_verification_config(config.verification)
-        _validate_transport_config(
-            config.transport,
-            resolver_injected=deps.dns_resolver is not None,
-            fetcher_injected=deps.https_fetcher is not None,
-        )
 
         self._config = config
         self._identity = identity
@@ -257,6 +251,11 @@ class IdentityManager:
     def local_domain(self) -> str:
         """Return the local identity FQDN, or ``""`` for a verification-only manager."""
         return self._identity.domain if self._identity is not None else ""
+
+    @property
+    def key_provider(self) -> KeyProvider | None:
+        """Return the operational key provider, or ``None`` for a verification-only manager."""
+        return self._key_provider
 
     @property
     def _local_identity(self) -> IdentityConfig:
@@ -1891,6 +1890,27 @@ def _maybe_normalize_fqdn(s: str) -> str:
     return s
 
 
+def validate_dnsid_config(
+    config: DnsidConfig, *, resolver_injected: bool = False, fetcher_injected: bool = False
+) -> None:
+    """Run every static ``DnsidConfig`` check the IdentityManager constructor runs.
+
+    Raises ArgumentError without touching the network, key files, or trust
+    policy. Configuration loaders call this before wiring dependencies.
+    """
+    if not isinstance(config, DnsidConfig):
+        raise ArgumentError(
+            f"config must be a DnsidConfig, got {type(config).__name__}; "
+            "wrap identity settings as DnsidConfig(identity=IdentityConfig(...))"
+        )
+    if config.identity is not None:
+        _validate_identity_config(config.identity)
+    _validate_verification_config(config.verification)
+    _validate_transport_config(
+        config.transport, resolver_injected=resolver_injected, fetcher_injected=fetcher_injected
+    )
+
+
 def _validate_verification_config(cfg: VerificationConfig) -> VerificationConfig:
     """Validate and return an immutable snapshot of verification settings."""
     if not isinstance(cfg, VerificationConfig):
@@ -1898,11 +1918,12 @@ def _validate_verification_config(cfg: VerificationConfig) -> VerificationConfig
     interval = cfg.status_check_interval
     if not isinstance(interval, datetime.timedelta) or interval < datetime.timedelta(0):
         raise ArgumentError("status_check_interval must be a non-negative timedelta")
-    if not isinstance(cfg.dnssec_mode, DNSSECMode):
-        raise ArgumentError(f"invalid DNSSEC mode: {cfg.dnssec_mode!r}")
+    mode = cfg.dnssec_mode if cfg.dnssec_mode is not None else DNSSECMode.AUTO
+    if not isinstance(mode, DNSSECMode):
+        raise ArgumentError(f"invalid DNSSEC mode: {mode!r}")
     entities = cfg.trusted_entities
     if entities is None:
-        return cfg
+        return VerificationConfig(status_check_interval=interval, dnssec_mode=mode)
     if isinstance(entities, str | bytes) or not isinstance(entities, list | tuple):
         raise ArgumentError("trusted_entities must be a list of TrustedEntity or None")
     normalized: list[TrustedEntity] = []
@@ -1937,7 +1958,7 @@ def _validate_verification_config(cfg: VerificationConfig) -> VerificationConfig
         normalized.append(TrustedEntity(governance_id=gi, entity_key_thumbprints=pins))
     return VerificationConfig(
         status_check_interval=interval,
-        dnssec_mode=cfg.dnssec_mode,
+        dnssec_mode=mode,
         trusted_entities=tuple(normalized),
     )
 
@@ -1954,6 +1975,14 @@ def _validate_identity_config(cfg: IdentityConfig) -> None:
     for f in fields(IdentityConfig):
         if not isinstance(getattr(cfg, f.name), str):
             raise ArgumentError(f"identity.{f.name} must be a string")
+    for name in ("domain", "governance_id", "log_ref", "status_url"):
+        if not getattr(cfg, name):
+            raise ArgumentError(f"identity.{name} is required")
+    try:
+        normalize_fqdn(cfg.domain, agent_fqdn=True)
+        _maybe_normalize_fqdn(cfg.governance_id)
+    except ValidationError as exc:
+        raise ArgumentError(str(exc)) from exc
     if cfg.publish_profile and not publish_allowed_version(cfg.publish_profile):
         raise ArgumentError(f"unsupported DNSid publish profile: {cfg.publish_profile!r}")
     if cfg.max_key_age and cfg.max_key_age not in PERMITTED_KA_VALUES:

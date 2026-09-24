@@ -62,6 +62,10 @@ class IdentityConfig:
     NormalizeFQDN is applied to *domain* and *governance_id* (when it is a domain
     name) during IdentityManager.__init__.
 
+    Every field defaults to ``""`` (absent) so configuration loaders and code
+    overlays can carry a partial identity; the IdentityManager constructor
+    rejects an absent required field with ArgumentError naming it.
+
     Attributes:
         domain: Agent FQDN the identity record is published for (required).
         governance_id: Registrant domain — the gi tag (required).
@@ -80,10 +84,10 @@ class IdentityConfig:
             draft, ``dnsid-draft-01``.
     """
 
-    domain: str
-    governance_id: str
-    log_ref: str
-    status_url: str
+    domain: str = ""
+    governance_id: str = ""
+    log_ref: str = ""
+    status_url: str = ""
 
     policy_flags: str = ""
     max_key_age: str = ""
@@ -129,12 +133,13 @@ class VerificationConfig:
             every invocation (spec-strict interactive verification).  Must be
             non-negative.
         dnssec_mode: DNSSEC enforcement mode; ``FAILED`` always aborts.
+            ``None`` (absent) resolves to ``AUTO`` at construction.
         trusted_entities: Optional counterparty allowlist.  ``None`` makes no
             acceptance decision; an empty list denies every counterparty.
     """
 
     status_check_interval: datetime.timedelta = field(default_factory=lambda: datetime.timedelta(0))
-    dnssec_mode: DNSSECMode = DNSSECMode.AUTO
+    dnssec_mode: DNSSECMode | None = None
     trusted_entities: list[TrustedEntity] | tuple[TrustedEntity, ...] | None = None
 
 
@@ -207,9 +212,13 @@ class RegistryConfig:
 
     Never used by VerifyDomain to validate external identities; verification always
     fetches the signed record.su endpoint.
+
+    Attributes:
+        registry_url: Registry base URL. ``""`` (absent) lets the RegistryClient
+            constructor default to ``DEFAULT_REGISTRY_URL``.
     """
 
-    registry_url: str = DEFAULT_REGISTRY_URL
+    registry_url: str = ""
 
 
 # ---------------------------------------------------------------------------

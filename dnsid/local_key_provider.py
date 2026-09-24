@@ -9,7 +9,6 @@ import tempfile
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -292,20 +291,6 @@ def _sign_stored_key(key: _StoredKey, payload: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Options
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class LocalKeyProviderEnvironmentOptions:
-    """Options for :meth:`LocalKeyProvider.from_environment`."""
-
-    default_path: str = ".dnsid/keys.json"
-    create_if_missing: bool = False
-    algorithm: str = "EdDSA"
-
-
-# ---------------------------------------------------------------------------
 # LocalKeyProvider
 # ---------------------------------------------------------------------------
 
@@ -346,7 +331,7 @@ class LocalKeyProvider(KeyProvider):
     def __init__(self, store: _KeyStore, file_path: Path | None) -> None:
         """Initialize from an in-memory key store.
 
-        Prefer the factory methods (:meth:`load`, :meth:`from_environment`,
+        Prefer the factory methods (:meth:`load`,
         :meth:`from_cli_directory`, :meth:`from_domain`, :meth:`generate`).
 
         Args:
@@ -407,26 +392,6 @@ class LocalKeyProvider(KeyProvider):
             else:
                 raise FileNotFoundError(f"key store not found: {p}")
         return cls(store, p)
-
-    @classmethod
-    def from_environment(
-        cls,
-        env: dict[str, str] | None = None,
-        options: LocalKeyProviderEnvironmentOptions | None = None,
-    ) -> LocalKeyProvider:
-        """Load using an env dict, falling back to ``options.default_path`` when absent.
-
-        Args:
-            env: Mapping of environment variables (defaults to ``os.environ``).
-            options: Optional :class:`LocalKeyProviderEnvironmentOptions`.
-        """
-        from .environment import key_store_path_from_environment
-
-        default = (options.default_path if options else None) or ".dnsid/keys.json"
-        create_if_missing = options.create_if_missing if options else False
-        algorithm = options.algorithm if options else "EdDSA"
-        file_path = key_store_path_from_environment(env, default_path=default)
-        return cls.load(file_path, create_if_missing, algorithm)
 
     @classmethod
     def from_cli_directory(cls, key_directory: Path | str) -> LocalKeyProvider:

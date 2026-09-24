@@ -5,54 +5,26 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
-from pathlib import Path
 
 from agent import echo_executor
 from server import EchoAgent, EchoAgentOptions
-from testnet_config import required_log_policy_url
 
 from dnsid import (
+    IdentityConfig,
     IdentityManager,
-    IdentityManagerDependencies,
-    LocalKeyProvider,
+    KeyProvider,
+    LoadedConfig,
     RegistryClient,
-    config_from_environment,
+    construct_identity_manager,
+    load_environment,
+    merge_loaded_config,
+    registry_client_from_environment,
 )
-from dnsid.c2sp_tlog import (
-    C2spTlogVerificationOptions,
-    create_c2sp_tlog_verification_registry,
-)
-from dnsid.models import (
-    AgentRegistrationInput,
-    RegistryAgentStatus,
-    TransportConfig,
-)
-from dnsid.registry import LogRegistry
+from dnsid.models import AgentRegistrationInput, RegistryAgentStatus
 
 
 class PollAbortError(RuntimeError):
     """Raised inside a poll callback to stop retrying immediately."""
-
-
-def _make_log_registry(
-    log_ref: str, policy_url: str, transport_config: TransportConfig
-) -> LogRegistry | None:
-    """Register a c2sp-tlog reader using independently trusted testnet policy.
-
-    The policy URL comes from trusted testnet configuration, independently of
-    the log reference. The transport routes through the testnet DNS server and
-    CA bundle. Returns None when the log_ref is not a c2sp-tlog reference.
-    """
-    if not log_ref.startswith("c2sp-tlog:"):
-        return None
-    return create_c2sp_tlog_verification_registry(
-        C2spTlogVerificationOptions(
-            policy_url=policy_url,
-            transport_config=transport_config,
-            max_clock_skew_ms=30_000,
-            checkpoint_freshness_ms=5 * 60_000,
-        )
-    )
 
 
 async def poll(label: str, fn) -> None:
@@ -71,7 +43,7 @@ async def poll(label: str, fn) -> None:
 
 
 async def _verify_with_challenge(
-    key_provider: LocalKeyProvider,
+    key_provider: KeyProvider,
     registry: RegistryClient,
     domain: str,
     status: RegistryAgentStatus,
@@ -118,7 +90,7 @@ async def _verify_with_challenge(
 
 
 async def _register_and_publish(
-    idm: IdentityManager, key_provider: LocalKeyProvider, registry: RegistryClient
+    idm: IdentityManager, key_provider: KeyProvider, registry: RegistryClient
 ) -> None:
     domain = idm.local_domain
     status = await asyncio.to_thread(registry.get_agent_status, domain)
@@ -148,59 +120,46 @@ async def _register_and_publish(
 
 
 async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, object]:
-    env = dict(os.environ)
-
-    result = config_from_environment(env, require=["registry_url", "agent_port"])
-    protocol_config = result.config.identity
-    transport_config = result.config.transport
-    registry_config = result.registry_config
-    policy_url = required_log_policy_url(env)
-
-    # Registry mutation calls (register/verify/publish) require a session
-    # credential. `dnsid testnet run` injects DNSID_API_KEY; DNSID_REGISTRY_API_KEY
-    # is accepted as a manual override. Fail fast before starting the server
-    # rather than surfacing an HTTP 401 partway through registration.
-    registry_api_key = (env.get("DNSID_API_KEY") or env.get("DNSID_REGISTRY_API_KEY") or "").strip()
-    if not registry_api_key:
+    # `dnsid testnet run` exports the SDK environment: identity fields, DNS
+    # routing (DNSID_DNS_SERVER), TLS trust (DNSID_CA_BUNDLE), the trusted C2SP
+    # policy (DNSID_LOG_POLICY_URL), the key directory (DNSID_CONFIG_DIR), and
+    # the registry credential (DNSID_API_KEY). The registry client reads the
+    # credential separately; the example adds the agent-card URL as a code overlay.
+    public_url = os.environ.get("DNSID_PUBLIC_URL", "").strip() or None
+    agent_port = int(os.environ["DNSID_AGENT_PORT"])
+    if not os.environ.get("DNSID_API_KEY", "").strip():
         raise SystemExit(
-            "DNSID_API_KEY (or DNSID_REGISTRY_API_KEY) is required to register with "
-            "the registry. Run via `dnsid testnet run` or export it before starting "
-            "the agent (see examples/a2a/README.md)."
+            "DNSID_API_KEY is required to register with the registry. Run via "
+            "`dnsid testnet run` or export it before starting the agent "
+            "(see examples/a2a/README.md)."
         )
 
-    # Set capabilities_url to point at the agent card endpoint.
-    public_url = result.public_url or f"https://{protocol_config.domain}"
-    if not protocol_config.capabilities_url:
-        protocol_config.capabilities_url = f"{public_url.rstrip('/')}/.well-known/agent-card.json"
-
-    # Prefer the identity directory provisioned by `dnsid testnet run`
-    # (DNSID_CONFIG_DIR): its private.jwk carries the RFC 7638 thumbprint kid
-    # the registry requires. Fall back to a self-managed key store otherwise.
-    config_dir = (env.get("DNSID_CONFIG_DIR") or "").strip()
-    if config_dir:
-        key_provider = LocalKeyProvider.from_cli_directory(config_dir)
-    else:
-        key_store_path = result.key_store_path or str(
-            Path(".testnet") / "agents" / f"{protocol_config.domain.split('.')[0]}.keys.json"
+    # Load → Merge → Construct: point `cu` at the agent card unless the
+    # environment already names a capabilities URL.
+    loaded = load_environment()
+    identity = loaded.dnsid.identity
+    if identity is None:
+        raise SystemExit("DNSID_DOMAIN is required; run via `dnsid testnet run`")
+    overlay = LoadedConfig()
+    if not identity.capabilities_url:
+        base = (public_url or f"https://{identity.domain}").rstrip("/")
+        overlay.dnsid.identity = IdentityConfig(
+            capabilities_url=f"{base}/.well-known/agent-card.json"
         )
-        key_provider = LocalKeyProvider.load(key_store_path, create_if_missing=True)
-    log_registry = _make_log_registry(protocol_config.log_ref, policy_url, transport_config)
-    idm = IdentityManager(
-        result.config,
-        key_provider,
-        deps=IdentityManagerDependencies(log_registry=log_registry),
-    )
+    idm = construct_identity_manager(merge_loaded_config(loaded, overlay))
+    key_provider = idm.key_provider
+    assert key_provider is not None
 
-    executor = echo_executor(protocol_config.domain)
+    executor = echo_executor(idm.local_domain)
     agent = await EchoAgent.create(
-        executor, idm, result.agent_port, EchoAgentOptions(public_url=result.public_url)
+        executor, idm, agent_port, EchoAgentOptions(public_url=public_url)
     )
     await agent.start()
 
-    print(f"{result.agent_name or protocol_config.domain} -> {agent.url}")
+    print(f"{os.environ.get('DNSID_AGENT_NAME') or idm.local_domain} -> {agent.url}")
     await asyncio.sleep(1.0)
 
-    registry = RegistryClient(registry_config.registry_url, api_key=registry_api_key)
+    registry = registry_client_from_environment()
     await _register_and_publish(idm, key_provider, registry)
 
     # CoreDNS reloads the generated zone every two seconds. Wait for that
@@ -208,8 +167,8 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, object]:
     # then retry until the freshly published record is resolvable.
     await asyncio.sleep(2.5)
     await poll(
-        f"self-verify {protocol_config.domain}",
-        lambda: asyncio.to_thread(idm.verify_domain, protocol_config.domain),
+        f"self-verify {idm.local_domain}",
+        lambda: asyncio.to_thread(idm.verify_domain, idm.local_domain),
     )
 
     return idm, agent, agent.stop

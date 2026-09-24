@@ -121,7 +121,9 @@ class TestConfiguration:
         only = IdentityManager(DnsidConfig(verification=verification), deps=deps)
         assert local.config.verification == only.config.verification
         assert only.config.verification.trusted_entities == (TrustedEntity("example.com"),)
-        assert IdentityManager(deps=deps).config.verification == VerificationConfig()
+        assert IdentityManager(deps=deps).config.verification == VerificationConfig(
+            dnssec_mode=DNSSECMode.AUTO
+        )
 
     def test_caller_mutation_after_construction_does_not_affect_manager(self):
         entities = [TrustedEntity(GI)]
@@ -180,8 +182,10 @@ class TestConfiguration:
             TransportConfig(allow_private=True)  # type: ignore[call-arg]
         with pytest.raises(ArgumentError, match="governance_id"):
             TrustedEntity()  # type: ignore[call-arg]
-        with pytest.raises(ArgumentError, match="domain"):
-            IdentityConfig()  # type: ignore[call-arg]
+        with pytest.raises(ArgumentError, match="fqdn"):
+            IdentityConfig(fqdn="a.example")  # type: ignore[call-arg]
+        with pytest.raises(ArgumentError, match="identity.domain is required"):
+            IdentityManager(DnsidConfig(identity=IdentityConfig()), key_provider=MagicMock())
 
     def test_dns_server_with_only_resolver_injected_configures_fetcher(self):
         with patch("dnsid.manager._make_sdk_transport") as make_transport:

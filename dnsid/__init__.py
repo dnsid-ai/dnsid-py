@@ -35,16 +35,13 @@ Key management:
     BotoKmsFacade              — boto3 adapter for AwsKmsKeyProvider
     AwsKmsFacade               — abstract facade for testing without AWS
 
-CLI config helpers:
-    identity_manager_from_cli_directory — one-call init from DNSid CLI identity files (~/.dnsid)
-    config_from_cli_directory           — build config objects from DNSid CLI identity files
-    CliConfigResult                     — return type of config_from_cli_directory
-
-Environment helpers:
-    identity_manager_from_environment — one-call init from DNSID_* variables and local keys
-    config_from_environment    — build config objects from DNSID_* environment variables
+Configuration loading (loaders parse; constructors default):
+    load_environment / load_file / load_cli_directory — one loader per source → LoadedConfig
+    LoadedConfig, LogTrust, KeySource — partial configuration shape shared by every source
+    merge_loaded_config        — field-wise merge of partial configurations (later wins)
+    construct_identity_manager — LoadedConfig + caller deps → IdentityManager
+    identity_manager_from_environment / identity_manager_from_dnsid / identity_manager_from_file
     registry_client_from_environment — RegistryClient from DNSID_REGISTRY_URL / DNSID_API_KEY
-    EnvironmentConfigResult    — return type of config_from_environment
 
 Interfaces (implement to integrate your own backends):
     IdentityResolver  — minimal protocol satisfied by IdentityManager; accepted by profiles
@@ -82,10 +79,19 @@ from .aws_kms_key_provider import (
 from .aws_kms_key_provider import (
     BotoKmsFacade as BotoKmsFacade,
 )
-from .cli_config import (
-    CliConfigResult,
-    config_from_cli_directory,
-    identity_manager_from_cli_directory,
+from .config_loading import (
+    KeySource,
+    LoadedConfig,
+    LogTrust,
+    construct_identity_manager,
+    identity_manager_from_dnsid,
+    identity_manager_from_environment,
+    identity_manager_from_file,
+    load_cli_directory,
+    load_environment,
+    load_file,
+    merge_loaded_config,
+    registry_client_from_environment,
 )
 from .conformance import SDK_CONFORMANCE, SDKConformance
 from .enums import (
@@ -98,15 +104,6 @@ from .enums import (
     RegistryRevocationReason,
     RevocationReason,
     VerificationCode,
-)
-from .environment import (
-    EnvironmentConfigResult,
-    EnvironmentFieldName,
-    config_from_environment,
-    dnsid_environment_variables,
-    identity_manager_from_environment,
-    key_store_path_from_environment,
-    registry_client_from_environment,
 )
 from .exceptions import (
     ArgumentError,
@@ -132,7 +129,7 @@ from .interfaces import (
     NoopLogReader,
 )
 from .jose import JoseConfig, JoseProfile
-from .local_key_provider import LocalKeyProvider, LocalKeyProviderEnvironmentOptions
+from .local_key_provider import LocalKeyProvider
 from .manager import (
     ApplicationSigningPauseHook,
     IdentityManager,
@@ -208,7 +205,7 @@ from .oidc import (
     VerifyOIDCTokenOptions,
 )
 from .registry import LogRegistry
-from .registry_client import RegistryClient, required, required_int
+from .registry_client import RegistryClient
 from .retry import async_retry_transient, retry_transient
 from .wba_signer import (
     WBADirectoryResponse,
@@ -277,8 +274,6 @@ __all__ = [
     # Registry
     "LogRegistry",
     "RegistryClient",
-    "required",
-    "required_int",
     "AgentRegistrationInput",
     "AgentRegistration",
     "LifecycleResult",
@@ -320,18 +315,18 @@ __all__ = [
     "VerifiedOIDCSubject",
     # Key management
     "LocalKeyProvider",
-    "LocalKeyProviderEnvironmentOptions",
-    # CLI config helpers
-    "config_from_cli_directory",
-    "identity_manager_from_cli_directory",
-    "CliConfigResult",
-    # Environment helpers
-    "config_from_environment",
+    # Configuration loading
+    "LoadedConfig",
+    "LogTrust",
+    "KeySource",
+    "load_environment",
+    "load_file",
+    "load_cli_directory",
+    "merge_loaded_config",
+    "construct_identity_manager",
     "identity_manager_from_environment",
-    "EnvironmentConfigResult",
-    "EnvironmentFieldName",
-    "dnsid_environment_variables",
-    "key_store_path_from_environment",
+    "identity_manager_from_dnsid",
+    "identity_manager_from_file",
     "registry_client_from_environment",
     # Agent status helpers
     "active_status_document",
