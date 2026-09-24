@@ -596,9 +596,35 @@ def test_file_loader_inline_profile_is_parsed(tmp_path):
         ("{", "invalid JSON"),
         ('{"dnsid": {"identity": {"fqdn": "x"}}}', "fqdn"),
         ('{"dnsid": {"identity": {"governance_id": "x"}}}', "camelCase"),
+        ('{"dnsid": {"identity": null}}', "dnsid.identity must be a JSON object"),
+        ('{"dnsid": {"identity": {"domain": 5}}}', "identity.domain must be a str"),
+        ('{"dnsid": {"identity": {"domain": null}}}', "identity.domain must be a str"),
         ('{"dnsid": {"verification": {"dnssecMode": "bogus"}}}', "dnssecMode"),
+        (
+            '{"dnsid": {"verification": {"trustedEntities": "oops"}}}',
+            "trustedEntities must be a list",
+        ),
+        (
+            '{"dnsid": {"verification": {"trustedEntities": null}}}',
+            "trustedEntities must be a list",
+        ),
+        (
+            '{"dnsid": {"verification": {"trustedEntities": [{"governanceId": 5}]}}}',
+            "trustedEntities.governance_id must be a str",
+        ),
+        (
+            '{"dnsid": {"verification": {"trustedEntities": [{"governanceId": "example.com", "entityKeyThumbprints": "oops"}]}}}',
+            "entityKeyThumbprints must be a list",
+        ),
         ('{"dnsid": {"verification": {"statusCheckInterval": "30"}}}', "statusCheckInterval"),
+        ('{"dnsid": {"verification": {"statusCheckInterval": NaN}}}', "statusCheckInterval"),
+        ('{"dnsid": {"verification": {"statusCheckInterval": 1e100}}}', "statusCheckInterval"),
         ('{"dnsid": {"transport": {"privateAddressHosts": ".test"}}}', "privateAddressHosts"),
+        ('{"dnsid": {"transport": {"dnsServer": 123}}}', "transport.dns_server must be a str"),
+        (
+            '{"dnsid": {"transport": {"caBundlePath": null}}}',
+            "transport.ca_bundle_path must be a str",
+        ),
         ('{"registry": {"registryUrl": 1}}', "registryUrl must be a str"),
         ('{"logTrust": {"managed": "yes"}}', "managed must be a bool"),
     ],
@@ -608,12 +634,6 @@ def test_file_loader_rejects_malformed_documents(tmp_path, document, message):
     path.write_text(document)
     with pytest.raises(ArgumentError, match=message):
         load_file(path)
-
-
-def test_file_mistyped_identity_value_fails_at_construction(tmp_path):
-    path = _write_file(tmp_path, {"dnsid": {"identity": {"domain": 5}}})
-    with pytest.raises(ArgumentError, match="identity.domain must be a string"):
-        construct_identity_manager(load_file(path), key_provider=LocalKeyProvider.generate())
 
 
 # ---------------------------------------------------------------------------

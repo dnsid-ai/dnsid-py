@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import os
 import re
 from collections.abc import Mapping
@@ -221,15 +222,18 @@ def load_file(path: Path | str) -> LoadedConfig:
 
 
 def _dnsid_from_json(raw: dict[str, Any], source: str) -> DnsidConfig:
-    """Build a partial DnsidConfig; unknown members raise via the config dataclasses."""
+    """Type-check file members; leave semantic validation to the constructor."""
     data = _snake_keys(raw)
     identity = data.pop("identity", None)
     verification = data.pop("verification", None)
     transport = data.pop("transport", None)
     config = DnsidConfig(**data)  # rejects unknown sections
-    if identity is not None:
-        config.identity = IdentityConfig(**_object(identity, f"{source}: dnsid.identity"))
-    if verification is not None:
+    if "identity" in raw:
+        identity = _object(identity, f"{source}: dnsid.identity")
+        for f in fields(IdentityConfig):
+            _typed(identity, f.name, str, f"{source}: dnsid.identity")
+        config.identity = IdentityConfig(**identity)
+    if "verification" in raw:
         v = _object(verification, f"{source}: dnsid.verification")
         if "dnssec_mode" in v:
             try:
@@ -240,19 +244,42 @@ def _dnsid_from_json(raw: dict[str, Any], source: str) -> DnsidConfig:
                 ) from None
         if "status_check_interval" in v:
             seconds = v["status_check_interval"]
-            if isinstance(seconds, bool) or not isinstance(seconds, int | float):
+            if (
+                isinstance(seconds, bool)
+                or not isinstance(seconds, int | float)
+                or (isinstance(seconds, float) and not math.isfinite(seconds))
+            ):
                 raise ArgumentError(
                     f"{source}: dnsid.verification.statusCheckInterval must be a number"
                 )
-            v["status_check_interval"] = datetime.timedelta(seconds=seconds)
-        if isinstance(v.get("trusted_entities"), list):
-            v["trusted_entities"] = [
-                TrustedEntity(**_object(e, f"{source}: dnsid.verification.trustedEntities"))
-                for e in v["trusted_entities"]
-            ]
+            try:
+                v["status_check_interval"] = datetime.timedelta(seconds=seconds)
+            except OverflowError as exc:
+                raise ArgumentError(
+                    f"{source}: dnsid.verification.statusCheckInterval is out of range"
+                ) from exc
+        if "trusted_entities" in v:
+            entities = v["trusted_entities"]
+            if not isinstance(entities, list):
+                raise ArgumentError(f"{source}: dnsid.verification.trustedEntities must be a list")
+            parsed = []
+            for entity in entities:
+                entry = _object(entity, f"{source}: dnsid.verification.trustedEntities")
+                _typed(entry, "governance_id", str, f"{source}: dnsid.verification.trustedEntities")
+                if "entity_key_thumbprints" in entry:
+                    pins = entry["entity_key_thumbprints"]
+                    if not isinstance(pins, list) or any(type(pin) is not str for pin in pins):
+                        raise ArgumentError(
+                            f"{source}: dnsid.verification.entityKeyThumbprints "
+                            "must be a list of strings"
+                        )
+                parsed.append(TrustedEntity(**entry))
+            v["trusted_entities"] = parsed
         config.verification = VerificationConfig(**v)
-    if transport is not None:
+    if "transport" in raw:
         t = _object(transport, f"{source}: dnsid.transport")
+        for name in ("dns_server", "ca_bundle_path"):
+            _typed(t, name, str, f"{source}: dnsid.transport")
         if "private_address_hosts" in t:
             hosts = t["private_address_hosts"]
             if not isinstance(hosts, list) or not all(isinstance(h, str) for h in hosts):
@@ -552,9 +579,9 @@ def _reject_unknown(raw: Mapping[str, Any], source: str, allowed: tuple[str, ...
 
 
 def _typed(raw: Mapping[str, Any], key: str, kind: type[_T], source: str) -> _T | None:
-    value = raw.get(key)
-    if value is None:
+    if key not in raw:
         return None
+    value = raw[key]
     if type(value) is not kind:
         raise ArgumentError(f"{source}.{key} must be a {kind.__name__}")
     return value

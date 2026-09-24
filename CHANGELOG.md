@@ -14,6 +14,7 @@
 - Loaders no longer substitute a `noop:0` log reference or derive `status_url` from `server_url`/`DNSID_REGISTRY_URL`; a local identity now needs `DNSID_LOG_REF` and `DNSID_STATUS_URL` (or the persisted CLI values) or construction fails with `ArgumentError`.
 - `identity_manager_from_dnsid()` with no directory reads `~/.dnsid` and no longer consults `DNSID_CONFIG_DIR`. Under `dnsid local run` use `identity_manager_from_environment()`, which takes keys from `DNSID_CONFIG_DIR`.
 - `DNSID_API_KEY` is no longer included in `LoadedConfig` or merged configuration; `registry_client_from_environment()` reads the secret directly and passes it to the registry client.
+- `load_file()` now rejects mistyped identity, verification, and transport members (including explicit `null`) before construction.
 - `IdentityConfig` fields default to `""` (absent); `VerificationConfig.dnssec_mode` defaults to `None` (resolves to `AUTO` at construction); `RegistryConfig.registry_url` defaults to `""` (the `RegistryClient` constructor applies the loopback default).
 - New variables: `DNSID_PUBLISH_PROFILE`, `DNSID_CAPABILITIES_URL`, `DNSID_LOG_POLICY_URL`, `DNSID_LOG_POLICY_FILE`, `DNSID_LOG_TRUST_PROFILE_FILE`, `DNSID_CONFIG_DIR`. `DNSID_PUBLIC_URL`, `DNSID_AGENT_PORT`, `DNSID_AGENT_NAME` are no longer read by the SDK.
 - `.test` names are no longer implicitly allowed to resolve to loopback/private addresses; configure `TransportConfig.private_address_hosts={".test"}` (or `DNSID_PRIVATE_HOSTS=.test`) explicitly.
