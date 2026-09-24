@@ -690,6 +690,36 @@ def test_merge_absent_sections_stay_absent_and_lists_replace():
     assert merged.transport.private_address_hosts == frozenset({".b"})
 
 
+def test_merge_default_valued_overlays_cannot_clear_loaded_values():
+    base = LoadedConfig(
+        dnsid=DnsidConfig(
+            verification=VerificationConfig(status_check_interval=datetime.timedelta(seconds=30)),
+            transport=TransportConfig(
+                dns_server="127.0.0.1:53", private_address_hosts=frozenset({".test"})
+            ),
+        )
+    )
+    merged = merge_loaded_config(
+        base,
+        LoadedConfig(
+            dnsid=DnsidConfig(
+                verification=VerificationConfig(status_check_interval=datetime.timedelta(0)),
+                transport=TransportConfig(dns_server="", private_address_hosts=frozenset()),
+            )
+        ),
+    )
+    assert merged.dnsid.verification.status_check_interval == datetime.timedelta(seconds=30)
+    assert merged.dnsid.transport == base.dnsid.transport
+
+    # Clear explicitly after merging, before construction.
+    merged.dnsid.verification.status_check_interval = datetime.timedelta(0)
+    merged.dnsid.transport = TransportConfig()
+    manager = construct_identity_manager(merged)
+    assert manager.config.verification.status_check_interval == datetime.timedelta(0)
+    assert manager.config.transport.dns_server == ""
+    manager.close()
+
+
 # ---------------------------------------------------------------------------
 # Construct
 # ---------------------------------------------------------------------------

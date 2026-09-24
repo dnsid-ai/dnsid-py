@@ -9,12 +9,14 @@ did not supply from ``log_trust`` and ``key_source``, then calls the ordinary
 :class:`~dnsid.IdentityManager` constructor, which applies every default and
 validation.
 
-Presence is "differs from the dataclass default". Core config types cannot
-express presence for their defaults, so in :func:`merge_loaded_config` an overlay value equal
-to the default is absent and cannot reset a loaded value: ``""`` identity and
-transport strings, ``status_check_interval=0``, and an
-empty ``private_address_hosts``. ``trusted_entities=[]`` is present (deny all);
-``None`` is absent.
+Presence is "differs from the dataclass default". In :func:`merge_loaded_config`,
+an overlay cannot clear a loaded value using defaults: ``""`` for all identity
+strings, ``transport.dns_server``, ``transport.ca_bundle_path``, and
+``registry.registry_url``; zero ``verification.status_check_interval``; empty
+``transport.private_address_hosts``; or ``None`` for ``key_source`` paths and
+``verification.dnssec_mode``. To clear one, set it on the merged config before
+calling :func:`construct_identity_manager`. ``dnssec_mode=AUTO`` explicitly
+replaces another mode; ``trusted_entities=[]`` is present and denies all.
 """
 
 from __future__ import annotations

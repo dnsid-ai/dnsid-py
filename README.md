@@ -598,9 +598,13 @@ value: without `DNSID_DOMAIN` the manager is verification-only; with
 `DNSID_DOMAIN` but no `DNSID_LOG_REF`, construction fails with `ArgumentError`
 (no placeholder log reference, no `status_url` derived from the registry URL).
 Tooling variables (`DNSID_PUBLIC_URL`, `DNSID_AGENT_PORT`, `DNSID_SERVER`, …)
-are ignored. In `merge_loaded_config`, a value equal to the type default (`""`, zero
-interval, empty `private_address_hosts`) is absent and cannot reset a loaded
-value; `trusted_entities=[]` is present and denies all.
+are ignored. In `merge_loaded_config`, default-valued overlays cannot clear
+loaded identity strings, `transport.dns_server`/`ca_bundle_path`,
+`registry.registry_url` (`""`), `verification.status_check_interval` (zero),
+`transport.private_address_hosts` (empty), or `key_source` paths (`None`).
+`verification.dnssec_mode=None` is also absent; set `AUTO` explicitly to
+replace another mode. To clear a loaded field, edit the merged config before
+`construct_identity_manager`. `trusted_entities=[]` is present and denies all.
 
 ## Examples
 
