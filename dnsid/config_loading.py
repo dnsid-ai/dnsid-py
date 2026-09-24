@@ -92,8 +92,6 @@ class LoadedConfig:
     dnsid: DnsidConfig = field(default_factory=DnsidConfig)
     log_trust: LogTrust = field(default_factory=LogTrust)
     registry: RegistryConfig = field(default_factory=RegistryConfig)
-    registry_credential: str | None = field(default=None, repr=False)
-    """Registry bearer credential. Excluded from ``repr`` so a logged config never leaks it."""
     key_source: KeySource = field(default_factory=KeySource)
 
 
@@ -119,7 +117,8 @@ def load_environment(env: Mapping[str, str] | None = None) -> LoadedConfig:
     Values are trimmed; unset, empty, or whitespace-only variables are absent.
     Unknown ``DNSID_*`` variables (deployment tooling such as ``DNSID_PUBLIC_URL``)
     are ignored. ``DNSID_LOG_POLICY_FILE`` is read as bytes and
-    ``DNSID_LOG_TRUST_PROFILE_FILE`` is read and parsed here.
+    ``DNSID_LOG_TRUST_PROFILE_FILE`` is read and parsed here. The secret
+    ``DNSID_API_KEY`` is read only by :func:`registry_client_from_environment`.
 
     Args:
         env: Environment mapping. Defaults to ``os.environ``.
@@ -167,7 +166,6 @@ def load_environment(env: Mapping[str, str] | None = None) -> LoadedConfig:
             policy_url=get("DNSID_LOG_POLICY_URL"),
         ),
         registry=RegistryConfig(registry_url=get("DNSID_REGISTRY_URL") or ""),
-        registry_credential=get("DNSID_API_KEY"),
         key_source=KeySource(
             cli_directory=get("DNSID_CONFIG_DIR"), key_store_path=get("DNSID_KEY_STORE")
         ),
@@ -182,9 +180,10 @@ def load_environment(env: Mapping[str, str] | None = None) -> LoadedConfig:
 def load_file(path: Path | str) -> LoadedConfig:
     """Read a JSON deployment file: ``{"dnsid"?, "logTrust"?, "registry"?}``.
 
-    Members are camelCase, the JSON encoding of :class:`LoadedConfig` minus the
-    secret ``registryCredential`` and ``keySource``. Unknown members, mistyped
-    values, and duplicate members are rejected with ArgumentError; ``dnsid``
+    Members are camelCase, the JSON encoding of :class:`LoadedConfig` minus
+    ``keySource``. Registry credentials are never part of loaded configuration.
+    Unknown members, mistyped values, and duplicate members are rejected with
+    ArgumentError; ``dnsid``
     contents are otherwise validated by the IdentityManager constructor.
     """
     source = str(path)
@@ -352,7 +351,6 @@ def merge_loaded_config(base: LoadedConfig, overlay: LoadedConfig) -> LoadedConf
         dnsid=_merge_fields(base.dnsid, overlay.dnsid),
         log_trust=replace(overlay.log_trust if _has_trust(overlay.log_trust) else base.log_trust),
         registry=_merge_fields(base.registry, overlay.registry),
-        registry_credential=overlay.registry_credential or base.registry_credential,
         key_source=_merge_fields(base.key_source, overlay.key_source),
     )
 
@@ -516,7 +514,8 @@ def registry_client_from_environment(env: Mapping[str, str] | None = None) -> Re
     from .registry_client import RegistryClient
 
     loaded = load_environment(env)
-    return RegistryClient(loaded.registry.registry_url or None, api_key=loaded.registry_credential)
+    source = os.environ if env is None else env
+    return RegistryClient(loaded.registry.registry_url or None, api_key=source.get("DNSID_API_KEY"))
 
 
 # ---------------------------------------------------------------------------

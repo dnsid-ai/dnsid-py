@@ -123,8 +123,8 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, object]:
     # `dnsid testnet run` exports the SDK environment: identity fields, DNS
     # routing (DNSID_DNS_SERVER), TLS trust (DNSID_CA_BUNDLE), the trusted C2SP
     # policy (DNSID_LOG_POLICY_URL), the key directory (DNSID_CONFIG_DIR), and
-    # the registry credential (DNSID_API_KEY). The SDK loader reads all of it;
-    # the example only adds the agent-card URL as a code overlay.
+    # the registry credential (DNSID_API_KEY). The registry client reads the
+    # credential separately; the example adds the agent-card URL as a code overlay.
     public_url = os.environ.get("DNSID_PUBLIC_URL", "").strip() or None
     agent_port = int(os.environ["DNSID_AGENT_PORT"])
     if not os.environ.get("DNSID_API_KEY", "").strip():

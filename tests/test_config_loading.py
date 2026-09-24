@@ -11,6 +11,7 @@ import json
 import ssl
 import threading
 from contextlib import contextmanager
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -487,7 +488,6 @@ def test_environment_full_schema_maps_every_variable(tmp_path):
         ),
         log_trust=LogTrust(policy_document=_policy_document()),
         registry=RegistryConfig(registry_url="https://registry.example.com"),
-        registry_credential="secret",
         key_source=KeySource(cli_directory="/tmp/cli", key_store_path="/tmp/keys.json"),
     )
 
@@ -628,7 +628,6 @@ def test_merge_is_field_wise_and_log_trust_is_atomic():
             transport=TransportConfig(dns_server="1.1.1.1:53"),
         ),
         log_trust=LogTrust(managed=True),
-        registry_credential="base",
         key_source=KeySource(cli_directory="/cli"),
     )
     overlay = LoadedConfig(
@@ -647,7 +646,6 @@ def test_merge_is_field_wise_and_log_trust_is_atomic():
         dns_server="1.1.1.1:53", ca_bundle_path="/ca.pem"
     )
     assert merged.log_trust == LogTrust(policy_document=b"policy")
-    assert merged.registry_credential == "base"
     assert merged.key_source == KeySource(cli_directory="/cli", key_store_path="/keys.json")
     # Inputs are untouched.
     assert base.log_trust == LogTrust(managed=True)
@@ -801,10 +799,11 @@ def test_removed_environment_readers_are_gone():
     assert not hasattr(LocalKeyProvider, "from_environment")
 
 
-def test_loaded_config_repr_hides_registry_credential() -> None:
+def test_loaded_config_never_contains_registry_credential() -> None:
     loaded = load_environment({"DNSID_API_KEY": "secret-token"})
-    assert loaded.registry_credential == "secret-token"
+    assert loaded == LoadedConfig()
     assert "secret-token" not in repr(loaded)
+    assert "secret-token" not in str(asdict(loaded))
 
 
 def test_cli_root_pointer_resolves_to_per_identity_config(tmp_path):

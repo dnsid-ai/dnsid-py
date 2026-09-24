@@ -589,7 +589,8 @@ idm = construct_identity_manager(merge_loaded_config(load_file("dnsid.json"), lo
 | `DNSID_DNSSEC_MODE` | `dnsid.verification.dnssec_mode` (`auto`, `validated`, `required`) |
 | `DNSID_DNS_SERVER`, `DNSID_CA_BUNDLE`, `DNSID_PRIVATE_HOSTS` (comma-separated) | `dnsid.transport.*` |
 | `DNSID_LOG_POLICY_URL`, `DNSID_LOG_POLICY_FILE`, `DNSID_LOG_TRUST_PROFILE_FILE` | `log_trust` (exactly one variant; `{"managed": true}` is file/code only) |
-| `DNSID_REGISTRY_URL`, `DNSID_API_KEY` | `registry.registry_url`, `registry_credential` |
+| `DNSID_REGISTRY_URL` | `registry.registry_url` |
+| `DNSID_API_KEY` | Read directly by `registry_client_from_environment()`; never included in loaded configuration |
 | `DNSID_CONFIG_DIR`, `DNSID_KEY_STORE` | `key_source.cli_directory`, `key_source.key_store_path` |
 
 Empty or whitespace-only values are absent. No loader defaults or derives a

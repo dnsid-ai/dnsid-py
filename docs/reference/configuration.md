@@ -131,10 +131,6 @@ Partial configuration from one source, or the merge of several.
 
 Sections are always present as values; a field equal to its default is absent.
 
-**Attributes:**
-
-- `registry_credential` (`str | None`): Registry bearer credential. Excluded from ``repr`` so a logged config never leaks it.
-
 ## `LogTrust`
 
 ```python
@@ -186,7 +182,8 @@ Read the ``DNSID_*`` environment schema into a `LoadedConfig`.
 Values are trimmed; unset, empty, or whitespace-only variables are absent.
 Unknown ``DNSID_*`` variables (deployment tooling such as ``DNSID_PUBLIC_URL``)
 are ignored. ``DNSID_LOG_POLICY_FILE`` is read as bytes and
-``DNSID_LOG_TRUST_PROFILE_FILE`` is read and parsed here.
+``DNSID_LOG_TRUST_PROFILE_FILE`` is read and parsed here. The secret
+``DNSID_API_KEY`` is read only by `registry_client_from_environment`.
 
 **Arguments:**
 
@@ -208,9 +205,10 @@ load_file(path: Path | str) -> LoadedConfig
 
 Read a JSON deployment file: ``{"dnsid"?, "logTrust"?, "registry"?}``.
 
-Members are camelCase, the JSON encoding of `LoadedConfig` minus the
-secret ``registryCredential`` and ``keySource``. Unknown members, mistyped
-values, and duplicate members are rejected with ArgumentError; ``dnsid``
+Members are camelCase, the JSON encoding of `LoadedConfig` minus
+``keySource``. Registry credentials are never part of loaded configuration.
+Unknown members, mistyped values, and duplicate members are rejected with
+ArgumentError; ``dnsid``
 contents are otherwise validated by the IdentityManager constructor.
 
 ## `load_cli_directory`
