@@ -323,22 +323,42 @@ class TestVerifyBotRequest:
     def test_missing_auth_header_raises(self, ec_provider):
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="missing Authorization"):
-            verifier.verify_bot_request(headers={})
+            verifier.verify_bot_request(headers={}, expected_audience="https://server.example.com")
 
     def test_non_bearer_scheme_raises(self, ec_provider):
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="Bearer scheme"):
-            verifier.verify_bot_request(headers={"Authorization": "Basic abc123"})
+            verifier.verify_bot_request(
+                headers={"Authorization": "Basic abc123"},
+                expected_audience="https://server.example.com",
+            )
 
     def test_empty_token_raises(self, ec_provider):
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="empty Bearer"):
-            verifier.verify_bot_request(headers={"Authorization": "Bearer "})
+            verifier.verify_bot_request(
+                headers={"Authorization": "Bearer "},
+                expected_audience="https://server.example.com",
+            )
 
     def test_malformed_jwt_raises(self, ec_provider):
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="malformed JWT"):
-            verifier.verify_bot_request(headers={"Authorization": "Bearer only-one-part"})
+            verifier.verify_bot_request(
+                headers={"Authorization": "Bearer only-one-part"},
+                expected_audience="https://server.example.com",
+            )
+
+    def test_expected_audience_is_required(self, ec_provider):
+        signer = _build_bot_profile(ec_provider)
+        token = signer.create_bot_token("https://server.example.com/api")
+        verifier = _make_verifying_profile(ec_provider)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        with pytest.raises(TypeError, match="expected_audience"):
+            verifier.verify_bot_request(headers=headers)
+        with pytest.raises(ArgumentError, match="expected_audience"):
+            verifier.verify_bot_request(headers=headers, expected_audience="")
 
     def test_audience_mismatch_raises(self, ec_provider):
         bot = BotIdentity(name="TestBot")
@@ -372,6 +392,7 @@ class TestVerifyBotRequest:
             with pytest.raises(VerificationError, match="expired"):
                 verifier.verify_bot_request(
                     headers={"Authorization": f"Bearer {token}"},
+                    expected_audience="https://server.example.com",
                 )
 
     def test_wrong_signing_key_raises(self):
@@ -400,6 +421,7 @@ class TestVerifyBotRequest:
         with pytest.raises(VerificationError, match="signature invalid"):
             verifier.verify_bot_request(
                 headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
             )
 
     def test_require_bot_claim(self, ec_provider):
@@ -413,6 +435,7 @@ class TestVerifyBotRequest:
         with pytest.raises(VerificationError, match="missing required bot claim"):
             verifier.verify_bot_request(
                 headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
             )
 
     def test_case_insensitive_header_lookup(self, ec_provider):
@@ -425,6 +448,7 @@ class TestVerifyBotRequest:
         # lowercase key
         result = verifier.verify_bot_request(
             headers={"authorization": f"Bearer {token}"},
+            expected_audience="https://server.example.com",
         )
         assert result.domain == "bot.example.com"
 
@@ -483,6 +507,7 @@ class TestEdDSABotAuth:
         )
         result = verifier.verify_bot_request(
             headers={"Authorization": f"Bearer {token}"},
+            expected_audience="https://server.example.com",
         )
         assert result.domain == "bot.example.com"
         assert result.bot.name == "EdBot"
@@ -524,6 +549,15 @@ def _craft_token_with_aud(provider, aud_value, domain="bot.example.com"):
 
 class TestAudienceValidation:
     """Regression tests: aud must be a string or array of strings."""
+
+    def test_missing_audience_rejected(self, ec_provider):
+        token = _craft_token_with_aud(ec_provider, None)
+        verifier = _make_verifying_profile(ec_provider)
+        with pytest.raises(VerificationError, match="audience mismatch"):
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
     def test_object_audience_rejected(self, ec_provider):
         """A token with aud as an object must not pass audience check."""
@@ -609,7 +643,7 @@ def _make_signed_jwt(provider, claims: dict, header_overrides: dict | None = Non
     if header_overrides:
         header.update(header_overrides)
     h_enc = b64url_encode(json.dumps(header).encode())
-    c_enc = b64url_encode(json.dumps(claims).encode())
+    c_enc = b64url_encode(json.dumps({"aud": "https://server.example.com", **claims}).encode())
     sig_input = f"{h_enc}.{c_enc}".encode("ascii")
     sig = provider.sign(sig_input)
     return f"{h_enc}.{c_enc}.{b64url_encode(sig)}"
@@ -627,7 +661,10 @@ class TestClaimTypeValidation:
         })
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="iat claim must be an integer"):
-            verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
     def test_non_integer_exp_raises(self, ec_provider):
         now = int(time.time())
@@ -638,7 +675,10 @@ class TestClaimTypeValidation:
         })
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="exp claim must be an integer"):
-            verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
     def test_non_string_iss_raises(self, ec_provider):
         now = int(time.time())
@@ -649,7 +689,10 @@ class TestClaimTypeValidation:
         })
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="iss claim must be a string"):
-            verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
     def test_non_string_sub_raises(self, ec_provider):
         now = int(time.time())
@@ -661,7 +704,10 @@ class TestClaimTypeValidation:
         })
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="sub claim must be a string"):
-            verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
     @pytest.mark.parametrize("bad_sub", [0, False, []])
     def test_falsey_non_string_sub_raises(self, ec_provider, bad_sub):
@@ -675,7 +721,10 @@ class TestClaimTypeValidation:
         })
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="sub claim must be a string"):
-            verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
     def test_boolean_iat_raises(self, ec_provider):
         now = int(time.time())
@@ -686,7 +735,10 @@ class TestClaimTypeValidation:
         })
         verifier = _make_verifying_profile(ec_provider)
         with pytest.raises(VerificationError, match="iat claim must be an integer"):
-            verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
 
 class TestBotClaimValidation:
@@ -703,7 +755,10 @@ class TestBotClaimValidation:
         config = BotAuthConfig(require_bot_claim=True)
         verifier = _make_verifying_profile(ec_provider, config=config)
         with pytest.raises(VerificationError, match="bot claim must be an object"):
-            verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
     def test_numeric_bot_claim_rejected(self, ec_provider):
         now = int(time.time())
@@ -716,7 +771,10 @@ class TestBotClaimValidation:
         config = BotAuthConfig(require_bot_claim=True)
         verifier = _make_verifying_profile(ec_provider, config=config)
         with pytest.raises(VerificationError, match="bot claim must be an object"):
-            verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+            verifier.verify_bot_request(
+                headers={"Authorization": f"Bearer {token}"},
+                expected_audience="https://server.example.com",
+            )
 
     def test_valid_object_bot_claim_accepted(self, ec_provider):
         now = int(time.time())
@@ -728,7 +786,10 @@ class TestBotClaimValidation:
         })
         config = BotAuthConfig(require_bot_claim=True)
         verifier = _make_verifying_profile(ec_provider, config=config)
-        result = verifier.verify_bot_request(headers={"Authorization": f"Bearer {token}"})
+        result = verifier.verify_bot_request(
+            headers={"Authorization": f"Bearer {token}"},
+            expected_audience="https://server.example.com",
+        )
         assert result.bot.name == "MyBot"
         assert result.bot.version == "1.0"
 

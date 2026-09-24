@@ -223,7 +223,7 @@ verifier = WebBotAuthProfile.from_identity_manager(
 
 result = verifier.verify_bot_request(
     headers={"Authorization": "Bearer <jwt-from-request>"},
-    expected_audience="https://my-server.example",
+    expected_audience="https://my-server.example",  # configured server origin, not request Host
 )
 print(result.domain)       # "acmebot.acme.example"
 print(result.bot.name)     # "AcmeSearchBot"

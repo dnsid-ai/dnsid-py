@@ -125,7 +125,7 @@ Every outbound request gets an ``Authorization: Bearer <dnsid-jwt>`` header.
 ### `verify_bot_request`
 
 ```python
-WebBotAuthProfile.verify_bot_request(headers: dict[str, str], expected_audience: str | None = None, peer_cert: TLSCertificate | None = None) -> VerifiedBotRequest
+WebBotAuthProfile.verify_bot_request(headers: dict[str, str], expected_audience: str, peer_cert: TLSCertificate | None = None) -> VerifiedBotRequest
 ```
 
 Verify an inbound bot request by validating its Authorization Bearer JWT.
@@ -135,7 +135,7 @@ Resolves the JWT issuer's DNSid identity and verifies the signature.
 **Arguments:**
 
 - `headers` (`dict[str, str]`): The HTTP request headers (case-insensitive lookup for Authorization).
-- `expected_audience` (`str | None`): If provided, the JWT ``aud`` claim must match this value. Typically the origin of the server receiving the request. — default `None`
+- `expected_audience` (`str`): Required trusted origin of the server receiving the request; the JWT ``aud`` claim must match this value.
 - `peer_cert` (`TLSCertificate | None`): Certificate from the current peer connection. Required when the issuer's DNSid record carries ``fl=mtls``. — default `None`
 
 **Returns:**
