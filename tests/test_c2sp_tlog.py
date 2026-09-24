@@ -962,6 +962,70 @@ class TestPreparedEventModel:
         with pytest.raises(C2spTlogParseError, match="chain metadata"):
             prepare_event(event, public_lr)
 
+    def test_entity_role_pins_non_issuance_fqdn(self):
+        from dnsid.c2sp_tlog import (
+            C2spChain,
+            C2spSignerRole,
+            C2spVerificationContext,
+            parse_prepared_event,
+            prepare_event,
+            sign_prepared_event,
+        )
+        from dnsid.models import RevocationEvent
+
+        raw, private = _ed25519_jwk("ek-1")
+        prepared = prepare_event(
+            RevocationEvent(domain=self.DOMAIN, reason="keyCompromise",
+                            timestamp=datetime.datetime(2026, 7, 2, tzinfo=datetime.UTC)), self.LR,
+            C2spChain(1, b64url_encode(bytes(32)), b64url_encode(bytes(32))),
+        )
+        provider = _SingleKeyProvider(raw, private)
+        trusted = C2spVerificationContext(entity_key=jwk_from_dict(raw), fqdn=self.DOMAIN)
+        with pytest.raises(C2spTlogVerificationError, match="expected fqdn"):
+            sign_prepared_event(prepared, C2spSignerRole.ENTITY, provider,
+                                C2spVerificationContext(entity_key=trusted.entity_key))
+        wrong = C2spVerificationContext(entity_key=trusted.entity_key, fqdn="other.example.com")
+        with pytest.raises(C2spTlogVerificationError, match="fqdn does not match"):
+            sign_prepared_event(prepared, C2spSignerRole.ENTITY, provider, wrong)
+        with pytest.raises(C2spTlogVerificationError, match="fqdn does not match"):
+            parse_prepared_event(canonical_json(prepared.envelope).encode(), self.LR, wrong)
+        with pytest.raises(C2spTlogVerificationError, match="do not carry gi"):
+            sign_prepared_event(prepared, C2spSignerRole.ENTITY, provider,
+                                C2spVerificationContext(entity_key=trusted.entity_key, fqdn=self.DOMAIN, gi="example.com"))
+        assert sign_prepared_event(prepared, C2spSignerRole.ENTITY, provider, trusted).envelope["sigs"]["ae"]
+
+    def test_entity_role_pins_migration_destination(self):
+        from dnsid.c2sp_tlog import (
+            C2spChain,
+            C2spSignerRole,
+            C2spVerificationContext,
+            parse_prepared_event,
+            prepare_event,
+            sign_prepared_event,
+        )
+        from dnsid.models import MigrationEvent
+
+        raw, private = _ed25519_jwk("ek-1")
+        destination = "c2sp-tlog:testnet:https://new-log.example#instance_BBBBBBBBBBBBBBBBBBBBBB"
+        prepared = prepare_event(
+            MigrationEvent(domain=self.DOMAIN, previous_log=self.LR,
+                           new_log=destination, final_entry_ref=f"{self.LR}@0",
+                           timestamp=datetime.datetime(2026, 7, 2, tzinfo=datetime.UTC)),
+            self.LR,
+            C2spChain(1, b64url_encode(bytes(32)), b64url_encode(bytes(32))),
+        )
+        provider = _SingleKeyProvider(raw, private)
+        ctx = C2spVerificationContext(entity_key=jwk_from_dict(raw), fqdn=self.DOMAIN)
+        with pytest.raises(C2spTlogVerificationError, match="expected new_lr"):
+            sign_prepared_event(prepared, C2spSignerRole.ENTITY, provider, ctx)
+        ctx.new_lr = "c2sp-tlog:testnet:https://other.example#instance_CCCCCCCCCCCCCCCCCCCCCC"
+        with pytest.raises(C2spTlogVerificationError, match="new_lr does not match"):
+            sign_prepared_event(prepared, C2spSignerRole.ENTITY, provider, ctx)
+        with pytest.raises(C2spTlogVerificationError, match="new_lr does not match"):
+            parse_prepared_event(canonical_json(prepared.envelope).encode(), self.LR, ctx)
+        ctx.new_lr = destination
+        assert sign_prepared_event(prepared, C2spSignerRole.ENTITY, provider, ctx).envelope["sigs"]["ae"]
+
     def test_write_prepared_event_submits_and_returns_ref(self):
         from dnsid.c2sp_tlog import (
             C2spSignerRole,
