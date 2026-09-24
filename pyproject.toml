@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dnsid"
-version = "0.21.0"
+version = "0.22.0"
 description = "Python SDK for the DNSid Protocol — agent identity management and verification"
 readme = "README.md"
 authors = [{ name = "Known Systems AI, Inc." }]
