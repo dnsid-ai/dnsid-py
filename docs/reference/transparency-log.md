@@ -638,8 +638,10 @@ Expected identity and trusted keys for validating a prepared envelope.
 A process that countersigns a prepared event (notably the operational side
 of a split ISSUANCE) supplies what it expects the envelope to authorize —
 its own ``fqdn``/``gi``/``operational_key`` and, when known, the trusted
-``entity_key`` — so a malicious issuer cannot obtain a countersignature for
-an unexpected identity.  Fields left ``None`` are not checked.
+``entity_key`` — so a malicious preparer cannot obtain a signature for
+an unexpected identity. ``new_lr`` pins a MIGRATION destination. Only
+ISSUANCE carries ``gi``; other events require independent trusted chain
+validation to bind them to a governance identity.
 
 ## `Checkpoint`
 
@@ -1671,7 +1673,10 @@ Sign *prepared* for *role* and return a new prepared event.
 The provider's key for the role's kid must match the key the envelope (or
 trusted *context*) requires for *role* by kid, alg, and RFC 7638
 thumbprint.  Only the requested signature is added; an existing signature
-for the role is never replaced unless *replace_existing* is set.
+for the role is never replaced unless *replace_existing* is set. Entity
+signers must inspect/approve the entire prepared envelope (including
+reason, delegatee, scope, expiry and chain fields) before signing: the
+identity context alone cannot authorize the event's action.
 
 ## `signed_c2sp_entry_bytes`
 

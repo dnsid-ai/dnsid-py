@@ -81,8 +81,10 @@ class C2spVerificationContext:
     A process that countersigns a prepared event (notably the operational side
     of a split ISSUANCE) supplies what it expects the envelope to authorize —
     its own ``fqdn``/``gi``/``operational_key`` and, when known, the trusted
-    ``entity_key`` — so a malicious issuer cannot obtain a countersignature for
-    an unexpected identity.  Fields left ``None`` are not checked.
+    ``entity_key`` — so a malicious preparer cannot obtain a signature for
+    an unexpected identity. ``new_lr`` pins a MIGRATION destination. Only
+    ISSUANCE carries ``gi``; other events require independent trusted chain
+    validation to bind them to a governance identity.
     """
 
     entity_key: JWK | None = None
@@ -90,6 +92,7 @@ class C2spVerificationContext:
     operational_key: JWK | None = None
     fqdn: str | None = None
     gi: str | None = None
+    new_lr: str | None = None
 
 
 @dataclass
@@ -184,7 +187,10 @@ def sign_prepared_event(
     The provider's key for the role's kid must match the key the envelope (or
     trusted *context*) requires for *role* by kid, alg, and RFC 7638
     thumbprint.  Only the requested signature is added; an existing signature
-    for the role is never replaced unless *replace_existing* is set.
+    for the role is never replaced unless *replace_existing* is set. Entity
+    signers must inspect/approve the entire prepared envelope (including
+    reason, delegatee, scope, expiry and chain fields) before signing: the
+    identity context alone cannot authorize the event's action.
     """
     _assert_prepared_integrity(prepared)
     if role not in prepared.required_signatures:
@@ -192,6 +198,15 @@ def sign_prepared_event(
             f"{role.value} is not required for {prepared.envelope.get('type')}"
         )
     ctx = context or C2spVerificationContext()
+    if role is C2spSignerRole.ENTITY and prepared.envelope.get("type") != "ISSUANCE":
+        if not ctx.fqdn:
+            raise C2spTlogVerificationError(
+                "Entity signing requires the expected fqdn for non-ISSUANCE events"
+            )
+        if prepared.envelope.get("type") == "MIGRATION" and not ctx.new_lr:
+            raise C2spTlogVerificationError(
+                "Entity signing a MIGRATION requires the expected new_lr"
+            )
     if role is C2spSignerRole.OPERATIONAL_COUNTERSIGNATURE:
         # Countersigning an ISSUANCE authorizes an identity binding, so the
         # signer must state the complete identity it intends to authorize —
@@ -454,19 +469,31 @@ def _assert_expected_identity(
 ) -> None:
     """Reject a prepared event that authorizes an unexpected identity.
 
-    A countersigner (notably the operational side of a split ISSUANCE) must
-    confirm the envelope binds the identity it expects before signing, so a
-    malicious issuer cannot harvest a signature for a different FQDN/gi or a
-    key that is not the signer's own.  Only the fields present in *context*
-    are checked; the ``ek`` pin is enforced separately in :func:`_key_for_role`.
+    Check fields that are actually present on the signed envelope. Non-ISSUANCE
+    events omit ``gi``; their governance identity must be checked against the
+    trusted stream history rather than silently treating this context as proof.
+    The ``ek`` pin is enforced separately in :func:`_key_for_role`.
     """
     envelope = prepared.envelope
-    if envelope.get("type") != "ISSUANCE":
-        return
+    event_type = envelope.get("type")
     if context.fqdn is not None and envelope.get("fqdn") != context.fqdn:
         raise C2spTlogVerificationError(
-            "prepared ISSUANCE fqdn does not match the expected identity"
+            f"prepared {event_type} fqdn does not match the expected identity"
         )
+    if (
+        event_type == "MIGRATION"
+        and context.new_lr is not None
+        and envelope.get("new_lr") != context.new_lr
+    ):
+        raise C2spTlogVerificationError(
+            "prepared MIGRATION new_lr does not match the expected destination"
+        )
+    if event_type != "ISSUANCE":
+        if context.gi is not None:
+            raise C2spTlogVerificationError(
+                "non-ISSUANCE events do not carry gi; verify the trusted stream history"
+            )
+        return
     if context.gi is not None and envelope.get("gi") != context.gi:
         raise C2spTlogVerificationError(
             "prepared ISSUANCE gi does not match the expected identity"
