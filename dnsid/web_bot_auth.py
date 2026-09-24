@@ -32,7 +32,10 @@ Usage::
     signed = bot_auth.sign_bot_request(request)
 
     # Verify an inbound request
-    verified = bot_auth.verify_bot_request(headers={"authorization": "Bearer <jwt>"})
+    verified = bot_auth.verify_bot_request(
+        headers={"authorization": "Bearer <jwt>"},
+        expected_audience="https://target.example",
+    )
 """
 
 from __future__ import annotations
@@ -368,7 +371,7 @@ class WebBotAuthProfile:
         self,
         *,
         headers: dict[str, str],
-        expected_audience: str | None = None,
+        expected_audience: str,
         peer_cert: TLSCertificate | None = None,
     ) -> VerifiedBotRequest:
         """Verify an inbound bot request by validating its Authorization Bearer JWT.
@@ -378,9 +381,8 @@ class WebBotAuthProfile:
         Args:
             headers: The HTTP request headers (case-insensitive lookup for
                 Authorization).
-            expected_audience: If provided, the JWT ``aud`` claim must match
-                this value. Typically the origin of the server receiving the
-                request.
+            expected_audience: Required trusted origin of the server receiving
+                the request; the JWT ``aud`` claim must match this value.
             peer_cert: Certificate from the current peer connection. Required
                 when the issuer's DNSid record carries ``fl=mtls``.
 
@@ -393,6 +395,9 @@ class WebBotAuthProfile:
                 propagated from issuer identity verification.  Carries a
                 VerificationCode.
         """
+        if not isinstance(expected_audience, str) or not expected_audience:
+            raise ArgumentError("expected_audience must be a non-empty string")
+
         # Extract token from Authorization header
         auth_value = _get_header_ci(headers, "authorization")
         if not auth_value:
@@ -441,34 +446,33 @@ class WebBotAuthProfile:
             )
 
         # Audience check
-        if expected_audience:
-            aud_raw = claims.get("aud")
-            if aud_raw is None:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID,
-                    f"JWT audience mismatch: expected {expected_audience!r}",
-                )
-            if isinstance(aud_raw, str):
-                aud_list = [aud_raw]
-            elif isinstance(aud_raw, list):
-                # Validate all list members are strings
-                for item in aud_raw:
-                    if not isinstance(item, str):
-                        raise VerificationError(
-                            VerificationCode.RECORD_INVALID,
-                            "JWT aud claim contains non-string value",
-                        )
-                aud_list = aud_raw
-            else:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID,
-                    "JWT aud claim must be a string or array of strings",
-                )
-            if expected_audience not in aud_list:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID,
-                    f"JWT audience mismatch: expected {expected_audience!r}",
-                )
+        aud_raw = claims.get("aud")
+        if aud_raw is None:
+            raise VerificationError(
+                VerificationCode.RECORD_INVALID,
+                f"JWT audience mismatch: expected {expected_audience!r}",
+            )
+        if isinstance(aud_raw, str):
+            aud_list = [aud_raw]
+        elif isinstance(aud_raw, list):
+            # Validate all list members are strings
+            for item in aud_raw:
+                if not isinstance(item, str):
+                    raise VerificationError(
+                        VerificationCode.RECORD_INVALID,
+                        "JWT aud claim contains non-string value",
+                    )
+            aud_list = aud_raw
+        else:
+            raise VerificationError(
+                VerificationCode.RECORD_INVALID,
+                "JWT aud claim must be a string or array of strings",
+            )
+        if expected_audience not in aud_list:
+            raise VerificationError(
+                VerificationCode.RECORD_INVALID,
+                f"JWT audience mismatch: expected {expected_audience!r}",
+            )
 
         # Temporal validation
         now_ts = int(_now().timestamp())
