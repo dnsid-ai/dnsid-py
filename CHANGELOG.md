@@ -1,4 +1,16 @@
 
+## [0.22.0] - 2026-09-24
+
+### Chores
+
+- Security/python pass ([#27](https://github.com/dnsid-ai/dnsid-py/pull/27))
+- security: pin prepared entity events to expected identity ([#29](https://github.com/dnsid-ai/dnsid-py/pull/29))
+
+### Features
+
+- feat!: configuration loading per design 12 (loaders parse, constructors default) ([#26](https://github.com/dnsid-ai/dnsid-py/pull/26))
+
+
 ## [0.21.0] - 2026-09-23
 
 ### Features
