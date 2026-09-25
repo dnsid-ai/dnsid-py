@@ -52,7 +52,7 @@ Reads domain and key_provider from the manager.
 ### `create_bot_token`
 
 ```python
-WebBotAuthProfile.create_bot_token(target_url: str, expiry: datetime.timedelta | None = None, additional_claims: dict[str, Any] | None = None) -> str
+WebBotAuthProfile.create_bot_token(target_url: str, *, expiry: datetime.timedelta | None = None, additional_claims: dict[str, Any] | None = None) -> str
 ```
 
 Create a signed JWT for bot authentication.
@@ -80,7 +80,7 @@ The JWT includes:
 ### `sign_bot_request`
 
 ```python
-WebBotAuthProfile.sign_bot_request(request: httpx.Request, expiry: datetime.timedelta | None = None, additional_claims: dict[str, Any] | None = None) -> httpx.Request
+WebBotAuthProfile.sign_bot_request(request: httpx.Request, *, expiry: datetime.timedelta | None = None, additional_claims: dict[str, Any] | None = None) -> httpx.Request
 ```
 
 Sign an outbound httpx.Request with a bot auth JWT.
@@ -105,7 +105,7 @@ sets a ``User-Agent`` header incorporating the bot identity.
 ### `create_signed_bot_client`
 
 ```python
-WebBotAuthProfile.create_signed_bot_client(expiry: datetime.timedelta | None = None, additional_claims: dict[str, Any] | None = None, base_headers: dict[str, str] | None = None) -> httpx.Client
+WebBotAuthProfile.create_signed_bot_client(*, expiry: datetime.timedelta | None = None, additional_claims: dict[str, Any] | None = None, base_headers: dict[str, str] | None = None) -> httpx.Client
 ```
 
 Return an httpx.Client that automatically signs every request with bot auth.
@@ -125,7 +125,7 @@ Every outbound request gets an ``Authorization: Bearer <dnsid-jwt>`` header.
 ### `verify_bot_request`
 
 ```python
-WebBotAuthProfile.verify_bot_request(headers: dict[str, str], expected_audience: str, peer_cert: TLSCertificate | None = None) -> VerifiedBotRequest
+WebBotAuthProfile.verify_bot_request(*, headers: dict[str, str], expected_audience: str, peer_cert: TLSCertificate | None = None) -> VerifiedBotRequest
 ```
 
 Verify an inbound bot request by validating its Authorization Bearer JWT.
@@ -205,7 +205,7 @@ required for DNSid conformance.
 ### `WBAHttpSigner` constructor
 
 ```python
-WBAHttpSigner(key_provider: KeyProvider, domain: str, config: WebBotAuthConfig | None = None, signature_agent: str | None = None, label: str = DEFAULT_LABEL, expires_in_seconds: int | None = None) -> None
+WBAHttpSigner(key_provider: KeyProvider, domain: str, *, config: WebBotAuthConfig | None = None, signature_agent: str | None = None, label: str = DEFAULT_LABEL, expires_in_seconds: int | None = None) -> None
 ```
 
 Initialize the signer for a local DNSid identity.
@@ -242,8 +242,7 @@ checked by the verifier, not a property of the signature bytes.
 
 **Returns:**
 
-- `HttpRequest` — The same request, with Signature-Input, Signature, and (when
-- `HttpRequest` — enabled) Signature-Agent headers set.
+- `HttpRequest` — The same request, with Signature-Input, Signature, and (when enabled) Signature-Agent headers set.
 
 **Raises:**
 

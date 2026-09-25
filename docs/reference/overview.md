@@ -32,11 +32,10 @@ The transparency-log integration is the exception: import it from
 
 ## Synchronous by design
 
-The public API is synchronous: every `IdentityManager`, profile, and
-registry method blocks. Async support is limited to the httpx transport
-plumbing (custom transports may implement `handle_async_request`) and
-the `async_retry_transient` helper. Call the SDK from async code via
-`asyncio.to_thread` or an executor.
+Verification and most public operations are synchronous. Async support
+includes `RegistryClient.async_wait_for_status()` (which polls synchronously),
+signed `httpx.AsyncClient` transport plumbing, and `async_retry_transient`.
+Call blocking SDK operations from async code via `asyncio.to_thread` or an executor.
 
 ## Application profiles
 

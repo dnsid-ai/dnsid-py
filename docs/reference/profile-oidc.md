@@ -181,7 +181,7 @@ exceptions.
 ### `verify_oidc_token`
 
 ```python
-OIDCProfile.verify_oidc_token(token: str, opts: VerifyOIDCTokenOptions, peer_cert: TLSCertificate | None = None) -> VerifiedOIDCSubject
+OIDCProfile.verify_oidc_token(token: str, opts: VerifyOIDCTokenOptions, *, peer_cert: TLSCertificate | None = None) -> VerifiedOIDCSubject
 ```
 
 Verify an OIDC-issued token and optionally its DNSid subject.
@@ -200,8 +200,7 @@ is additionally verified as a DNSid identity via the resolver.
 
 **Returns:**
 
-- `VerifiedOIDCSubject` — The verified subject, its claims, and the optional DNSid
-- `VerifiedOIDCSubject` — verification result.
+- `VerifiedOIDCSubject` — The verified subject, its claims, and the optional DNSid verification result.
 
 **Raises:**
 

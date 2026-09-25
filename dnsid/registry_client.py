@@ -69,10 +69,11 @@ class RegistryClient(AbstractRegistryClient):
 
     NOT used by VerifyDomain; protocol verification always fetches the signed su endpoint.
 
-    Mutation calls require owner credentials (an organization session or API
-    key), supplied as ``api_key`` and sent as an ``Authorization: Bearer``
-    header. An agent bearer token is not sufficient. Legacy status reads are
-    public, but Live status requires the same owner authentication because it
+    Hosted mutation calls require owner credentials (an organization session or
+    API key), supplied as ``api_key`` and sent as an ``Authorization: Bearer``
+    header. Loopback registry calls do not require credentials. An agent bearer
+    token is not sufficient. Legacy status reads are public, but Live status
+    requires the same owner authentication because it
     may expose a proof challenge. A configured credential is sent on all reads.
     The credential is never included in ``repr()``/``str()``, exceptions, or logs.
 
@@ -95,7 +96,8 @@ class RegistryClient(AbstractRegistryClient):
                 A trailing slash is stripped.
             api_key: Owner session or organization API-key credential sent as
                 an ``Authorization: Bearer`` header. Whitespace-only values are
-                treated as absent; without one only legacy status reads are available.
+                treated as absent; without one hosted clients can only read legacy status.
+                The loopback registry does not require a credential.
                 Constructors never read the environment themselves.
 
         Raises:

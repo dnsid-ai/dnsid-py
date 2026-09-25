@@ -475,8 +475,7 @@ Fetch public key info for *key_id* via KMS ``GetPublicKey``.
 
 **Returns:**
 
-- `dict[str, Any]` — A dict with keys ``key_id``, ``public_key``, ``key_spec``,
-- `dict[str, Any]` — ``key_usage``, and ``signing_algorithms``.
+- `dict[str, Any]` — A dict with keys ``key_id``, ``public_key``, ``key_spec``, ``key_usage``, and ``signing_algorithms``.
 
 **Raises:**
 

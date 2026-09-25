@@ -47,7 +47,7 @@ Initialize the manager with configuration, keys, and dependencies.
 ### `for_verification`
 
 ```python
-IdentityManager.for_verification(deps: IdentityManagerDependencies | None = None, verification: VerificationConfig | None = None, transport: TransportConfig | None = None) -> IdentityManager
+IdentityManager.for_verification(deps: IdentityManagerDependencies | None = None, *, verification: VerificationConfig | None = None, transport: TransportConfig | None = None) -> IdentityManager
 ```
 
 Construct a verifier without a local identity or keys.
@@ -103,8 +103,7 @@ method-owned additions without weakening these profile requirements.
 
 **Returns:**
 
-- `list[LogSignerRole]` — The signer roles whose signatures must be present before the event
-- `list[LogSignerRole]` — may be written.
+- `list[LogSignerRole]` — The signer roles whose signatures must be present before the event may be written.
 
 ### `sign_event`
 
@@ -239,8 +238,7 @@ form always puts ``v=`` first.
 
 **Returns:**
 
-- `str` — The serialized, signed identity record TXT string including all
-- `str` — required tags (v, gi, ek, ku, lr, su, sg).
+- `str` — The serialized, signed identity record TXT string including all required tags (v, gi, ek, ku, lr, su, sg).
 
 **Raises:**
 
@@ -286,7 +284,7 @@ Deprecated alias for `publish_client_controlled_record`.
 ### `await_registry_managed_publication`
 
 ```python
-IdentityManager.await_registry_managed_publication(registry_client: AbstractRegistryClient, timeout: float = 120.0, interval: float = 5.0) -> PublishedRecord
+IdentityManager.await_registry_managed_publication(registry_client: AbstractRegistryClient, *, timeout: float = 120.0, interval: float = 5.0) -> PublishedRecord
 ```
 
 Wait for registry-owned publication, then verify the observed DNS record.
@@ -315,7 +313,7 @@ published record's version against the configured publish profile.
 ### `rotate_operational_key`
 
 ```python
-IdentityManager.rotate_operational_key(registry_client: AbstractRegistryClient, idempotency_key: str, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
+IdentityManager.rotate_operational_key(registry_client: AbstractRegistryClient, *, idempotency_key: str, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
 ```
 
 Rotate the managed operational key with mandatory recovery hooks.
@@ -348,7 +346,7 @@ activation/supersession, and durable activation state.
 ### `resume_key_rotation`
 
 ```python
-IdentityManager.resume_key_rotation(registry_client: AbstractRegistryClient, result: KeyRotationResult, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
+IdentityManager.resume_key_rotation(registry_client: AbstractRegistryClient, result: KeyRotationResult, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
 ```
 
 Resume an exact persisted managed key rotation safely.
@@ -362,7 +360,7 @@ signing pause and persists completion.
 ### `activate_rotated_key`
 
 ```python
-IdentityManager.activate_rotated_key(result: KeyRotationResult, submission: SubmissionResult | None = None, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
+IdentityManager.activate_rotated_key(result: KeyRotationResult, submission: SubmissionResult | None = None, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
 ```
 
 Reconcile an accepted rotation using the mandatory durability hooks.
@@ -419,8 +417,7 @@ including identity-cache hits.
 
 **Returns:**
 
-- `VerifiedDomain` — A VerifiedDomain carrying the verified identity record, key sets,
-- `VerifiedDomain` — registry status, and a bound log reader.
+- `VerifiedDomain` — A VerifiedDomain carrying the verified identity record, key sets, registry status, and a bound log reader.
 
 **Raises:**
 
@@ -537,7 +534,7 @@ from dnsid import verification_budget
 ```
 
 ```python
-verification_budget(timeout: float = 30.0, cancelled: threading.Event | None = None) -> Iterator[None]
+verification_budget(timeout: float = 30.0, *, cancelled: threading.Event | None = None) -> Iterator[None]
 ```
 
 Set a finite overall timeout; nested budgets cannot extend their parent.
@@ -587,7 +584,7 @@ Managed rotation submission failed with recoverable exact-byte state.
 ### `ManagedKeyRotationSubmissionError` constructor
 
 ```python
-ManagedKeyRotationSubmissionError(message: str, rotation: KeyRotationResult, state: str, transient: bool, retry_same_bytes: bool, cause: BaseException | None = None) -> None
+ManagedKeyRotationSubmissionError(message: str, rotation: KeyRotationResult, *, state: str, transient: bool, retry_same_bytes: bool, cause: BaseException | None = None) -> None
 ```
 
 Initialize a typed submission/recovery failure.
@@ -605,7 +602,7 @@ Accepted managed rotation has incomplete local reconciliation.
 ### `ManagedKeyRotationActivationError` constructor
 
 ```python
-ManagedKeyRotationActivationError(message: str, rotation: KeyRotationResult, cause: BaseException | None = None) -> None
+ManagedKeyRotationActivationError(message: str, rotation: KeyRotationResult, *, cause: BaseException | None = None) -> None
 ```
 
 Initialize an activation, pause-release, or persistence failure.

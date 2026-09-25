@@ -1208,7 +1208,7 @@ class VerifiedDomain:
     def expiry(self) -> datetime.datetime:
         """Return the earliest of all cache validity bounds.
 
-        Candidates: DNS TTL, TLS cert NotAfter, key age (if ka set), JWK exp.
+        Candidates: DNS TTL, ku and ek TLS cert NotAfter, and key age (if ka set).
         """
         candidates: list[datetime.datetime] = []
 

@@ -55,7 +55,8 @@ from dnsid import KeyProvider
 Standardized interface for Key Management Systems.
 
 Implementations may wrap local key files, cloud KMS (AWS KMS, GCP Cloud KMS,
-Azure Key Vault), or HSMs.  The SDK never handles private key material directly.
+Azure Key Vault), or HSMs. LocalKeyProvider handles private key material
+locally; external KMS/HSM providers can keep it out of the SDK process.
 
 > **Key lifecycle states:** Pending — generated but not yet promoted; excluded from JWKS. Active — current signing key; the single key in the live JWKS. Superseded — rotated out; retained only in log/archive/KMS for audit. Not in the live JWKS and never used for signing; historical verification uses key material recorded in the lifecycle log.
 
@@ -274,7 +275,7 @@ MUST verify inclusion proofs, timestamp proofs, and append-only consistency.
 ### `rebuild_history_through`
 
 ```python
-LogReader.rebuild_history_through(domain: str, final_entry_ref: str, entity_key: JWK, max_depth: int, max_events: int, max_response_bytes: int, seen_log_references: frozenset[str]) -> VerifiedCutoffHistory
+LogReader.rebuild_history_through(domain: str, final_entry_ref: str, entity_key: JWK, *, max_depth: int, max_events: int, max_response_bytes: int, seen_log_references: frozenset[str]) -> VerifiedCutoffHistory
 ```
 
 Verify history through exactly *final_entry_ref* within cumulative bounds.
@@ -329,9 +330,9 @@ from dnsid import NoopLogReader
 
 Placeholder LogReader for ledger methods with no registered factory.
 
-Every method raises VerificationError(LedgerError) with a descriptive message.
-This lets non-log-dependent interactive verification succeed while making log
-evidence failures explicit and descriptive when actually required.
+Every method raises VerificationError(LOG_ERROR) with a descriptive message.
+Draft 01 verification requires lifecycle-log checks, so verify_domain fails
+closed when no capable reader is registered.
 
 ### `NoopLogReader` constructor
 
@@ -529,7 +530,7 @@ Return the operator workflow record, or ``None`` if unregistered.
 ### `wait_for_status`
 
 ```python
-AbstractRegistryClient.wait_for_status(domain: str, timeout: float = 120.0, interval: float = 5.0, target_state: str | None = None) -> RegistryAgentStatus
+AbstractRegistryClient.wait_for_status(domain: str, *, timeout: float = 120.0, interval: float = 5.0, target_state: str | None = None) -> RegistryAgentStatus
 ```
 
 Wait for publication or an explicitly requested workflow state.
@@ -594,7 +595,7 @@ from dnsid import retry_transient
 ```
 
 ```python
-retry_transient(fn: Callable[[], T], max_attempts: int = 3, base_delay: float = 1.0, max_delay: float = 30.0) -> T
+retry_transient(fn: Callable[[], T], *, max_attempts: int = 3, base_delay: float = 1.0, max_delay: float = 30.0) -> T
 ```
 
 Call *fn* and retry on transient VerificationError with exponential backoff.
@@ -621,7 +622,7 @@ from dnsid import async_retry_transient
 ```
 
 ```python
-async_retry_transient(fn: Callable[[], object], max_attempts: int = 3, base_delay: float = 1.0, max_delay: float = 30.0) -> object
+async async_retry_transient(fn: Callable[[], object], *, max_attempts: int = 3, base_delay: float = 1.0, max_delay: float = 30.0) -> object
 ```
 
 Async variant of `retry_transient`.

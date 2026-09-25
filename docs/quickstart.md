@@ -46,16 +46,17 @@ For local development and testing, use `LocalKeyProvider.generate()` for Ed25519
 Verify a remote agent's identity by resolving its DNS record and fetching its JWKS:
 
 ```python
-from dnsid import DnsidConfig, IdentityManager, TrustedEntity, VerificationConfig
+from dnsid import DnsidConfig, IdentityManager, IdentityManagerDependencies, TrustedEntity, VerificationConfig
+from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 
-# A verifier needs no local identity or keys. Optionally restrict which
-# accountable entities (gi) you accept; omit trusted_entities to make no
-# acceptance decision.
+# A verifier needs no local identity or keys. This explicitly trusts the
+# SDK's pinned DNSid-managed public logs; other logs need their own reader.
 manager = IdentityManager(
-    DnsidConfig(
-        verification=VerificationConfig(
-            trusted_entities=[TrustedEntity("example.com")],
-        ),
+    DnsidConfig(verification=VerificationConfig(
+        trusted_entities=[TrustedEntity("example.com")],
+    )),
+    deps=IdentityManagerDependencies(
+        log_registry=create_dnsid_managed_verification_registry(),
     ),
 )
 
@@ -74,14 +75,14 @@ print(f"Cache expires: {verified.expiry()}")
 - Validates the record structure and signature
 - Fetches the JWKS from the `ku` URL
 - Checks the agent's status endpoint
-- Caches the result until `expiry()`
+- Caches identity evidence until `expiry()` (status is re-fetched on every call by default)
 
-> **Note:** domains using the draft 01 behavior (`v=dnsid-draft-01` or verification-only `v=DNSid1`) (typically with a
-> transparency-log reference, `lr=c2sp-tlog:...`) additionally require a
-> registered log reader — without one, `verify_domain` fails closed with
-> `VerificationCode.LOG_ERROR`. See the
-> [transparency-log reference](reference/transparency-log.md)
-> for setup.
+> **Note:** draft-01 (`v=dnsid-draft-01` or verification-only `v=DNSid1`)
+> verification requires a capable log reader. The managed factory above supports
+> only exact DNSid-managed public log references; for other logs, configure a
+> matching reader or verification fails closed. The `trusted_entities` entry
+> must match the counterparty's verified `gi`. See the
+> [transparency-log reference](reference/transparency-log.md) for other setups.
 
 ### 2. Sign — Create a JWT with a DNSid Identity
 

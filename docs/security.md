@@ -163,8 +163,8 @@ close them with `close()` / `aclose()` or a context manager.
 
 ### HTTP timeouts, retries, and limits
 
-SDK-managed JWKS and status fetches use HTTPS, a 10-second timeout, at most five
-redirects, and a 1 MiB response-body cap. DNS-over-HTTPS lookups use a 10-second
+SDK-managed JWKS and status fetches use HTTPS, a 10-second timeout, and at most five
+redirects. JWKS responses are capped at 1 MiB; status responses at 64 KiB. DNS-over-HTTPS lookups use a 10-second
 timeout and a 64 KiB body cap. Registry client HTTP calls use a 10-second request
 timeout unless a polling method's separate `timeout` and `interval` parameters
 apply.
@@ -347,7 +347,7 @@ Common failure mapping:
 
 - Draft-01 live `ek` and `ku` JWKS documents must each expose exactly one current
   signing key with a `kid` and supported algorithm binding.
-- SDK-managed JWKS/status responses larger than 1 MiB fail closed.
+- SDK-managed JWKS responses larger than 1 MiB and status responses larger than 64 KiB fail closed.
 - DNS-over-HTTPS JSON responses larger than 64 KiB fail closed.
 - Default verification state is process-local. Multi-instance deployments should
   assume each process has its own cache unless an explicit shared cache is
@@ -384,7 +384,7 @@ committed secret is compromised and rotate it.
 ## Software Bill of Materials (SBOM)
 
 Dependencies are tracked via the GitHub [Dependency Graph](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph)
-and kept current by [Dependabot](.github/dependabot.yml) (pip + GitHub Actions).
+and kept current by [Dependabot](../.github/dependabot.yml) (pip + GitHub Actions).
 
 An SBOM can be generated on demand:
 

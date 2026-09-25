@@ -73,7 +73,7 @@ with the same category and this typed error as its ``__cause__``.
 ### `C2spCheckpointConsistencyError` constructor
 
 ```python
-C2spCheckpointConsistencyError(message: str, category: C2spLifecycleErrorCategory, trusted: TrustedCheckpoint, observed: TrustedCheckpoint) -> None
+C2spCheckpointConsistencyError(message: str, *, category: C2spLifecycleErrorCategory, trusted: TrustedCheckpoint, observed: TrustedCheckpoint) -> None
 ```
 
 Capture both checkpoints so routing never requires message matching.
@@ -442,7 +442,7 @@ Return the verified lifecycle events for *domain* in log order.
 ### `rebuild_history_through`
 
 ```python
-C2spTlogReader.rebuild_history_through(domain: str, final_entry_ref: str, entity_key: JWK, max_depth: int, max_events: int, max_response_bytes: int, seen_log_references: frozenset[str]) -> VerifiedCutoffHistory
+C2spTlogReader.rebuild_history_through(domain: str, final_entry_ref: str, entity_key: JWK, *, max_depth: int, max_events: int, max_response_bytes: int, seen_log_references: frozenset[str]) -> VerifiedCutoffHistory
 ```
 
 Verify this stream through exactly *final_entry_ref*.
@@ -543,7 +543,7 @@ transient.
 ### `C2spTlogTransportError` constructor
 
 ```python
-C2spTlogTransportError(message: str, transient: bool, cause: BaseException | None = None, status_code: int | None = None) -> None
+C2spTlogTransportError(message: str, *, transient: bool, cause: BaseException | None = None, status_code: int | None = None) -> None
 ```
 
 Initialize a classified transport failure.
@@ -576,7 +576,7 @@ Raised when C2SP evidence fails cryptographic or policy verification.
 ### `C2spTlogVerificationError` constructor
 
 ```python
-C2spTlogVerificationError(message: str, category: C2spLifecycleErrorCategory | None = None, failing_candidate_index: int | None = None) -> None
+C2spTlogVerificationError(message: str, *, category: C2spLifecycleErrorCategory | None = None, failing_candidate_index: int | None = None) -> None
 ```
 
 Initialize with a message and optional failure classification.
@@ -869,7 +869,7 @@ calls and no explicit close is needed.
 ### `SQLiteCheckpointStore` constructor
 
 ```python
-SQLiteCheckpointStore(path: Path | str, create: bool = False) -> None
+SQLiteCheckpointStore(path: Path | str, *, create: bool = False) -> None
 ```
 
 Open or explicitly initialize persistent trust state.
@@ -913,7 +913,7 @@ Verify and durably advance in one transaction, rolling back on failure.
 ### `rebaseline`
 
 ```python
-SQLiteCheckpointStore.rebaseline(checkpoint: TrustedCheckpoint, expected: TrustedCheckpoint, authorized_by: str, evidence: str) -> None
+SQLiteCheckpointStore.rebaseline(checkpoint: TrustedCheckpoint, *, expected: TrustedCheckpoint, authorized_by: str, evidence: str) -> None
 ```
 
 Explicitly replace trust after independently authorized operator recovery.
@@ -950,7 +950,7 @@ WebPKI fetcher with fixed deadlines, no redirects, and SSRF protection.
 ### `SafeC2spResourceFetcher` constructor
 
 ```python
-SafeC2spResourceFetcher(timeout_seconds: float = 10.0, transport_config: TransportConfig | None = None, allow_loopback_host: str | None = None) -> None
+SafeC2spResourceFetcher(*, timeout_seconds: float = 10.0, transport_config: TransportConfig | None = None, allow_loopback_host: str | None = None) -> None
 ```
 
 Create a fetcher with a finite timeout and optional DNS/TLS configuration.
@@ -999,7 +999,7 @@ entries are fetched (policy enforcement lives there).
 ### `ScanStreamSource` constructor
 
 ```python
-ScanStreamSource(transport: C2spTlogTransport, authenticate_checkpoint: Callable[[Checkpoint], None], max_tree_size: int = _DEFAULT_MAX_TREE_SIZE, max_checkpoint_bytes: int = _DEFAULT_MAX_CHECKPOINT_BYTES, max_entry_bundle_bytes: int = _DEFAULT_MAX_ENTRY_BUNDLE_BYTES, max_total_entry_bytes: int = _DEFAULT_MAX_TOTAL_ENTRY_BYTES) -> None
+ScanStreamSource(transport: C2spTlogTransport, authenticate_checkpoint: Callable[[Checkpoint], None], *, max_tree_size: int = _DEFAULT_MAX_TREE_SIZE, max_checkpoint_bytes: int = _DEFAULT_MAX_CHECKPOINT_BYTES, max_entry_bundle_bytes: int = _DEFAULT_MAX_ENTRY_BUNDLE_BYTES, max_total_entry_bytes: int = _DEFAULT_MAX_TOTAL_ENTRY_BYTES) -> None
 ```
 
 Bind the source to *transport* and validate its resource limits.
@@ -1424,7 +1424,7 @@ from dnsid.c2sp_tlog import parse_c2sp_event_entry
 ```
 
 ```python
-parse_c2sp_event_entry(data: bytes, context: C2spEventContext | None = None, candidate: bool = False) -> AnyLogEvent
+parse_c2sp_event_entry(data: bytes, context: C2spEventContext | None = None, *, candidate: bool = False) -> AnyLogEvent
 ```
 
 Parse an entry; scans defer signed chain errors until after authentication.
@@ -1479,8 +1479,7 @@ The reference form is
 
 **Returns:**
 
-- `ParsedC2spTlogLr` — The structured reference, with the log prefix required to already be
-- `ParsedC2spTlogLr` — canonical and ``lr`` set to the canonical bound reference (no index).
+- `ParsedC2spTlogLr` — The structured reference, with the log prefix required to already be canonical and ``lr`` set to the canonical bound reference (no index).
 
 **Raises:**
 
@@ -1665,7 +1664,7 @@ from dnsid.c2sp_tlog import sign_prepared_event
 ```
 
 ```python
-sign_prepared_event(prepared: PreparedC2spTlogEvent, role: C2spSignerRole, key_provider: KeyProvider, context: C2spVerificationContext | None = None, replace_existing: bool = False) -> PreparedC2spTlogEvent
+sign_prepared_event(prepared: PreparedC2spTlogEvent, role: C2spSignerRole, key_provider: KeyProvider, context: C2spVerificationContext | None = None, *, replace_existing: bool = False) -> PreparedC2spTlogEvent
 ```
 
 Sign *prepared* for *role* and return a new prepared event.
@@ -1873,7 +1872,7 @@ from dnsid.c2sp_tlog import write_prepared_event
 ```
 
 ```python
-write_prepared_event(prepared: PreparedC2spTlogEvent, submit: Callable[[bytes, str], int], idempotency_key: str, validate_chain: Callable[[PreparedC2spTlogEvent], None] | None = None, context: C2spVerificationContext | None = None) -> LogRef
+write_prepared_event(prepared: PreparedC2spTlogEvent, *, submit: Callable[[bytes, str], int], idempotency_key: str, validate_chain: Callable[[PreparedC2spTlogEvent], None] | None = None, context: C2spVerificationContext | None = None) -> LogRef
 ```
 
 Validate the complete entry and append it via *submit*.

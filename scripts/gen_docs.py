@@ -89,11 +89,10 @@ The transparency-log integration is the exception: import it from
 
 ## Synchronous by design
 
-The public API is synchronous: every `IdentityManager`, profile, and
-registry method blocks. Async support is limited to the httpx transport
-plumbing (custom transports may implement `handle_async_request`) and
-the `async_retry_transient` helper. Call the SDK from async code via
-`asyncio.to_thread` or an executor.
+Verification and most public operations are synchronous. Async support
+includes `RegistryClient.async_wait_for_status()` (which polls synchronously),
+signed `httpx.AsyncClient` transport plumbing, and `async_retry_transient`.
+Call blocking SDK operations from async code via `asyncio.to_thread` or an executor.
 
 ## Application profiles
 
@@ -397,11 +396,17 @@ def _fmt_annotation(annotation) -> str:
 
 def _signature(func: griffe.Function) -> str:
     parts = []
-    for param in func.parameters:
+    keyword_only = False
+    params = list(func.parameters)
+    for i, param in enumerate(params):
         if param.name in ("self", "cls"):
             continue
+        if param.kind is griffe.ParameterKind.keyword_only and not keyword_only:
+            parts.append("*")
+            keyword_only = True
         if param.kind is griffe.ParameterKind.var_positional:
             name = f"*{param.name}"
+            keyword_only = True
         elif param.kind is griffe.ParameterKind.var_keyword:
             name = f"**{param.name}"
         else:
@@ -415,10 +420,14 @@ def _signature(func: griffe.Function) -> str:
         ):
             text += f" = {param.default}" if param.annotation is not None else f"={param.default}"
         parts.append(text)
+        if param.kind is griffe.ParameterKind.positional_only and (
+            i + 1 == len(params) or params[i + 1].kind is not griffe.ParameterKind.positional_only
+        ):
+            parts.append("/")
     sig = f"{func.name}({', '.join(parts)})"
     if func.returns is not None:
         sig += f" -> {_fmt_annotation(func.returns)}"
-    return sig
+    return f"async {sig}" if "async" in func.labels else sig
 
 
 _SPHINX_ROLE = re.compile(r":(?:meth|func|class|mod|data|attr|exc|obj):`([^`]+)`")
@@ -459,9 +468,11 @@ def _render_docstring(obj) -> list[str]:
         elif kind is griffe.DocstringSectionKind.returns:
             out.append("**Returns:**")
             out.append("")
-            for r in section.value:
-                ann = f"`{_fmt_annotation(r.annotation)}` — " if r.annotation else ""
-                out.append(f"- {ann}{' '.join(r.description.split())}")
+            # Griffe splits unindented wrapped prose into multiple return items.
+            # The function annotation is the authoritative single return type.
+            ann = getattr(obj, "returns", None) or section.value[0].annotation
+            desc = " ".join(" ".join(r.description.split()) for r in section.value)
+            out.append(f"- {f'`{_fmt_annotation(ann)}` — ' if ann else ''}{desc}")
             out.append("")
         elif kind is griffe.DocstringSectionKind.yields:
             out.append("**Yields:**")
