@@ -212,7 +212,8 @@ class Log(ABC):
 class LogReader(ABC):
     """Read and verify interface for a specific ledger entry.
 
-    Bound at construction to a full lr value (e.g. 'algorand:AGENT_ADDR_BASE32').
+    Bound at construction to a full lr value (e.g.
+    ``c2sp-tlog:public:https://log.dnsid.ai#<stream-id>``).
     The implementation stores the entry reference internally; callers do not pass
     it per-method.  All methods MUST verify cryptographic inclusion proofs,
     verifiable timestamps, and append-only consistency before returning.

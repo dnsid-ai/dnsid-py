@@ -16,13 +16,10 @@ LogReaderFactory = Callable[[str], LogReader]
 class LogRegistry:
     """Holds one factory per log method; constructs bound LogReader instances on demand.
 
-    Example:
-        registry = LogRegistry()
-        registry.register("algorand", AlgorandLogReader)
-        reader = registry.new_reader("algorand:AGENT_ADDR")
-
-    IdentityManager uses this at construction (to derive localLog) and during
-    VerifyDomain (to construct counterparty readers).
+    For C2SP, prefer ``create_dnsid_managed_verification_registry()`` or
+    ``create_c2sp_tlog_verification_registry(...)`` over manual registration.
+    IdentityManager uses the registry to bind the local log and to construct
+    counterparty readers during verification.
     """
 
     def __init__(self) -> None:
@@ -30,7 +27,7 @@ class LogRegistry:
         self._factories: dict[str, LogReaderFactory] = {}
 
     def register(self, method: str, factory: LogReaderFactory) -> None:
-        """Register a factory for *method* (e.g. 'algorand', 'ctlog', 'scitt').
+        """Register a factory for *method* (e.g. 'c2sp-tlog').
 
         Args:
             method: Log method name; must match ``[a-z][a-z0-9-]*``.
@@ -52,7 +49,8 @@ class LogRegistry:
         the registered factory.
 
         Args:
-            lr: Full log reference string, e.g. ``"algorand:AGENT_ADDR"``.
+            lr: Full log reference string, e.g.
+                ``"c2sp-tlog:public:https://log.dnsid.ai#<stream-id>"``.
 
         Returns:
             A LogReader bound to *lr*, or a NoopLogReader when the method has

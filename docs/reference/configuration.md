@@ -41,7 +41,7 @@ rejects an absent required field with ArgumentError naming it.
 
 - `domain` (`str`): Agent FQDN the identity record is published for (required).
 - `governance_id` (`str`): Registrant domain — the gi tag (required).
-- `log_ref` (`str`): Log reference in ``"method:entry-ref"`` form (required).
+- `log_ref` (`str`): Identity-instance log reference (required). For C2SP, use a persisted ``c2sp-tlog:<scope>:<log-prefix>#<stream-id>`` reference assigned during provisioning, not a newly generated ID at startup.
 - `status_url` (`str`): HTTPS status (su) endpoint URL (required).
 - `policy_flags` (`str`): Comma-separated policy flags (e.g. ``"mtls,logchk"``).
 - `max_key_age` (`str`): Maximum operational-key age — the ka tag; one of ``"24h"``, ``"7d"``, ``"30d"``, ``"90d"``, or empty for no limit.

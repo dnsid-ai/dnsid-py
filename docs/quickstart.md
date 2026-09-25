@@ -86,9 +86,14 @@ print(f"Cache expires: {verified.expiry()}")
 
 ### 2. Sign — Create a JWT with a DNSid Identity
 
+Set `DNSID_LOG_REF` to this identity's persisted, registry-provided C2SP
+reference (`c2sp-tlog:<scope>:<log-prefix>#<opaque-stream-id>`). Each
+identity instance has its own stream; never generate a new ID on startup.
+
 Sign a JWT that a counterparty can verify against your DNS-published identity:
 
 ```python
+import os
 from pathlib import Path
 from dnsid import DnsidConfig, IdentityConfig, IdentityManager, LocalKeyProvider, JWTOptions
 from dnsid.jose import JoseProfile
@@ -99,7 +104,7 @@ config = DnsidConfig(
     identity=IdentityConfig(
         domain="billing-agent.example.com",
         governance_id="example.com",
-        log_ref="microledger:abc123",
+        log_ref=os.environ["DNSID_LOG_REF"],
         status_url="https://billing-agent.example.com/status",
     ),
 )
@@ -131,24 +136,16 @@ The JWT contains:
 Verify a JWT received from a counterparty, confirming its signature matches the issuer's published DNSid identity:
 
 ```python
-from pathlib import Path
-from dnsid import DnsidConfig, IdentityConfig, IdentityManager, LocalKeyProvider
+from dnsid import IdentityManager, IdentityManagerDependencies
+from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 from dnsid.jose import JoseProfile, JoseConfig
 from dnsid.exceptions import VerificationError
 
-# Set up your identity (the verifier)
-key_provider = LocalKeyProvider.load(
-    Path.home() / ".dnsid" / "keys.json", create_if_missing=True
-)
-config = DnsidConfig(
-    identity=IdentityConfig(
-        domain="payments-agent.example.com",
-        governance_id="example.com",
-        log_ref="microledger:abc123",
-        status_url="https://payments-agent.example.com/status",
-    ),
-)
-manager = IdentityManager(config, key_provider)
+# Verification needs no local identity or signing key. Explicitly trust the
+# managed public C2SP logs used by the counterparty being verified.
+manager = IdentityManager(deps=IdentityManagerDependencies(
+    log_registry=create_dnsid_managed_verification_registry(),
+))
 
 # Create JOSE profile with custom freshness settings
 jose = JoseProfile.from_identity_manager(manager, config=JoseConfig())
@@ -157,7 +154,7 @@ jose = JoseProfile.from_identity_manager(manager, config=JoseConfig())
 incoming_token = "eyJ..."  # JWT received from the counterparty
 
 try:
-    verified = jose.verify_jwt(incoming_token)
+    verified = jose.verify_jwt(incoming_token, expected_audience="payments-agent.example.com")
     print(f"Verified issuer: {verified.domain}")
     print(f"Issuer state: {verified.cached_state()}")
     print(f"Governance: {verified.record.gi}")

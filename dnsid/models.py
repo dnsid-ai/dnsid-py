@@ -69,7 +69,9 @@ class IdentityConfig:
     Attributes:
         domain: Agent FQDN the identity record is published for (required).
         governance_id: Registrant domain — the gi tag (required).
-        log_ref: Log reference in ``"method:entry-ref"`` form (required).
+        log_ref: Identity-instance log reference (required). For C2SP, use a
+            persisted ``c2sp-tlog:<scope>:<log-prefix>#<stream-id>`` reference
+            assigned during provisioning, not a newly generated ID at startup.
         status_url: HTTPS status (su) endpoint URL (required).
         policy_flags: Comma-separated policy flags (e.g. ``"mtls,logchk"``).
         max_key_age: Maximum operational-key age — the ka tag; one of

@@ -31,7 +31,13 @@ including tested Python versions, dependency version ranges, optional extras, an
 
 ## First verification
 
+For this local signing identity, set `DNSID_LOG_REF` to its persisted,
+registry-provided `c2sp-tlog:public:` reference on a supported DNSid-managed
+log. A verification-only manager needs no local identity or reference (see the
+[Quickstart](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/quickstart.md)).
+
 ```python
+import os
 from pathlib import Path
 
 from dnsid import DnsidConfig, IdentityConfig, IdentityManager, IdentityManagerDependencies, LocalKeyProvider
@@ -40,7 +46,7 @@ from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 manager = IdentityManager(
     DnsidConfig(identity=IdentityConfig(
         domain="billing-agent.acme.example", governance_id="acme.example",
-        log_ref="microledger:abc123",
+        log_ref=os.environ["DNSID_LOG_REF"],  # persisted c2sp-tlog identity-instance reference
         status_url="https://billing-agent.acme.example/status",
     )),
     LocalKeyProvider.load(Path("~/.dnsid/keys.json").expanduser(), create_if_missing=True),
@@ -106,6 +112,7 @@ OIDC tokens in browser, mobile, or other client-side code.
 
 ```python
 import httpx
+import os
 from pathlib import Path
 
 from dnsid import (
@@ -124,7 +131,7 @@ manager = IdentityManager(
         identity=IdentityConfig(
             domain="agent-a.org-a.example",
             governance_id="org-a.example",
-            log_ref="microledger:abc123",
+            log_ref=os.environ["DNSID_LOG_REF"],  # this agent's persisted c2sp-tlog reference
             status_url="https://agent-a.org-a.example/status",
         ),
     ),
@@ -237,6 +244,7 @@ passed to `IdentityManager`, and an accountable-entity provider supplied via
 and entity lifecycle events. The two current public keys must be distinct.
 
 ```python
+import os
 from dnsid import DnsidConfig, IdentityConfig, IdentityManager, IdentityManagerDependencies, LocalKeyProvider
 
 agent_key = LocalKeyProvider.generate()
@@ -244,7 +252,7 @@ entity_key = LocalKeyProvider.generate()
 config = DnsidConfig(identity=IdentityConfig(
     domain="billing-agent.acme.example",
     governance_id="acme.example",
-    log_ref="microledger:abc123",
+    log_ref=os.environ["DNSID_LOG_REF"],  # assigned/persisted identity-instance reference
     status_url="https://billing-agent.acme.example/status",
     ku_url="https://billing-agent.acme.example/.well-known/jwks.json",
     ek_url="https://acme.example/.well-known/jwks.json",
@@ -257,15 +265,15 @@ manager = IdentityManager(config, agent_key, IdentityManagerDependencies(
 ku_jwks = manager.get_key_set()
 ek_jwks = manager.get_entity_key_set()
 
-# Publish only after writing a bilateral ISSUANCE to a configured write-capable log.
-txt_record = manager.create_txt_record()  # publish at _dnsid.billing-agent.acme.example
+# Publish only after the registry has accepted the bilateral ISSUANCE.
+txt_record = manager.create_txt_record()  # then publish at _dnsid.billing-agent.acme.example
 ```
 
-For the ISSUANCE, construct the manager with a write-capable `LogRegistry` in
-`deps.log_registry`, then call
-`manager.sign_and_write_event(IssuanceEvent(domain=config.identity.domain,
-governance_id=config.identity.governance_id, entity_key=entity_key.signing_key(),
-operational_key=agent_key.signing_key()))` before publishing the TXT record.
+The bundled C2SP registry is **read-only**: it cannot append the ISSUANCE.
+Use the registry's C2SP preparation/submission workflow to obtain and validate
+its assigned `lr`, sign and submit the bilateral entry, then publish the TXT
+record. The code above builds the record but does not publish it or log the
+issuance. Never invent a new `lr` at each startup.
 
 ## Architecture
 
@@ -358,27 +366,19 @@ class MyKeyProvider(KeyProvider):
     def supersede(self, kid: str) -> None: ...
 ```
 
-## Plugging in a ledger
+## C2SP transparency-log verification
 
-Register a factory for each ledger method you support:
+Use an identity-instance reference such as
+`c2sp-tlog:public:https://log.dnsid.ai#<opaque-stream-id>` for C2SP records.
+The stream ID is **not the domain** and must remain stable across restarts. Use
+the `lr` assigned by your registry/CLI; when provisioning a new self-managed
+stream, `generate_c2sp_tlog_stream_id()` creates a fresh 128-bit ID to persist
+with that identity. Never regenerate it when loading an existing identity.
 
-```python
-from dnsid import LogRegistry, IdentityManagerDependencies, IdentityManager
-
-registry = LogRegistry()
-registry.register("microledger", lambda lr: MyMicroledgerReader(lr))
-
-deps = IdentityManagerDependencies(log_registry=registry)
-manager = IdentityManager(config, key_provider, deps)
-```
-
-`LogReader` implementations must verify cryptographic inclusion proofs and append-only consistency. See [interfaces.py](https://github.com/dnsid-ai/dnsid-py/blob/main/dnsid/interfaces.py) for the full interface.
-
-### C2SP tile-log binding
-
-The SDK ships a ready-made `LogReader` for [C2SP](https://github.com/C2SP/C2SP)
-tile-log transparency logs, wire-compatible with the other DNSid SDKs. The
-convenience factory returns a registry ready for `verify_domain`:
+The SDK ships a ready-made [C2SP](https://github.com/C2SP/C2SP) tile-log
+`LogReader`, wire-compatible with the other DNSid SDKs. It verifies proofs
+but does not write events. See [interfaces.py](https://github.com/dnsid-ai/dnsid-py/blob/main/dnsid/interfaces.py)
+for the reader interface. The factory returns a registry ready for `verify_domain`:
 
 ```python
 from dnsid.c2sp_tlog import (
@@ -524,7 +524,7 @@ inspect the registry-managed signed record (effective `ku`/`su`).
 |---|---|---|---|
 | `domain` | yes | — | Agent FQDN (e.g. `billing-agent.acme.example`) |
 | `governance_id` | yes | — | Registrant domain (`gi` tag) |
-| `log_ref` | yes | — | Log reference, format `method:entry-ref` |
+| `log_ref` | yes | — | Persisted C2SP identity-instance reference (`c2sp-tlog:<scope>:<log-prefix>#<stream-id>`); use the reference assigned by your registry |
 | `status_url` | yes | — | HTTPS URL for the agent's status endpoint |
 | `policy_flags` | no | `""` | Comma-separated flags, e.g. `mtls,logchk` |
 | `max_key_age` | no | `""` | Max signing key age: `24h`, `7d`, `30d`, `90d` |
