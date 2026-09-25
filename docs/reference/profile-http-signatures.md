@@ -116,7 +116,7 @@ Return an httpx.AsyncClient that auto-signs every outbound request.
 ### `verify_signed_http_request`
 
 ```python
-HttpSignatureProfile.verify_signed_http_request(req: HttpRequest, opts: HttpVerificationOptions | None = None, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+HttpSignatureProfile.verify_signed_http_request(req: HttpRequest, opts: HttpVerificationOptions | None = None, *, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
 ```
 
 Verify an inbound HTTP request bearing an HTTP Message Signature (RFC 9421).

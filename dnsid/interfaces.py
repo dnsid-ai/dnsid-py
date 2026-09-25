@@ -78,7 +78,8 @@ class KeyProvider(ABC):
     """Standardized interface for Key Management Systems.
 
     Implementations may wrap local key files, cloud KMS (AWS KMS, GCP Cloud KMS,
-    Azure Key Vault), or HSMs.  The SDK never handles private key material directly.
+    Azure Key Vault), or HSMs. LocalKeyProvider handles private key material
+    locally; external KMS/HSM providers can keep it out of the SDK process.
 
     Key lifecycle states:
       Pending    — generated but not yet promoted; excluded from JWKS.
@@ -211,7 +212,8 @@ class Log(ABC):
 class LogReader(ABC):
     """Read and verify interface for a specific ledger entry.
 
-    Bound at construction to a full lr value (e.g. 'algorand:AGENT_ADDR_BASE32').
+    Bound at construction to a full lr value (e.g.
+    ``c2sp-tlog:public:https://log.dnsid.ai#<stream-id>``).
     The implementation stores the entry reference internally; callers do not pass
     it per-method.  All methods MUST verify cryptographic inclusion proofs,
     verifiable timestamps, and append-only consistency before returning.
@@ -342,9 +344,9 @@ class LogReader(ABC):
 class NoopLogReader(LogReader):
     """Placeholder LogReader for ledger methods with no registered factory.
 
-    Every method raises VerificationError(LedgerError) with a descriptive message.
-    This lets non-log-dependent interactive verification succeed while making log
-    evidence failures explicit and descriptive when actually required.
+    Every method raises VerificationError(LOG_ERROR) with a descriptive message.
+    Draft 01 verification requires lifecycle-log checks, so verify_domain fails
+    closed when no capable reader is registered.
     """
 
     def __init__(self, method: str) -> None:

@@ -56,7 +56,7 @@ retry and what to surface to users or logs.
 ### `VerificationError` constructor
 
 ```python
-VerificationError(code: VerificationCode, message: str, transient: bool = False, agent_state: str | None = None, category: str | None = None, cause: BaseException | None = None, verified_governance_id: str | None = None, verified_entity_key_thumbprint: str | None = None) -> None
+VerificationError(code: VerificationCode, message: str, *, transient: bool = False, agent_state: str | None = None, category: str | None = None, cause: BaseException | None = None, verified_governance_id: str | None = None, verified_entity_key_thumbprint: str | None = None) -> None
 ```
 
 Initialize the error with a structured code and message.
@@ -109,7 +109,7 @@ A verified lifecycle history violates the shared reducer contract.
 ### `LifecycleVerificationError` constructor
 
 ```python
-LifecycleVerificationError(category: LifecycleErrorCategory, message: str, failing_event_index: int | None = None) -> None
+LifecycleVerificationError(category: LifecycleErrorCategory, message: str, *, failing_event_index: int | None = None) -> None
 ```
 
 Initialize with a lifecycle failure category and message.

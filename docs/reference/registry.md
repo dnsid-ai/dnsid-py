@@ -13,10 +13,10 @@ from dnsid import LogRegistry
 
 Holds one factory per log method; constructs bound LogReader instances on demand.
 
-> **Example:** registry = LogRegistry() registry.register("algorand", AlgorandLogReader) reader = registry.new_reader("algorand:AGENT_ADDR")
-
-IdentityManager uses this at construction (to derive localLog) and during
-VerifyDomain (to construct counterparty readers).
+For C2SP, prefer ``create_dnsid_managed_verification_registry()`` or
+``create_c2sp_tlog_verification_registry(...)`` over manual registration.
+IdentityManager uses the registry to bind the local log and to construct
+counterparty readers during verification.
 
 ### `LogRegistry` constructor
 
@@ -32,7 +32,7 @@ Initialize an empty registry with no registered log method factories.
 LogRegistry.register(method: str, factory: LogReaderFactory) -> None
 ```
 
-Register a factory for *method* (e.g. 'algorand', 'ctlog', 'scitt').
+Register a factory for *method* (e.g. 'c2sp-tlog').
 
 **Arguments:**
 
@@ -56,12 +56,11 @@ the registered factory.
 
 **Arguments:**
 
-- `lr` (`str`): Full log reference string, e.g. ``"algorand:AGENT_ADDR"``.
+- `lr` (`str`): Full log reference string, e.g. ``"c2sp-tlog:public:https://log.dnsid.ai#<stream-id>"``.
 
 **Returns:**
 
-- `LogReader` — A LogReader bound to *lr*, or a NoopLogReader when the method has
-- `LogReader` — no registered factory.
+- `LogReader` — A LogReader bound to *lr*, or a NoopLogReader when the method has no registered factory.
 
 **Raises:**
 
@@ -92,10 +91,11 @@ The primary contract is the DNSid registry API under ``/api/v1``:
 
 NOT used by VerifyDomain; protocol verification always fetches the signed su endpoint.
 
-Mutation calls require owner credentials (an organization session or API
-key), supplied as ``api_key`` and sent as an ``Authorization: Bearer``
-header. An agent bearer token is not sufficient. Legacy status reads are
-public, but Live status requires the same owner authentication because it
+Hosted mutation calls require owner credentials (an organization session or
+API key), supplied as ``api_key`` and sent as an ``Authorization: Bearer``
+header. Loopback registry calls do not require credentials. An agent bearer
+token is not sufficient. Legacy status reads are public, but Live status
+requires the same owner authentication because it
 may expose a proof challenge. A configured credential is sent on all reads.
 The credential is never included in ``repr()``/``str()``, exceptions, or logs.
 
@@ -109,7 +109,7 @@ resolving and verifying the record with ``IdentityManager.verify_domain``.
 ### `RegistryClient` constructor
 
 ```python
-RegistryClient(base_url: str | None = None, api_key: str | None = None) -> None
+RegistryClient(base_url: str | None = None, *, api_key: str | None = None) -> None
 ```
 
 Initialize the client with a registry base URL and optional credential.
@@ -117,7 +117,7 @@ Initialize the client with a registry base URL and optional credential.
 **Arguments:**
 
 - `base_url` (`str | None`): HTTPS registry base URL, or HTTP loopback URL for the local registry; defaults to ``DEFAULT_REGISTRY_URL`` (the local registry from ``dnsid local up``). Hosted use requires an explicit URL; see `dnsid.registry_client_from_environment`. A trailing slash is stripped. — default `None`
-- `api_key` (`str | None`): Owner session or organization API-key credential sent as an ``Authorization: Bearer`` header. Whitespace-only values are treated as absent; without one only legacy status reads are available. Constructors never read the environment themselves. — default `None`
+- `api_key` (`str | None`): Owner session or organization API-key credential sent as an ``Authorization: Bearer`` header. Whitespace-only values are treated as absent; without one hosted clients can only read legacy status. The loopback registry does not require a credential. Constructors never read the environment themselves. — default `None`
 
 **Raises:**
 
@@ -304,7 +304,7 @@ Return the current registry registration without conflating status namespaces.
 ### `wait_for_status`
 
 ```python
-RegistryClient.wait_for_status(domain: str, timeout: float = 120.0, interval: float = 5.0, target_state: str | None = None) -> RegistryAgentStatus
+RegistryClient.wait_for_status(domain: str, *, timeout: float = 120.0, interval: float = 5.0, target_state: str | None = None) -> RegistryAgentStatus
 ```
 
 Poll the registry until the agent reaches a settled or target state.
@@ -324,7 +324,7 @@ failed/terminal state is reached before *target_state*.
 ### `async_wait_for_status`
 
 ```python
-RegistryClient.async_wait_for_status(domain: str, timeout: float = 120.0, interval: float = 5.0, target_state: str | None = None) -> RegistryAgentStatus
+RegistryClient.async async_wait_for_status(domain: str, *, timeout: float = 120.0, interval: float = 5.0, target_state: str | None = None) -> RegistryAgentStatus
 ```
 
 Async variant of `wait_for_status`.

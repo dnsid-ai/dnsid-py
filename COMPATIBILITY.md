@@ -26,6 +26,7 @@ These are installed automatically with `pip install dnsid`:
 | [httpx](https://pypi.org/project/httpx/) | ≥ 0.27 | HTTP client for JWKS, status endpoint fetches, and DoH queries |
 | [dnspython](https://pypi.org/project/dnspython/) | ≥ 2.6 | System DNS resolver (TXT record lookup with DNSSEC awareness) |
 | [cryptography](https://pypi.org/project/cryptography/) | ≥ 42.0 | JWK thumbprint, ECDSA/EdDSA signature verification and signing |
+| [http-sf](https://pypi.org/project/http-sf/) | ≥ 1.3.0, < 2 | HTTP Structured Fields parsing and serialization |
 
 ## Optional Dependencies
 
@@ -43,6 +44,7 @@ These are installed automatically with `pip install dnsid`:
 | [pytest-asyncio](https://pypi.org/project/pytest-asyncio/) | ≥ 0.23 | Async test support |
 | [ruff](https://pypi.org/project/ruff/) | ≥ 0.4 | Linter and formatter |
 | [mypy](https://pypi.org/project/mypy/) | ≥ 1.10 | Static type checker |
+| [griffe](https://pypi.org/project/griffe/) | ≥ 1.5 | Generate the API reference from docstrings |
 
 ## Platform Support
 

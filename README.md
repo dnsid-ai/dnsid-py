@@ -24,40 +24,45 @@ to pin a version; the `[aws]` extra works the same way:
 pip install "dnsid @ git+https://github.com/dnsid-ai/dnsid-py@main"
 ```
 
-Requires Python 3.11+. CI-tested against Python 3.11, 3.12, and 3.13. Dependencies: `idna`, `httpx`, `cryptography`, `dnspython`. The package ships a `py.typed` marker (PEP 561), so mypy and other type checkers see its full strict-mode annotations.
+Requires Python 3.11+. CI-tested against Python 3.11, 3.12, and 3.13. Dependencies: `idna`, `httpx`, `cryptography`, `dnspython`, `http-sf`. The package ships a `py.typed` marker (PEP 561), so mypy and other type checkers see its full strict-mode annotations.
 
 See **[COMPATIBILITY.md](https://github.com/dnsid-ai/dnsid-py/blob/main/COMPATIBILITY.md)** for the full runtime and dependency compatibility matrix,
 including tested Python versions, dependency version ranges, optional extras, and platform support.
 
 ## First verification
 
+For this local signing identity, set `DNSID_LOG_REF` to its persisted,
+registry-provided `c2sp-tlog:public:` reference on a supported DNSid-managed
+log. A verification-only manager needs no local identity or reference (see the
+[Quickstart](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/quickstart.md)).
+
 ```python
+import os
 from pathlib import Path
 
-from dnsid import DnsidConfig, IdentityConfig, IdentityManager, LocalKeyProvider
+from dnsid import DnsidConfig, IdentityConfig, IdentityManager, IdentityManagerDependencies, LocalKeyProvider
+from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 
 manager = IdentityManager(
-    DnsidConfig(
-        identity=IdentityConfig(
-            domain="billing-agent.acme.example", governance_id="acme.example",
-            log_ref="microledger:abc123",
-            status_url="https://billing-agent.acme.example/status",
-        ),
-    ),
+    DnsidConfig(identity=IdentityConfig(
+        domain="billing-agent.acme.example", governance_id="acme.example",
+        log_ref=os.environ["DNSID_LOG_REF"],  # persisted c2sp-tlog identity-instance reference
+        status_url="https://billing-agent.acme.example/status",
+    )),
     LocalKeyProvider.load(Path("~/.dnsid/keys.json").expanduser(), create_if_missing=True),
+    # Explicitly trust the SDK's pinned DNSid-managed public log roots.
+    deps=IdentityManagerDependencies(log_registry=create_dnsid_managed_verification_registry()),
 )
 
-# Verify a counterparty's identity — fetches DNS, JWKS, and status endpoint
-# The default "auto" DNSSEC policy accepts system resolvers that cannot report
-# validation state, while still rejecting an explicit validation failure.
+# For a counterparty using a supported DNSid-managed public log:
 vd = manager.verify_domain("payments-agent.acme.example")
-print(vd.domain, vd.cached_state())   # payments-agent.acme.example ACTIVE
+print(vd.domain, vd.cached_state())
 ```
 
-Draft-01 verification is strict and fails closed: beyond the snippet above it
-needs a log reader registered for the domain's `lr` method (see the
+Draft-01 verification fails closed if the domain's `lr` uses a different log
+method or trust root; configure a matching reader (see the
 [transparency-log reference](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/transparency-log.md)). The
-[Quickstart](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/quickstart.md) walks through the full setup. The default
+[Quickstart](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/quickstart.md) shows verification setup. The default
 `auto` DNSSEC policy works with the built-in resolver; `validated` and
 `required` need a DNSSEC-aware resolver injected through
 `IdentityManagerDependencies.dns_resolver`.
@@ -72,7 +77,7 @@ needs a log reader registered for the domain's `lr` method (see the
 
 **Import surface.** Everything is importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. The transparency-log integration is the exception: import it from `dnsid.c2sp_tlog`.
 
-**Synchronous by design.** The public API is synchronous; async support is limited to the httpx transport plumbing (custom transports may implement `handle_async_request`) and the `async_retry_transient` helper. Call the SDK from async code via `asyncio.to_thread` or an executor.
+**Synchronous by design.** Verification and most public operations are synchronous. Async support includes `RegistryClient.async_wait_for_status()` (which polls synchronously), signed `httpx.AsyncClient` transport plumbing, and `async_retry_transient`. Call blocking SDK operations from async code via `asyncio.to_thread` or an executor.
 
 ## Documentation
 
@@ -107,6 +112,7 @@ OIDC tokens in browser, mobile, or other client-side code.
 
 ```python
 import httpx
+import os
 from pathlib import Path
 
 from dnsid import (
@@ -125,7 +131,7 @@ manager = IdentityManager(
         identity=IdentityConfig(
             domain="agent-a.org-a.example",
             governance_id="org-a.example",
-            log_ref="microledger:abc123",
+            log_ref=os.environ["DNSID_LOG_REF"],  # this agent's persisted c2sp-tlog reference
             status_url="https://agent-a.org-a.example/status",
         ),
     ),
@@ -238,29 +244,36 @@ passed to `IdentityManager`, and an accountable-entity provider supplied via
 and entity lifecycle events. The two current public keys must be distinct.
 
 ```python
-from dnsid.models import IssuanceEvent
-import datetime
+import os
+from dnsid import DnsidConfig, IdentityConfig, IdentityManager, IdentityManagerDependencies, LocalKeyProvider
 
-# 1. Publish the agent JWKS at the ku URL and the entity JWKS at the ek URL
-ku_jwks = manager.get_key_set()         # exactly one current operational key
-ek_jwks = manager.get_entity_key_set()  # exactly one current entity key
+agent_key = LocalKeyProvider.generate()
+entity_key = LocalKeyProvider.generate()
+config = DnsidConfig(identity=IdentityConfig(
+    domain="billing-agent.acme.example",
+    governance_id="acme.example",
+    log_ref=os.environ["DNSID_LOG_REF"],  # assigned/persisted identity-instance reference
+    status_url="https://billing-agent.acme.example/status",
+    ku_url="https://billing-agent.acme.example/.well-known/jwks.json",
+    ek_url="https://acme.example/.well-known/jwks.json",
+))
+manager = IdentityManager(config, agent_key, IdentityManagerDependencies(
+    entity_key_provider=entity_key,
+))
 
-# 2. Write the ISSUANCE event to the ledger (requires a LogRegistry with a Log
-#    implementation; signed by the entity key + operational countersignature)
-event = IssuanceEvent(
-    domain=config.domain,
-    kid=key_provider.signing_key().kid,
-    public_key=key_provider.signing_key(),
-    thumbprint=key_provider.signing_key().thumbprint(),
-    governance_id=config.governance_id,
-    timestamp=datetime.datetime.now(datetime.UTC),
-)
-manager.sign_and_write_event(event)
+# Serve these key sets over HTTPS at the configured ku and ek URLs.
+ku_jwks = manager.get_key_set()
+ek_jwks = manager.get_entity_key_set()
 
-# 3. Publish the signed TXT record at _dnsid.{domain}
-txt_record = manager.create_txt_record()
-# → "v=dnsid-draft-01;gi=acme.example;ek=https://...;ku=https://...;lr=...;su=...;sg=..."
+# Publish only after the registry has accepted the bilateral ISSUANCE.
+txt_record = manager.create_txt_record()  # then publish at _dnsid.billing-agent.acme.example
 ```
+
+The bundled C2SP registry is **read-only**: it cannot append the ISSUANCE.
+Use the registry's C2SP preparation/submission workflow to obtain and validate
+its assigned `lr`, sign and submit the bilateral entry, then publish the TXT
+record. The code above builds the record but does not publish it or log the
+issuance. Never invent a new `lr` at each startup.
 
 ## Architecture
 
@@ -353,27 +366,19 @@ class MyKeyProvider(KeyProvider):
     def supersede(self, kid: str) -> None: ...
 ```
 
-## Plugging in a ledger
+## C2SP transparency-log verification
 
-Register a factory for each ledger method you support:
+Use an identity-instance reference such as
+`c2sp-tlog:public:https://log.dnsid.ai#<opaque-stream-id>` for C2SP records.
+The stream ID is **not the domain** and must remain stable across restarts. Use
+the `lr` assigned by your registry/CLI; when provisioning a new self-managed
+stream, `generate_c2sp_tlog_stream_id()` creates a fresh 128-bit ID to persist
+with that identity. Never regenerate it when loading an existing identity.
 
-```python
-from dnsid import LogRegistry, IdentityManagerDependencies, IdentityManager
-
-registry = LogRegistry()
-registry.register("microledger", lambda lr: MyMicroledgerReader(lr))
-
-deps = IdentityManagerDependencies(log_registry=registry)
-manager = IdentityManager(config, key_provider, deps)
-```
-
-`LogReader` implementations must verify cryptographic inclusion proofs and append-only consistency. See [interfaces.py](https://github.com/dnsid-ai/dnsid-py/blob/main/dnsid/interfaces.py) for the full interface.
-
-### C2SP tile-log binding
-
-The SDK ships a ready-made `LogReader` for [C2SP](https://github.com/C2SP/C2SP)
-tile-log transparency logs, wire-compatible with the other DNSid SDKs. The
-convenience factory returns a registry ready for `verify_domain`:
+The SDK ships a ready-made [C2SP](https://github.com/C2SP/C2SP) tile-log
+`LogReader`, wire-compatible with the other DNSid SDKs. It verifies proofs
+but does not write events. See [interfaces.py](https://github.com/dnsid-ai/dnsid-py/blob/main/dnsid/interfaces.py)
+for the reader interface. The factory returns a registry ready for `verify_domain`:
 
 ```python
 from dnsid.c2sp_tlog import (
@@ -476,8 +481,9 @@ domain you control, `zone_id=...` for a delegated zone, `register_live_agent()`
 for Live. Pass `environment="sandbox"` for a sandbox agent. `managed=True`
 without `zone_id` is rejected.
 
-Mutation calls require owner credentials: an organization session or API key,
-passed as `api_key` and sent as an `Authorization: Bearer` header. An agent
+Hosted mutation calls require owner credentials: an organization session or API key,
+passed as `api_key` and sent as an `Authorization: Bearer` header. The local
+loopback registry does not require a credential. An agent
 bearer token is not sufficient. This also applies to `prepare_key_rotation()`
 and the other transparency-log preparation operations.
 
@@ -496,7 +502,7 @@ its derived `domain`. A successful `reissue_live_proof()` response supersedes al
 older challenges: only the latest challenge and message may be signed or submitted.
 
 Live status requires owner/session/API-key authentication because it can expose
-its proof challenge; only legacy status is public. Calling a mutation without
+its proof challenge; only legacy status is public. Calling a hosted mutation without
 `api_key` raises `ArgumentError` before any request is sent. The credential never
 appears in `repr()`/`str()`, exceptions, or logs. See the
 [registry reference](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/registry.md) for the full method list and how to
@@ -518,7 +524,7 @@ inspect the registry-managed signed record (effective `ku`/`su`).
 |---|---|---|---|
 | `domain` | yes | — | Agent FQDN (e.g. `billing-agent.acme.example`) |
 | `governance_id` | yes | — | Registrant domain (`gi` tag) |
-| `log_ref` | yes | — | Log reference, format `method:entry-ref` |
+| `log_ref` | yes | — | Persisted C2SP identity-instance reference (`c2sp-tlog:<scope>:<log-prefix>#<stream-id>`); use the reference assigned by your registry |
 | `status_url` | yes | — | HTTPS URL for the agent's status endpoint |
 | `policy_flags` | no | `""` | Comma-separated flags, e.g. `mtls,logchk` |
 | `max_key_age` | no | `""` | Max signing key age: `24h`, `7d`, `30d`, `90d` |
@@ -669,7 +675,8 @@ mypy dnsid/
 this repository, each with a CycloneDX SBOM attached. Forks, mirrors, and similarly named packages
 are not maintained by us. Report vulnerabilities per [SECURITY.md](SECURITY.md); never in a public issue.
 
-**Software is not identity.** This SDK ships no keys, credentials, or trust. A DNSid identity is proven
+**Software is not identity.** This SDK ships no private keys or credentials; it bundles
+public log trust roots used only when the managed-log factory is selected. A DNSid identity is proven
 by control of a DNS zone, an agent private key, and the registry's published status. Possessing, forking,
 or modifying this code grants none of those: an unofficial build cannot mint or inherit anyone's identity.
 

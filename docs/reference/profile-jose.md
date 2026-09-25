@@ -71,7 +71,7 @@ iss and sub are set to the local domain; aud is opts.audience.
 ### `verify_jwt`
 
 ```python
-JoseProfile.verify_jwt(jwt: str, expected_audience: str | None = None, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+JoseProfile.verify_jwt(jwt: str, *, expected_audience: str | None = None, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
 ```
 
 Verify a JWT received from a counterparty.
@@ -87,10 +87,7 @@ signature against the issuer's verified signing key.
 
 **Returns:**
 
-- `VerifiedDomain` — The VerifiedDomain for the issuer's DNSid identity. The decoded
-- `VerifiedDomain` — claims payload is not returned — timing claims and the signature
-- `VerifiedDomain` — are validated internally; decode the JWT's payload segment
-- `VerifiedDomain` — separately if the application needs its claims.
+- `VerifiedDomain` — The VerifiedDomain for the issuer's DNSid identity. The decoded claims payload is not returned — timing claims and the signature are validated internally; decode the JWT's payload segment separately if the application needs its claims.
 
 **Raises:**
 
@@ -122,7 +119,7 @@ the signer.
 ### `verify_jws`
 
 ```python
-JoseProfile.verify_jws(jws: str, peer_cert: TLSCertificate | None = None) -> tuple[bytes, VerifiedDomain]
+JoseProfile.verify_jws(jws: str, *, peer_cert: TLSCertificate | None = None) -> tuple[bytes, VerifiedDomain]
 ```
 
 Verify a JWS compact serialization from a counterparty (RFC 7515).
@@ -134,8 +131,7 @@ Verify a JWS compact serialization from a counterparty (RFC 7515).
 
 **Returns:**
 
-- `bytes` — ``(payload_bytes, verified_domain)`` — the decoded payload and the
-- `VerifiedDomain` — VerifiedDomain for the signer's DNSid identity.
+- `tuple[bytes, VerifiedDomain]` — ``(payload_bytes, verified_domain)`` — the decoded payload and the VerifiedDomain for the signer's DNSid identity.
 
 **Raises:**
 

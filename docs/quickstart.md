@@ -46,16 +46,17 @@ For local development and testing, use `LocalKeyProvider.generate()` for Ed25519
 Verify a remote agent's identity by resolving its DNS record and fetching its JWKS:
 
 ```python
-from dnsid import DnsidConfig, IdentityManager, TrustedEntity, VerificationConfig
+from dnsid import DnsidConfig, IdentityManager, IdentityManagerDependencies, TrustedEntity, VerificationConfig
+from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 
-# A verifier needs no local identity or keys. Optionally restrict which
-# accountable entities (gi) you accept; omit trusted_entities to make no
-# acceptance decision.
+# A verifier needs no local identity or keys. This explicitly trusts the
+# SDK's pinned DNSid-managed public logs; other logs need their own reader.
 manager = IdentityManager(
-    DnsidConfig(
-        verification=VerificationConfig(
-            trusted_entities=[TrustedEntity("example.com")],
-        ),
+    DnsidConfig(verification=VerificationConfig(
+        trusted_entities=[TrustedEntity("example.com")],
+    )),
+    deps=IdentityManagerDependencies(
+        log_registry=create_dnsid_managed_verification_registry(),
     ),
 )
 
@@ -74,20 +75,25 @@ print(f"Cache expires: {verified.expiry()}")
 - Validates the record structure and signature
 - Fetches the JWKS from the `ku` URL
 - Checks the agent's status endpoint
-- Caches the result until `expiry()`
+- Caches identity evidence until `expiry()` (status is re-fetched on every call by default)
 
-> **Note:** domains using the draft 01 behavior (`v=dnsid-draft-01` or verification-only `v=DNSid1`) (typically with a
-> transparency-log reference, `lr=c2sp-tlog:...`) additionally require a
-> registered log reader — without one, `verify_domain` fails closed with
-> `VerificationCode.LOG_ERROR`. See the
-> [transparency-log reference](reference/transparency-log.md)
-> for setup.
+> **Note:** draft-01 (`v=dnsid-draft-01` or verification-only `v=DNSid1`)
+> verification requires a capable log reader. The managed factory above supports
+> only exact DNSid-managed public log references; for other logs, configure a
+> matching reader or verification fails closed. The `trusted_entities` entry
+> must match the counterparty's verified `gi`. See the
+> [transparency-log reference](reference/transparency-log.md) for other setups.
 
 ### 2. Sign — Create a JWT with a DNSid Identity
+
+Set `DNSID_LOG_REF` to this identity's persisted, registry-provided C2SP
+reference (`c2sp-tlog:<scope>:<log-prefix>#<opaque-stream-id>`). Each
+identity instance has its own stream; never generate a new ID on startup.
 
 Sign a JWT that a counterparty can verify against your DNS-published identity:
 
 ```python
+import os
 from pathlib import Path
 from dnsid import DnsidConfig, IdentityConfig, IdentityManager, LocalKeyProvider, JWTOptions
 from dnsid.jose import JoseProfile
@@ -98,7 +104,7 @@ config = DnsidConfig(
     identity=IdentityConfig(
         domain="billing-agent.example.com",
         governance_id="example.com",
-        log_ref="microledger:abc123",
+        log_ref=os.environ["DNSID_LOG_REF"],
         status_url="https://billing-agent.example.com/status",
     ),
 )
@@ -130,24 +136,16 @@ The JWT contains:
 Verify a JWT received from a counterparty, confirming its signature matches the issuer's published DNSid identity:
 
 ```python
-from pathlib import Path
-from dnsid import DnsidConfig, IdentityConfig, IdentityManager, LocalKeyProvider
+from dnsid import IdentityManager, IdentityManagerDependencies
+from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 from dnsid.jose import JoseProfile, JoseConfig
 from dnsid.exceptions import VerificationError
 
-# Set up your identity (the verifier)
-key_provider = LocalKeyProvider.load(
-    Path.home() / ".dnsid" / "keys.json", create_if_missing=True
-)
-config = DnsidConfig(
-    identity=IdentityConfig(
-        domain="payments-agent.example.com",
-        governance_id="example.com",
-        log_ref="microledger:abc123",
-        status_url="https://payments-agent.example.com/status",
-    ),
-)
-manager = IdentityManager(config, key_provider)
+# Verification needs no local identity or signing key. Explicitly trust the
+# managed public C2SP logs used by the counterparty being verified.
+manager = IdentityManager(deps=IdentityManagerDependencies(
+    log_registry=create_dnsid_managed_verification_registry(),
+))
 
 # Create JOSE profile with custom freshness settings
 jose = JoseProfile.from_identity_manager(manager, config=JoseConfig())
@@ -156,7 +154,7 @@ jose = JoseProfile.from_identity_manager(manager, config=JoseConfig())
 incoming_token = "eyJ..."  # JWT received from the counterparty
 
 try:
-    verified = jose.verify_jwt(incoming_token)
+    verified = jose.verify_jwt(incoming_token, expected_audience="payments-agent.example.com")
     print(f"Verified issuer: {verified.domain}")
     print(f"Issuer state: {verified.cached_state()}")
     print(f"Governance: {verified.record.gi}")

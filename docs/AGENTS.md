@@ -13,9 +13,9 @@ Durable rules for anyone — human or agent — touching this directory.
   python scripts/gen_docs.py
   ```
 
-  CI runs the generator and fails if `git diff docs/reference/` is dirty,
-  which catches both hand-edits and docstrings changed without
-  regenerating.
+  CI runs the generator and warns if `git diff docs/reference/` is dirty;
+  same-repo PR branches get an auto-regeneration commit, while fork PRs
+  must regenerate and commit the reference manually.
 - **`quickstart.md` and `security.md` are hand-written** and freely
   editable.
 
