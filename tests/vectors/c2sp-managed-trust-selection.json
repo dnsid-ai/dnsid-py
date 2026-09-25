@@ -4,7 +4,7 @@
     {
       "id": "identity-digital-development",
       "scope": "public",
-      "logPrefix": "https://log.dnsid.dev",
+      "logPrefix": "https://log.dev.dnsid.ai",
       "trustMode": "trust-profile"
     },
     {
@@ -17,7 +17,7 @@
   "cases": [
     {
       "id": "exact-development-selector",
-      "lr": "c2sp-tlog:public:https://log.dnsid.dev#EREREREREREREREREREREQ",
+      "lr": "c2sp-tlog:public:https://log.dev.dnsid.ai#EREREREREREREREREREREQ",
       "expected": {
         "accepted": true,
         "catalogEntry": "identity-digital-development",
@@ -35,7 +35,15 @@
     },
     {
       "id": "wrong-scope-fails-closed",
-      "lr": "c2sp-tlog:testnet:https://log.dnsid.dev#EREREREREREREREREREREQ",
+      "lr": "c2sp-tlog:testnet:https://log.dev.dnsid.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "retired-development-prefix-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.dnsid.dev#EREREREREREREREREREREQ",
       "expected": {
         "accepted": false,
         "reason": "unknown managed selector"
@@ -51,7 +59,7 @@
     },
     {
       "id": "deceptive-hostname-fails-closed",
-      "lr": "c2sp-tlog:public:https://log.dnsid.dev.attacker.example#EREREREREREREREREREREQ",
+      "lr": "c2sp-tlog:public:https://log.dev.dnsid.ai.attacker.example#EREREREREREREREREREREQ",
       "expected": {
         "accepted": false,
         "reason": "unknown managed selector"
@@ -59,7 +67,7 @@
     },
     {
       "id": "noncanonical-prefix-fails-closed",
-      "lr": "c2sp-tlog:public:https://log.dnsid.dev/#EREREREREREREREREREREQ",
+      "lr": "c2sp-tlog:public:https://log.dev.dnsid.ai/#EREREREREREREREREREREQ",
       "expected": {
         "accepted": false,
         "reason": "malformed or noncanonical reference"
@@ -67,7 +75,7 @@
     },
     {
       "id": "missing-stream-id-fails-closed",
-      "lr": "c2sp-tlog:public:https://log.dnsid.dev",
+      "lr": "c2sp-tlog:public:https://log.dev.dnsid.ai",
       "expected": {
         "accepted": false,
         "reason": "malformed reference"
