@@ -22,13 +22,13 @@ from .verification_registry import (
 _MANAGED_FRESHNESS_MS = 10 * 60 * 1000
 _DEVELOPMENT_TRUST_PROFILE = (
     b'{\n  "version": 1,\n  "scope": "public",\n'
-    b'  "log_prefix": "https://log.dnsid.dev",\n  "tlog_policy": "'
-    b"log log.dnsid.dev+052e4f74+AeVyq6M2TaREOeeZ4lsQ5XEm9B0w1FtvS5TO8iWKyTN0\\n"
+    b'  "log_prefix": "https://log.dev.dnsid.ai",\n  "tlog_policy": "'
+    b"log log.dev.dnsid.ai+cad12acd+Afnd3sdzfp8nCXzDQchrnWn9QOox5AglR147bURESRqu\\n"
     b"witness dnsid-witness-1 "
-    b"witness.dnsid.dev/w1+6a659d6a+BKY6cayDG6j/EW1YMrZwzqUWNudBIphAkWkOvAtwgiy7\\n"
+    b"witness.dev.dnsid.ai/w1+50822ded+BAH9KuulelD3yZBDTneG46gKZY+OWwdUPBmLmq/YjOkO\\n"
     b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
-    b'    "dnsid-stream-bundle+403a6611+'
-    b'AeE6U4Cbeke0Y9/7TiJve8CJPTFY/KDI0ZIlSU4pfbBD"\n  ]\n}'
+    b'    "dnsid-stream-bundle+0c241174+'
+    b'AeuT9PKyiewb9hkzygvki7UuOs5ly2kfY/C4Tfh7/ix0"\n  ]\n}'
 )
 _PRODUCTION_TRUST_PROFILE = (
     b'{\n  "version": 1,\n  "scope": "public",\n'
@@ -66,7 +66,7 @@ class _ManagedTrustEntry:
 _MANAGED_CATALOG = (
     _ManagedTrustEntry(
         "public",
-        "https://log.dnsid.dev",
+        "https://log.dev.dnsid.ai",
         trust_profile_document=_DEVELOPMENT_TRUST_PROFILE,
     ),
     _ManagedTrustEntry(

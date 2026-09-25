@@ -28,6 +28,11 @@ from dnsid.c2sp_tlog.managed_verification_registry import (
 from dnsid.c2sp_tlog.stream_bundle import _FetchedStreamBundleSource
 
 _VECTOR = Path(__file__).parent / "vectors" / "c2sp-managed-trust-selection.json"
+_DEVELOPMENT_POLICY = b"""log log.dev.dnsid.ai+cad12acd+Afnd3sdzfp8nCXzDQchrnWn9QOox5AglR147bURESRqu
+witness dnsid-witness-1 witness.dev.dnsid.ai/w1+50822ded+BAH9KuulelD3yZBDTneG46gKZY+OWwdUPBmLmq/YjOkO
+quorum dnsid-witness-1
+"""
+_DEVELOPMENT_BUNDLE_KEY = "dnsid-stream-bundle+0c241174+AeuT9PKyiewb9hkzygvki7UuOs5ly2kfY/C4Tfh7/ix0"
 _PRODUCTION_POLICY = b"""log log.dnsid.ai+c4683585+AWZYC4OLE9KeRnpaI9xaHWwHUKoxgp/24ukzgVYlDwIt
 witness dnsid-witness-1 witness.dnsid.ai/w1+b5ea211e+BH0nGTkjF4tYpkefsQhHNg0YagPvQ6H96Y3UBbXo7a/b
 quorum dnsid-witness-1
@@ -41,6 +46,20 @@ class _Fetcher:
 
     def security_guarantees(self) -> C2spResourceFetchGuarantees:
         return C2spResourceFetchGuarantees(True, True, True, True, True)
+
+
+def test_development_catalog_entry_is_exact_trust_profile() -> None:
+    document = json.loads(_DEVELOPMENT_TRUST_PROFILE)
+    assert document == {
+        "version": 1,
+        "scope": "public",
+        "log_prefix": "https://log.dev.dnsid.ai",
+        "tlog_policy": _DEVELOPMENT_POLICY.decode(),
+        "bundle_verifier_keys": [_DEVELOPMENT_BUNDLE_KEY],
+    }
+    profile = parse_c2sp_tlog_trust_profile(_DEVELOPMENT_TRUST_PROFILE)
+    assert profile.policy_document == _DEVELOPMENT_POLICY
+    assert profile.bundle_verifier_keys == [parse_signed_note_verifier_key(_DEVELOPMENT_BUNDLE_KEY)]
 
 
 def test_production_catalog_entry_is_exact_trust_profile() -> None:
@@ -79,7 +98,7 @@ def test_managed_registry_shares_infrastructure_and_fixed_defaults() -> None:
         DnsidManagedVerificationOptions(fetcher, store)
     )
     development = registry.new_reader(
-        "c2sp-tlog:public:https://log.dnsid.dev#EREREREREREREREREREREQ"
+        "c2sp-tlog:public:https://log.dev.dnsid.ai#EREREREREREREREREREREQ"
     )
     production = registry.new_reader("c2sp-tlog:public:https://log.dnsid.ai#EREREREREREREREREREREQ")
 
@@ -110,14 +129,14 @@ def test_managed_registry_shares_infrastructure_and_fixed_defaults() -> None:
         (
             _ManagedTrustEntry(
                 "public",
-                "https://log.dnsid.dev",
+                "https://log.dev.dnsid.ai",
                 policy_document=_PRODUCTION_POLICY,
             ),
         ),
         (
             _ManagedTrustEntry(
                 "public",
-                "https://log.dnsid.dev",
+                "https://log.dev.dnsid.ai",
                 trust_profile_document=_DEVELOPMENT_TRUST_PROFILE,
                 policy_document=_PRODUCTION_POLICY,
             ),
