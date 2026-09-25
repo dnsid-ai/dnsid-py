@@ -1,4 +1,15 @@
 
+## [0.22.1] - 2026-09-25
+
+### Bug Fixes
+
+- fix: pin current development C2SP log trust ([#30](https://github.com/dnsid-ai/dnsid-py/pull/30))
+
+### Documentation
+
+- docs: correct SDK examples, contracts, and generated reference ([#32](https://github.com/dnsid-ai/dnsid-py/pull/32))
+
+
 ## [0.22.0] - 2026-09-24
 
 ### Chores
