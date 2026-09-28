@@ -41,6 +41,21 @@ _PRODUCTION_TRUST_PROFILE = (
     b'AWGLBe4LhJKumyDpH8VJ0vyATB081i1HseVeETu4TONR"\n  ]\n}'
 )
 
+# The partner environment's log. Its log and bundle keys were checked against
+# the partner account's KMS public keys and its witness key against the
+# reviewed partner witness policy; the log's own discovery endpoints are not
+# what the pins rest on.
+_PARTNERS_TRUST_PROFILE = (
+    b'{\n  "version": 1,\n  "scope": "public",\n'
+    b'  "log_prefix": "https://log.partners.dnsid.ai",\n  "tlog_policy": "'
+    b"log log.partners.dnsid.ai+52d6a7c3+ASsAuEkXpM63Qh2yh0q7DvueHqITfWGvcpWCOQfaDz5m\\n"
+    b"witness dnsid-witness-1 "
+    b"witness.partners.dnsid.ai/w1+a115eb67+BB0avWVeSelUBk2w8FtTbT+orf2i826q9VemA0jaXxg4\\n"
+    b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
+    b'    "dnsid-stream-bundle+b12677d8+'
+    b'AWOB3PQPuFoGK66bqsFRcNh4n4q2DaAcauBijHymUUWH"\n  ]\n}'
+)
+
 
 @dataclass
 class DnsidManagedVerificationOptions:
@@ -74,6 +89,11 @@ _MANAGED_CATALOG = (
         "https://log.dnsid.ai",
         trust_profile_document=_PRODUCTION_TRUST_PROFILE,
     ),
+    _ManagedTrustEntry(
+        "public",
+        "https://log.partners.dnsid.ai",
+        trust_profile_document=_PARTNERS_TRUST_PROFILE,
+    ),
 )
 
 
@@ -85,8 +105,9 @@ def create_dnsid_managed_verification_registry(
     Calling this separately named factory is an explicit application trust
     decision; the generic factory never selects these roots implicitly. Trust
     snapshots are bundled with the SDK and selected only for an exact canonical
-    ``(scope, log_prefix)`` pair. Development and production prefer signed
-    stream bundles with safe raw-scan fallback.
+    ``(scope, log_prefix)`` pair. The catalog covers the development,
+    production, and partner (``https://log.partners.dnsid.ai``) logs, each
+    preferring signed stream bundles with safe raw-scan fallback.
     """
     if options is None:
         options = DnsidManagedVerificationOptions()

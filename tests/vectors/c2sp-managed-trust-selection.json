@@ -12,6 +12,12 @@
       "scope": "public",
       "logPrefix": "https://log.dnsid.ai",
       "trustMode": "trust-profile"
+    },
+    {
+      "id": "identity-digital-partners",
+      "scope": "public",
+      "logPrefix": "https://log.partners.dnsid.ai",
+      "trustMode": "trust-profile"
     }
   ],
   "cases": [
@@ -30,6 +36,15 @@
       "expected": {
         "accepted": true,
         "catalogEntry": "identity-digital-production",
+        "trustMode": "trust-profile"
+      }
+    },
+    {
+      "id": "exact-partners-selector",
+      "lr": "c2sp-tlog:public:https://log.partners.dnsid.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": true,
+        "catalogEntry": "identity-digital-partners",
         "trustMode": "trust-profile"
       }
     },
@@ -60,6 +75,22 @@
     {
       "id": "deceptive-hostname-fails-closed",
       "lr": "c2sp-tlog:public:https://log.dev.dnsid.ai.attacker.example#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "partners-wrong-scope-fails-closed",
+      "lr": "c2sp-tlog:testnet:https://log.partners.dnsid.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "deceptive-partners-hostname-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.partners.dnsid.ai.attacker.example#EREREREREREREREREREREQ",
       "expected": {
         "accepted": false,
         "reason": "unknown managed selector"

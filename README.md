@@ -413,9 +413,9 @@ registry = create_dnsid_managed_verification_registry()
 ```
 
 It selects SDK-embedded reviewed trust only for exact canonical `public`
-references to `https://log.dev.dnsid.ai` or `https://log.dnsid.ai`; unknown scopes
-and prefixes fail closed. Both managed logs prefer verified signed stream bundles
-with bounded raw-scan fallback. The generic factory never selects these roots.
+references to `https://log.dev.dnsid.ai`, `https://log.dnsid.ai`, or
+`https://log.partners.dnsid.ai`; unknown scopes and prefixes fail closed. Every
+managed log prefers verified signed stream bundles with bounded raw-scan fallback. The generic factory never selects these roots.
 
 Both factories use a restart-ephemeral in-memory checkpoint store
 by default; inject a durable `CheckpointStore` when rollback protection must
@@ -685,7 +685,7 @@ chose:
 
 - DNS TXT lookup of `_dnsid.<domain>` through your system resolver (no hardcoded resolver)
 - HTTPS GET to the JWKS and status URLs published in that TXT record
-- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dev.dnsid.ai` (C2SP transparency log, bundled public trust roots), cloud KMS endpoints
+- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dev.dnsid.ai` / `log.partners.dnsid.ai` (C2SP transparency log, bundled public trust roots), cloud KMS endpoints
 - No telemetry, usage reporting, update checks, or crash reporting
 
 **Logging.** None today. A standard-library `logging` logger under the `dnsid` namespace is declared for future
