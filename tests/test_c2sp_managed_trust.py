@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -15,12 +16,16 @@ from dnsid.c2sp_tlog import (
     InMemoryCheckpointStore,
     ScanStreamSource,
     create_dnsid_managed_verification_registry,
+    enforce_checkpoint_policy,
+    parse_c2sp_policy_file,
     parse_c2sp_tlog_trust_profile,
+    parse_checkpoint,
     parse_signed_note_verifier_key,
 )
 from dnsid.c2sp_tlog.managed_verification_registry import (
     _DEVELOPMENT_TRUST_PROFILE,
     _MANAGED_CATALOG,
+    _PARTNERS_TRUST_PROFILE,
     _PRODUCTION_TRUST_PROFILE,
     _create_dnsid_managed_verification_registry,
     _ManagedTrustEntry,
@@ -46,6 +51,15 @@ class _Fetcher:
 
     def security_guarantees(self) -> C2spResourceFetchGuarantees:
         return C2spResourceFetchGuarantees(True, True, True, True, True)
+
+
+_PARTNERS_POLICY = b"""log log.partners.dnsid.ai+52d6a7c3+ASsAuEkXpM63Qh2yh0q7DvueHqITfWGvcpWCOQfaDz5m
+witness dnsid-witness-1 witness.partners.dnsid.ai/w1+a115eb67+BB0avWVeSelUBk2w8FtTbT+orf2i826q9VemA0jaXxg4
+quorum dnsid-witness-1
+"""
+_PARTNERS_BUNDLE_KEY = "dnsid-stream-bundle+b12677d8+AWOB3PQPuFoGK66bqsFRcNh4n4q2DaAcauBijHymUUWH"
+# The size-1 checkpoint https://log.partners.dnsid.ai served on 2026-09-28.
+_PARTNERS_CHECKPOINT = Path(__file__).parent / "vectors" / "c2sp-partners-checkpoint-size1.txt"
 
 
 def test_development_catalog_entry_is_exact_trust_profile() -> None:
@@ -76,6 +90,34 @@ def test_production_catalog_entry_is_exact_trust_profile() -> None:
     assert profile.bundle_verifier_keys == [parse_signed_note_verifier_key(_PRODUCTION_BUNDLE_KEY)]
 
 
+def test_partners_catalog_entry_is_exact_trust_profile() -> None:
+    document = json.loads(_PARTNERS_TRUST_PROFILE)
+    assert document == {
+        "version": 1,
+        "scope": "public",
+        "log_prefix": "https://log.partners.dnsid.ai",
+        "tlog_policy": _PARTNERS_POLICY.decode(),
+        "bundle_verifier_keys": [_PARTNERS_BUNDLE_KEY],
+    }
+    profile = parse_c2sp_tlog_trust_profile(_PARTNERS_TRUST_PROFILE)
+    assert profile.policy_document == _PARTNERS_POLICY
+    assert profile.bundle_verifier_keys == [parse_signed_note_verifier_key(_PARTNERS_BUNDLE_KEY)]
+
+
+def test_partners_policy_verifies_partner_log_checkpoint() -> None:
+    # The pinned keys must be the ones the partner log and its witness sign with.
+    checkpoint = parse_checkpoint(_PARTNERS_CHECKPOINT.read_text())
+    result = enforce_checkpoint_policy(
+        checkpoint,
+        "log.partners.dnsid.ai",
+        parse_c2sp_policy_file(_PARTNERS_POLICY.decode()),
+        "public",
+        now_ms=time.time() * 1000,
+    )
+    assert checkpoint.tree_size == 1
+    assert len(result.accepted_witness_timestamps) == 1
+
+
 def test_managed_registry_implements_selection_vectors() -> None:
     registry = create_dnsid_managed_verification_registry()
 
@@ -101,8 +143,11 @@ def test_managed_registry_shares_infrastructure_and_fixed_defaults() -> None:
         "c2sp-tlog:public:https://log.dev.dnsid.ai#EREREREREREREREREREREQ"
     )
     production = registry.new_reader("c2sp-tlog:public:https://log.dnsid.ai#EREREREREREREREREREREQ")
+    partners = registry.new_reader(
+        "c2sp-tlog:public:https://log.partners.dnsid.ai#EREREREREREREREREREREQ"
+    )
 
-    for reader in (development, production):
+    for reader in (development, production, partners):
         assert reader._options.checkpoint_store is store
         assert reader._options.checkpoint_freshness_ms == 600_000
         assert reader._options.max_clock_skew_ms == 0
