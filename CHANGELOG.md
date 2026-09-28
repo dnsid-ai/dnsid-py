@@ -1,4 +1,11 @@
 
+## [0.23.0] - 2026-09-28
+
+### Features
+
+- feat!: re-pin the managed production trust entry to the new log.dnsid.ai keys ([#35](https://github.com/dnsid-ai/dnsid-py/pull/35))
+
+
 ## [0.22.1] - 2026-09-25
 
 ### Bug Fixes
