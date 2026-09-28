@@ -37,6 +37,7 @@ from .event_codec import C2spEventContext
 from .lr import ParsedC2spTlogLr, parse_c2sp_tlog_lr
 from .merkle import merkle_root_from_entries, sha256, verify_consistency, verify_inclusion
 from .policy import (
+    C2spTlogEpochPolicy,
     C2spTlogPolicy,
     enforce_checkpoint_policy,
     normalized_origin_policy,
@@ -61,6 +62,7 @@ from .stream_verifier import (
     VerifiedLifecycleEvent,
     verify_stream_lifecycle,
 )
+from .trust_profile import C2spTlogTrustEpoch, validate_c2sp_tlog_trust_epochs
 
 _TOP_LEVEL_MEMBERS = frozenset(
     {
@@ -94,6 +96,12 @@ class C2spStreamBundleVerifierOptions:
     ``policy_bytes`` and ``bundle_keys`` are independent trust inputs; neither
     is taken from the bundle. Times and configured lifetime/freshness bounds
     are milliseconds, matching :class:`C2spTlogReaderOptions`.
+
+    ``epochs`` replaces ``policy_bytes`` and ``bundle_keys`` (which must then be
+    ``b""`` and empty) when the log's keys rotate: the bundle's ``sig.kid``
+    selects the epochs holding that key, its ``policy_hash`` must equal the
+    SHA-256 of one of those epochs' policy documents, and its embedded
+    checkpoint must satisfy that same epoch, including its tree-size bounds.
     """
 
     policy_bytes: bytes
@@ -108,6 +116,7 @@ class C2spStreamBundleVerifierOptions:
     consistency_source: C2spConsistencyProofSource | None = None
     checkpoint_store: CheckpointStore = field(default_factory=InMemoryCheckpointStore)
     now: Callable[[], float] = time.time
+    epochs: list[C2spTlogTrustEpoch] | None = None
 
 
 @dataclass
@@ -129,6 +138,17 @@ class VerifiedC2spStreamBundle:
     migration_results: dict[int, MigrationVerificationResult] = field(
         default_factory=dict, repr=False, kw_only=True
     )
+    #: The id of the trust epoch that accepted the bundle; empty without epochs.
+    trust_epoch: str = field(default="", kw_only=True)
+
+
+@dataclass(frozen=True)
+class _BundleTrustCandidate:
+    """One trust (an epoch, or the single policy) that accepts a signer kid."""
+
+    epoch: C2spTlogTrustEpoch | None
+    policy_bytes: bytes
+    key: SignedNoteKey
 
 
 class _FetchedStreamBundleSource:
@@ -150,6 +170,7 @@ class _FetchedStreamBundleSource:
         checkpoint_store: CheckpointStore | None = None,
         require_bundle: bool = False,
         now: Callable[[], float] = time.time,
+        epochs: list[C2spTlogTrustEpoch] | None = None,
     ) -> None:
         """Configure bundle trust, limits, and the complete raw fallback."""
         if type(require_bundle) is not bool:
@@ -171,6 +192,7 @@ class _FetchedStreamBundleSource:
         )
         self._require_bundle = require_bundle
         self._now = now
+        self._epochs = epochs
 
     def load_verified_bundle(
         self,
@@ -207,6 +229,7 @@ class _FetchedStreamBundleSource:
             max_clock_skew_ms=self._max_clock_skew_ms,
             checkpoint_store=InMemoryCheckpointStore(),
             now=self._now,
+            epochs=self._epochs,
         )
         verified = _verify_c2sp_stream_bundle(
             data, options, verify_migration, cutoff_index, reference.lr
@@ -323,10 +346,37 @@ def _verify_c2sp_stream_bundle(
             f"stream bundle exceeds configured event maximum {options.max_events}"
         )
 
-    policy = _parse_policy(options.policy_bytes)
     policy_hash = _decode_b64(obj["policy_hash"], "policy_hash")
-    if len(policy_hash) != 32 or policy_hash != sha256(options.policy_bytes):
+    # The signer is checked before the policy hash: sig.kid selects the
+    # candidate trusts (epochs), and policy_hash then picks one of them.
+    candidates = _signed_bundle_candidates(obj, options, reference)
+    selected = next(
+        (
+            candidate
+            for candidate in candidates
+            if len(policy_hash) == 32 and policy_hash == sha256(candidate.policy_bytes)
+        ),
+        None,
+    )
+    if selected is None:
         raise C2spTlogVerificationError("stream bundle policy_hash mismatch")
+    policy = _parse_policy(selected.policy_bytes)
+    # The embedded checkpoint must satisfy the selected epoch alone.
+    checkpoint_policy = (
+        policy
+        if selected.epoch is None
+        else C2spTlogPolicy(
+            origins={},
+            epochs=[
+                C2spTlogEpochPolicy(
+                    id=selected.epoch.id,
+                    policy=policy,
+                    min_tree_size=selected.epoch.min_tree_size,
+                    max_tree_size=selected.epoch.max_tree_size,
+                )
+            ],
+        )
+    )
 
     checkpoint_bytes = _decode_b64(obj["checkpoint"], "checkpoint")
     try:
@@ -348,7 +398,7 @@ def _verify_c2sp_stream_bundle(
         policy_result = enforce_checkpoint_policy(
             checkpoint,
             reference.origin,
-            policy,
+            checkpoint_policy,
             reference.scope,
             now_ms,
             options.max_clock_skew_ms,
@@ -367,7 +417,8 @@ def _verify_c2sp_stream_bundle(
     if now_ms - witness_time_ms > options.checkpoint_freshness_ms:
         raise C2spTlogVerificationError("stream bundle checkpoint is too stale")
 
-    signer_kid = _verify_bundle_signature(obj, options.bundle_keys, policy, reference)
+    signer_kid = _bundle_kid(selected.key)
+    assert signer_kid is not None
     entries = _parse_and_verify_events(raw_events, checkpoint)
     if cutoff_index is not None:
         entries = [entry for entry in entries if entry.index <= cutoff_index]
@@ -447,6 +498,7 @@ def _verify_c2sp_stream_bundle(
         expires=expires,
         bundle_signer_kid=signer_kid,
         migration_results=migration_results,
+        trust_epoch=selected.epoch.id if selected.epoch is not None else "",
     )
     _verify_and_advance_checkpoint(
         reference, checkpoint, witness_time, options
@@ -480,6 +532,19 @@ def _validate_options(options: C2spStreamBundleVerifierOptions) -> None:
         raise C2spTlogVerificationError(
             "max_clock_skew_ms must be a non-negative integer"
         )
+    if options.epochs is not None:
+        if options.policy_bytes != b"" or options.bundle_keys:
+            raise C2spTlogVerificationError(
+                "stream bundle trust epochs are mutually exclusive with "
+                "policy_bytes and bundle_keys"
+            )
+        try:
+            validate_c2sp_tlog_trust_epochs(options.epochs)
+        except C2spTlogParseError as exc:
+            raise C2spTlogVerificationError(
+                f"invalid stream bundle trust epochs: {exc}"
+            ) from exc
+        return
     if not options.bundle_keys:
         raise C2spTlogVerificationError("stream bundle verifier requires trusted keys")
 
@@ -597,47 +662,71 @@ def _verify_checkpoint_prefix(
         )
 
 
-def _verify_bundle_signature(
+def _signed_bundle_candidates(
     obj: dict[str, object],
-    bundle_keys: list[SignedNoteKey],
-    policy: C2spTlogPolicy,
+    options: C2spStreamBundleVerifierOptions,
     reference: ParsedC2spTlogLr,
-) -> str:
+) -> list[_BundleTrustCandidate]:
+    """Return, in trust order, every trust whose signer verified the bundle."""
     sig = _exact_object(obj["sig"], _SIG_MEMBERS, "stream bundle sig")
     if sig["alg"] != "EdDSA":
         raise C2spTlogVerificationError("unsupported stream bundle signature algorithm")
     kid = _string(sig["kid"], "sig.kid")
-    candidates = [key for key in bundle_keys if _bundle_kid(key) == kid]
-    if len(candidates) != 1:
-        raise C2spTlogVerificationError("stream bundle signer is not uniquely trusted")
-    key = candidates[0]
-    if (
-        key.kind != "ed25519"
-        or len(key.key_bytes) != 32
-        or key.signature_type not in (None, b"\x01")
-    ):
-        raise C2spTlogVerificationError("stream bundle signer must be Ed25519")
-    accepted_policy = normalized_origin_policy(policy, reference.origin)
-    checkpoint_key_bytes = {
-        item.key_bytes
-        for item in [*accepted_policy.log_keys, *accepted_policy.witness_keys]
-    }
-    if key.key_bytes in checkpoint_key_bytes:
-        raise C2spTlogVerificationError(
-            "stream bundle signer must be independent of checkpoint policy keys"
-        )
+    candidates: list[_BundleTrustCandidate] = []
+    if options.epochs is None:
+        matching = [key for key in options.bundle_keys if _bundle_kid(key) == kid]
+        if len(matching) != 1:
+            raise C2spTlogVerificationError("stream bundle signer is not uniquely trusted")
+        candidates.append(_BundleTrustCandidate(None, options.policy_bytes, matching[0]))
+    else:
+        for epoch in options.epochs:
+            matching = [
+                key for key in epoch.bundle_verifier_keys if _bundle_kid(key) == kid
+            ]
+            if len(matching) == 1:
+                candidates.append(
+                    _BundleTrustCandidate(epoch, epoch.policy_document, matching[0])
+                )
+        if not candidates:
+            raise C2spTlogVerificationError(
+                "stream bundle signer is not accepted by any trust epoch"
+            )
     signature = _decode_b64(sig["value"], "sig.value")
     if len(signature) != 64:
         raise C2spTlogVerificationError("stream bundle signature must be 64 bytes")
     unsigned = dict(obj)
     del unsigned["sig"]
-    try:
-        ed25519.Ed25519PublicKey.from_public_bytes(key.key_bytes).verify(
-            signature, canonical_bytes(unsigned)
+    message = canonical_bytes(unsigned)
+    signed: list[_BundleTrustCandidate] = []
+    for candidate in candidates:
+        key = candidate.key
+        if (
+            key.kind != "ed25519"
+            or len(key.key_bytes) != 32
+            or key.signature_type not in (None, b"\x01")
+        ):
+            raise C2spTlogVerificationError("stream bundle signer must be Ed25519")
+        accepted_policy = normalized_origin_policy(
+            _parse_policy(candidate.policy_bytes), reference.origin
         )
-    except (InvalidSignature, ValueError) as exc:
-        raise C2spTlogVerificationError("invalid stream bundle signature") from exc
-    return kid
+        checkpoint_key_bytes = {
+            item.key_bytes
+            for item in [*accepted_policy.log_keys, *accepted_policy.witness_keys]
+        }
+        if key.key_bytes in checkpoint_key_bytes:
+            raise C2spTlogVerificationError(
+                "stream bundle signer must be independent of checkpoint policy keys"
+            )
+        try:
+            ed25519.Ed25519PublicKey.from_public_bytes(key.key_bytes).verify(
+                signature, message
+            )
+        except (InvalidSignature, ValueError):
+            continue
+        signed.append(candidate)
+    if not signed:
+        raise C2spTlogVerificationError("invalid stream bundle signature")
+    return signed
 
 
 def _parse_and_verify_events(

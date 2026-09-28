@@ -107,8 +107,15 @@ def canonical_bytes(value: object) -> bytes:
     return canonical_json(value).encode("utf-8")
 
 
-def parse_json_no_duplicate_members(data: bytes) -> Any:
-    """Parse JSON, rejecting duplicate object member names."""
+def parse_json_no_duplicate_members(
+    data: bytes, *, integers_only: bool = False
+) -> Any:
+    """Parse JSON, rejecting duplicate object member names.
+
+    With *integers_only*, any number token with a fraction or exponent and the
+    non-standard ``NaN`` / ``Infinity`` constants are rejected from the raw
+    text, so ``5.0`` or ``5e0`` never reads as an integer.
+    """
     try:
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
@@ -122,12 +129,19 @@ def parse_json_no_duplicate_members(data: bytes) -> Any:
             out[k] = v
         return out
 
+    hooks: dict[str, Any] = {}
+    if integers_only:
+        hooks = {"parse_float": _reject_number_token, "parse_constant": _reject_number_token}
     try:
-        return json.loads(text, object_pairs_hook=_no_dups)
+        return json.loads(text, object_pairs_hook=_no_dups, **hooks)
     except C2spTlogParseError:
         raise
     except ValueError as exc:
         raise C2spTlogParseError(f"invalid JSON: {exc}") from exc
+
+
+def _reject_number_token(token: str) -> Any:
+    raise C2spTlogParseError(f"JSON number {token} is not an integer literal")
 
 
 def assert_canonical_json_bytes(data: bytes, value: object | None = None) -> None:

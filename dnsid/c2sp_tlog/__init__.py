@@ -80,6 +80,7 @@ from .merkle import (
     verify_inclusion,
 )
 from .policy import (
+    C2spTlogEpochPolicy,
     C2spTlogOriginPolicy,
     C2spTlogPolicy,
     C2spTlogQuorumRule,
@@ -151,7 +152,15 @@ from .tiles import (
     parse_entry_bundle,
     tile_path,
 )
-from .trust_profile import C2spTlogTrustProfile, parse_c2sp_tlog_trust_profile
+from .trust_profile import (
+    C2SP_TLOG_TRUST_PROFILE_VERSION_EPOCHS,
+    C2SP_TLOG_TRUST_PROFILE_VERSION_SINGLE,
+    C2spTlogTrustEpoch,
+    C2spTlogTrustProfile,
+    c2sp_tlog_trust_profile_policy,
+    create_c2sp_tlog_epoch_policy,
+    parse_c2sp_tlog_trust_profile,
+)
 from .verification_registry import (
     C2spTlogVerificationOptions,
     create_c2sp_tlog_verification_registry,
@@ -197,6 +206,9 @@ __all__ = [
     "C2spCheckpointStoreError",
     "C2spLifecycleErrorCategory",
     "C2spMigrationVerificationLimits",
+    "C2SP_TLOG_TRUST_PROFILE_VERSION_EPOCHS",
+    "C2SP_TLOG_TRUST_PROFILE_VERSION_SINGLE",
+    "C2spTlogEpochPolicy",
     "C2spTlogOriginPolicy",
     "C2spTlogParseError",
     "C2spTlogTransportError",
@@ -208,6 +220,7 @@ __all__ = [
     "C2spTlogTransport",
     "C2spTlogVerificationError",
     "C2spTlogVerificationOptions",
+    "C2spTlogTrustEpoch",
     "C2spTlogTrustProfile",
     "Checkpoint",
     "CheckpointPolicyResult",
@@ -267,6 +280,8 @@ __all__ = [
     "parse_c2sp_signatures",
     "parse_c2sp_tlog_lr",
     "parse_c2sp_tlog_trust_profile",
+    "c2sp_tlog_trust_profile_policy",
+    "create_c2sp_tlog_epoch_policy",
     "parse_checkpoint",
     "parse_entry_bundle",
     "parse_json_no_duplicate_members",

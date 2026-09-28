@@ -20,6 +20,11 @@ from .verification_registry import (
 )
 
 _MANAGED_FRESHNESS_MS = 10 * 60 * 1000
+# TODO(Identity-Digital/dnsid-infra#418): the production entry stays a version
+# 1 profile until the successor log, witness and bundle keys for log.dnsid.ai
+# are final. It then becomes a version 2 profile whose first epoch is exactly
+# the policy and bundle key below, followed by the successor epoch. No
+# successor key is pinned here yet, deliberately.
 _DEVELOPMENT_TRUST_PROFILE = (
     b'{\n  "version": 1,\n  "scope": "public",\n'
     b'  "log_prefix": "https://log.dev.dnsid.ai",\n  "tlog_policy": "'

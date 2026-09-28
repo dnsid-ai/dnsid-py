@@ -17,6 +17,22 @@ from dnsid.c2sp_tlog import C2SP_SPEC_REVISIONS
 
 *Value:* `{'tlog-checkpoint': 'v1.0.0', 'tlog-tiles': 'v0.1.0', 'tlog-proof': 'ab17a74116563005f908b9167e6421cc929a5c2b', 'tlog-policy': '1896a5aea5559b3203d275d0206d872f59348cf5', 'tlog-witness': 'v1.0.0', 'tlog-cosignature': 'v1.0.1', 'tlog-mirror': 'd0fe789122c75b903bfc1680b0b8b8dc570f0db3', 'signed-note': 'v1.0.0'}`
 
+## `C2SP_TLOG_TRUST_PROFILE_VERSION_EPOCHS`
+
+```python
+from dnsid.c2sp_tlog import C2SP_TLOG_TRUST_PROFILE_VERSION_EPOCHS
+```
+
+*Value:* `2`
+
+## `C2SP_TLOG_TRUST_PROFILE_VERSION_SINGLE`
+
+```python
+from dnsid.c2sp_tlog import C2SP_TLOG_TRUST_PROFILE_VERSION_SINGLE
+```
+
+*Value:* `1`
+
 ## `C2spBoundedResourceFetcher`
 
 ```python
@@ -220,6 +236,12 @@ Local trust and resource limits for portable stream bundle verification.
 is taken from the bundle. Times and configured lifetime/freshness bounds
 are milliseconds, matching `C2spTlogReaderOptions`.
 
+``epochs`` replaces ``policy_bytes`` and ``bundle_keys`` (which must then be
+``b""`` and empty) when the log's keys rotate: the bundle's ``sig.kid``
+selects the epochs holding that key, its ``policy_hash`` must equal the
+SHA-256 of one of those epochs' policy documents, and its embedded
+checkpoint must satisfy that same epoch, including its tree-size bounds.
+
 ## `C2spStreamEvidence`
 
 ```python
@@ -227,6 +249,19 @@ from dnsid.c2sp_tlog import C2spStreamEvidence
 ```
 
 *Value:* `StreamEvidence`
+
+## `C2spTlogEpochPolicy`
+
+```python
+from dnsid.c2sp_tlog import C2spTlogEpochPolicy
+```
+
+One trust epoch of an epoch policy.
+
+``policy`` is the epoch's complete single-log policy. ``min_tree_size`` and
+``max_tree_size`` are inclusive checkpoint tree-size bounds; ``None`` leaves
+that side open. Build epoch policies with
+`create_c2sp_tlog_epoch_policy`, which validates them.
 
 ## `C2spTlogError`
 
@@ -265,6 +300,11 @@ from dnsid.c2sp_tlog import C2spTlogPolicy
 ```
 
 Local C2SP trust policy: per-origin log/witness keys and quorum.
+
+An epoch policy leaves ``origins`` empty and carries ``epochs`` instead. It
+accepts a checkpoint only when one epoch accepts it completely: that
+epoch's log signature, tree-size bounds and witness quorum. Signatures are
+never combined across epochs.
 
 ## `C2spTlogQuorumRule`
 
@@ -479,7 +519,10 @@ capability contract, including DNS-rebinding and redirect protections.
 A scan transport must also implement ``fetch_bounded(url, maximum)``.
 Supplying independently trusted ``bundle_keys`` and the exact
 ``bundle_policy_document`` prefers bounded per-domain stream bundles;
-the scanner remains the availability and consistency fallback.
+the scanner remains the availability and consistency fallback. With an
+epoch *policy*, ``bundle_epochs`` replaces ``bundle_policy_document``
+(which must then be ``None``) and ``bundle_keys`` lists every epoch's
+bundle keys; a bundle must then satisfy one epoch completely.
 
 ## `C2spTlogSource`
 
@@ -555,6 +598,20 @@ Initialize a classified transport failure.
 - `cause` (`BaseException | None`): Underlying transport exception, when available. — default `None`
 - `status_code` (`int | None`): HTTP response status, when the server responded. — default `None`
 
+## `C2spTlogTrustEpoch`
+
+```python
+from dnsid.c2sp_tlog import C2spTlogTrustEpoch
+```
+
+One complete trust epoch: a single-log policy and its bundle signers.
+
+``policy_document`` must be byte-identical to the tlog-policy document the
+epoch's log server renders, because stream bundles bind its SHA-256 as
+``policy_hash``. ``min_tree_size`` and ``max_tree_size`` are inclusive
+checkpoint tree-size bounds from 1 to 2^53-1; ``None`` leaves that side
+open.
+
 ## `C2spTlogTrustProfile`
 
 ```python
@@ -562,6 +619,26 @@ from dnsid.c2sp_tlog import C2spTlogTrustProfile
 ```
 
 Trusted policy and bundle signers bound to one exact log.
+
+Version 1 carries ``policy_document`` and ``bundle_verifier_keys``.
+Version 2 leaves both empty and carries ``epochs`` instead: every epoch is
+a complete trust for the same log, and a checkpoint or bundle is accepted
+only when it satisfies one epoch completely.
+
+### `trust_epochs`
+
+```python
+C2spTlogTrustProfile.trust_epochs() -> list[C2spTlogTrustEpoch]
+```
+
+Return the validated trust epochs in profile order.
+
+A version 1 profile yields one epoch with an empty ``id`` and no
+tree-size bounds.
+
+**Raises:**
+
+- `C2spTlogError`: If the profile is invalid.
 
 ## `C2spTlogVerificationError`
 
@@ -608,6 +685,11 @@ such as ``dnsid local``. It is mutually exclusive with ``resource_fetcher``.
 The built-in fetcher requires HTTPS and HTTP 200, rejects redirects and
 unsafe destinations, pins connections to validated DNS results, bounds
 decoded bytes during reads, and uses finite deadlines.
+
+A version 2 trust profile binds a list of trust epochs instead of one
+policy: checkpoints and bundles must then satisfy one epoch completely,
+with no keys mixed across epochs, and trusted checkpoint state carries
+across epochs because every epoch names the same origin.
 
 A trust profile or direct ``bundle_verifier_keys`` enables verified
 per-domain stream bundles. Unavailable endpoints fall back to the bounded
@@ -1153,6 +1235,25 @@ c2sp_event_id(data: bytes) -> str
 
 Derive logical identity without altering exact-entry inclusion evidence.
 
+## `c2sp_tlog_trust_profile_policy`
+
+```python
+from dnsid.c2sp_tlog import c2sp_tlog_trust_profile_policy
+```
+
+```python
+c2sp_tlog_trust_profile_policy(profile: C2spTlogTrustProfile) -> C2spTlogPolicy
+```
+
+Return the checkpoint policy a validated trust profile defines.
+
+Version 1 yields its parsed ``tlog_policy``. Version 2 yields an epoch
+policy (see `create_c2sp_tlog_epoch_policy`).
+
+**Raises:**
+
+- `C2spTlogError`: If the profile is invalid.
+
 ## `canonical_bytes`
 
 ```python
@@ -1236,6 +1337,27 @@ checkpoint_path(prefix: str) -> str
 
 Return the fetch path of the log's checkpoint under *prefix*.
 
+## `create_c2sp_tlog_epoch_policy`
+
+```python
+from dnsid.c2sp_tlog import create_c2sp_tlog_epoch_policy
+```
+
+```python
+create_c2sp_tlog_epoch_policy(epochs: list[C2spTlogTrustEpoch]) -> C2spTlogPolicy
+```
+
+Build a checkpoint policy that accepts exactly one complete trust epoch.
+
+Every epoch must name one log origin, so trusted checkpoint state, which
+is keyed by origin, carries across epochs. A checkpoint is accepted only
+when one epoch's log signature, tree-size bounds and witness quorum all
+pass; signatures are never combined across epochs.
+
+**Raises:**
+
+- `C2spTlogParseError`: If the epochs are invalid or ambiguous.
+
 ## `create_c2sp_tlog_verification_registry`
 
 ```python
@@ -1289,14 +1411,23 @@ from dnsid.c2sp_tlog import enforce_checkpoint_policy
 ```
 
 ```python
-enforce_checkpoint_policy(checkpoint: Checkpoint, origin: str, policy: C2spTlogPolicy, scope: str, now_ms: float, max_clock_skew_ms: int = 0) -> CheckpointPolicyResult
+enforce_checkpoint_policy(checkpoint: Checkpoint, origin: str, policy: C2spTlogPolicy, scope: str, now_ms: float, max_clock_skew_ms: int = 0, *, max_checkpoint_age_ms: int | None = None) -> CheckpointPolicyResult
 ```
 
 Verify the checkpoint against the local trust policy for *origin*.
 
 Checks the log signature and evaluates the witness quorum; returns the
 accepted witness timestamps and the earliest one as the checkpoint's
-integration time.
+integration time. When *max_checkpoint_age_ms* is set, the accepted witness
+time must also be at most that old.
+
+For an epoch policy, epochs are tried in order. An epoch is relevant when
+the checkpoint carries a signature line under that epoch's log key name
+and key hash. A relevant epoch checks its log signature, its tree-size
+bounds, its own witness quorum and then freshness; the first epoch that
+passes every check is accepted and reported as ``trust_epoch``. Otherwise
+the error is the first relevant epoch's failure, or a missing log
+signature when no epoch is relevant.
 
 ## `entry_bundle_path`
 
@@ -1495,7 +1626,15 @@ from dnsid.c2sp_tlog import parse_c2sp_tlog_trust_profile
 parse_c2sp_tlog_trust_profile(data: bytes) -> C2spTlogTrustProfile
 ```
 
-Parse and validate a ``dnsid-c2sp-tlog-trust-profile@v1`` document.
+Parse and validate a DNSid C2SP trust-profile document.
+
+``"version": 1`` is the original single-policy format. ``"version": 2``
+carries 1 to 8 ``epochs`` and must not contain the top-level
+``tlog_policy`` or ``bundle_verifier_keys``, even empty.
+
+**Raises:**
+
+- `C2spTlogParseError`: If the document is not a valid trust profile.
 
 ## `parse_checkpoint`
 
@@ -1536,10 +1675,14 @@ from dnsid.c2sp_tlog import parse_json_no_duplicate_members
 ```
 
 ```python
-parse_json_no_duplicate_members(data: bytes) -> Any
+parse_json_no_duplicate_members(data: bytes, *, integers_only: bool = False) -> Any
 ```
 
 Parse JSON, rejecting duplicate object member names.
+
+With *integers_only*, any number token with a fraction or exponent and the
+non-standard ``NaN`` / ``Infinity`` constants are rejected from the raw
+text, so ``5.0`` or ``5e0`` never reads as an integer.
 
 ## `parse_note_signature`
 

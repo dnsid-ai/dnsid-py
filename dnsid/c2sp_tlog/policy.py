@@ -13,6 +13,7 @@ from .signed_note import (
     parse_signed_note_verifier_key,
     verified_cosignature_timestamp,
     verify_checkpoint_signature,
+    verify_note_signature,
 )
 
 _DECIMAL_RE = re.compile(r"^(?:0|[1-9][0-9]*)$")
@@ -40,11 +41,34 @@ class C2spTlogOriginPolicy:
 
 
 @dataclass
+class C2spTlogEpochPolicy:
+    """One trust epoch of an epoch policy.
+
+    ``policy`` is the epoch's complete single-log policy. ``min_tree_size`` and
+    ``max_tree_size`` are inclusive checkpoint tree-size bounds; ``None`` leaves
+    that side open. Build epoch policies with
+    :func:`~dnsid.c2sp_tlog.create_c2sp_tlog_epoch_policy`, which validates them.
+    """
+
+    id: str
+    policy: C2spTlogPolicy
+    min_tree_size: int | None = None
+    max_tree_size: int | None = None
+
+
+@dataclass
 class C2spTlogPolicy:
-    """Local C2SP trust policy: per-origin log/witness keys and quorum."""
+    """Local C2SP trust policy: per-origin log/witness keys and quorum.
+
+    An epoch policy leaves ``origins`` empty and carries ``epochs`` instead. It
+    accepts a checkpoint only when one epoch accepts it completely: that
+    epoch's log signature, tree-size bounds and witness quorum. Signatures are
+    never combined across epochs.
+    """
 
     origins: dict[str, C2spTlogOriginPolicy]
     scope: str | None = None
+    epochs: list[C2spTlogEpochPolicy] = field(default_factory=list)
 
 
 @dataclass
@@ -64,6 +88,7 @@ class CheckpointPolicyResult:
 
     accepted_witness_timestamps: list[int]
     checkpoint_witness_time: datetime.datetime | None = None
+    trust_epoch: str = ""
 
 
 def normalized_origin_policy(policy: C2spTlogPolicy, origin: str) -> NormalizedOriginPolicy:
@@ -135,22 +160,141 @@ def enforce_checkpoint_policy(
     scope: str,
     now_ms: float,
     max_clock_skew_ms: int = 0,
+    *,
+    max_checkpoint_age_ms: int | None = None,
 ) -> CheckpointPolicyResult:
     """Verify the checkpoint against the local trust policy for *origin*.
 
     Checks the log signature and evaluates the witness quorum; returns the
     accepted witness timestamps and the earliest one as the checkpoint's
-    integration time.
+    integration time. When *max_checkpoint_age_ms* is set, the accepted witness
+    time must also be at most that old.
+
+    For an epoch policy, epochs are tried in order. An epoch is relevant when
+    the checkpoint carries a signature line under that epoch's log key name
+    and key hash. A relevant epoch checks its log signature, its tree-size
+    bounds, its own witness quorum and then freshness; the first epoch that
+    passes every check is accepted and reported as ``trust_epoch``. Otherwise
+    the error is the first relevant epoch's failure, or a missing log
+    signature when no epoch is relevant.
     """
     if max_clock_skew_ms < 0:
         raise C2spTlogVerificationError("maximum clock skew must be a non-negative integer")
+    if max_checkpoint_age_ms is not None and (
+        type(max_checkpoint_age_ms) is not int or max_checkpoint_age_ms < 1
+    ):
+        raise C2spTlogVerificationError(
+            "maximum checkpoint age must be a positive integer when supplied"
+        )
     if policy.scope is not None and policy.scope != scope:
         raise C2spTlogVerificationError(
             f"C2SP policy scope {policy.scope} does not match {scope}"
         )
     if checkpoint.origin != origin:
         raise C2spTlogVerificationError(f"checkpoint origin mismatch: {checkpoint.origin}")
+    if not policy.epochs:
+        return _enforce_origin_policy(
+            checkpoint, origin, policy, scope, now_ms, max_clock_skew_ms,
+            max_checkpoint_age_ms, None,
+        )
+    if policy.origins:
+        raise C2spTlogVerificationError(
+            "C2SP epoch policy must carry its origins inside its epochs"
+        )
+    reported: C2spTlogVerificationError | None = None
+    for epoch in policy.epochs:
+        if not _epoch_log_key_present(checkpoint, origin, epoch):
+            continue
+        try:
+            return _enforce_origin_policy(
+                checkpoint, origin, epoch.policy, scope, now_ms, max_clock_skew_ms,
+                max_checkpoint_age_ms, epoch,
+            )
+        except C2spTlogVerificationError as exc:
+            if reported is None:
+                reported = exc
+    if reported is not None:
+        raise reported
+    raise C2spTlogVerificationError("checkpoint missing accepted log signature")
+
+
+def policy_unchained(policy: C2spTlogPolicy, origin: str) -> bool:
+    """Return whether *policy* verifies *origin*'s streams without chaining.
+
+    An epoch policy is unchained only when every epoch is.
+    """
+    if policy.epochs:
+        return all(
+            normalized_origin_policy(epoch.policy, origin).unchained
+            for epoch in policy.epochs
+        )
+    return normalized_origin_policy(policy, origin).unchained
+
+
+def _epoch_log_key_present(
+    checkpoint: Checkpoint, origin: str, epoch: C2spTlogEpochPolicy
+) -> bool:
+    """Report whether a signature line names this epoch's log key and key hash."""
+    log_keys = normalized_origin_policy(epoch.policy, origin).log_keys
+    return any(
+        key.key_id is not None
+        and sig.name == key.name
+        and sig.key_hash == key.key_id
+        for key in log_keys
+        for sig in checkpoint.signatures
+    )
+
+
+def _assert_epoch_signature_lines(
+    checkpoint: Checkpoint, origin_policy: C2spTlogOriginPolicy
+) -> None:
+    """Require the first line under every key of one epoch to verify.
+
+    Within a trust epoch a signed note is opened as a whole, as C2SP
+    signed-note verifiers do: the first signature line under each of the
+    epoch's log and witness keys (by name and key hash) must verify, later
+    duplicate lines are ignored, and lines under other keys are ignored.
+    """
+    known = [_as_key(k) for k in [*origin_policy.log_keys, *origin_policy.witness_keys]]
+    for key in known:
+        first = next(
+            (
+                sig
+                for sig in checkpoint.signatures
+                if sig.name == key.name
+                and key.key_id is not None
+                and sig.key_hash == key.key_id
+            ),
+            None,
+        )
+        if first is not None and not verify_note_signature(
+            checkpoint.signed_text, first, key
+        ):
+            raise C2spTlogVerificationError(
+                "checkpoint missing accepted log signature: the signature line "
+                f"under trust epoch key {key.name} does not verify"
+            )
+
+
+def _enforce_origin_policy(
+    checkpoint: Checkpoint,
+    origin: str,
+    policy: C2spTlogPolicy,
+    scope: str,
+    now_ms: float,
+    max_clock_skew_ms: int,
+    max_checkpoint_age_ms: int | None,
+    epoch: C2spTlogEpochPolicy | None,
+) -> CheckpointPolicyResult:
+    if policy.epochs:
+        raise C2spTlogVerificationError("C2SP trust epochs must not be nested")
+    if policy.scope is not None and policy.scope != scope:
+        raise C2spTlogVerificationError(
+            f"C2SP policy scope {policy.scope} does not match {scope}"
+        )
     p = normalized_origin_policy(policy, origin)
+    if epoch is not None:
+        _assert_epoch_signature_lines(checkpoint, policy.origins[origin])
     accepted_log_keys = (
         [k for k in p.log_keys if k.signature_type == b"\x01"]
         if scope == "public"
@@ -158,6 +302,17 @@ def enforce_checkpoint_policy(
     )
     if not any(verify_checkpoint_signature(checkpoint, k) for k in accepted_log_keys):
         raise C2spTlogVerificationError("checkpoint missing accepted log signature")
+    if epoch is not None:
+        if epoch.max_tree_size is not None and checkpoint.tree_size > epoch.max_tree_size:
+            raise C2spTlogVerificationError(
+                f"checkpoint size {checkpoint.tree_size} is above trust epoch "
+                f"{epoch.id!r} max_tree_size {epoch.max_tree_size}"
+            )
+        if epoch.min_tree_size is not None and checkpoint.tree_size < epoch.min_tree_size:
+            raise C2spTlogVerificationError(
+                f"checkpoint size {checkpoint.tree_size} is below trust epoch "
+                f"{epoch.id!r} min_tree_size {epoch.min_tree_size}"
+            )
     if scope == "public" and p.quorum_rule.kind == "none":
         raise C2spTlogVerificationError(
             "public C2SP policy requires a non-zero witness quorum"
@@ -170,8 +325,17 @@ def enforce_checkpoint_policy(
     witness_time: datetime.datetime | None = None
     if accepted:
         witness_time = datetime.datetime.fromtimestamp(min(accepted), tz=datetime.UTC)
+    if max_checkpoint_age_ms is not None:
+        if witness_time is None:
+            raise C2spTlogVerificationError(
+                "checkpoint freshness requires an accepted timestamped witness quorum"
+            )
+        if now_ms - witness_time.timestamp() * 1000 > max_checkpoint_age_ms:
+            raise C2spTlogVerificationError("checkpoint is stale")
     return CheckpointPolicyResult(
-        accepted_witness_timestamps=accepted, checkpoint_witness_time=witness_time
+        accepted_witness_timestamps=accepted,
+        checkpoint_witness_time=witness_time,
+        trust_epoch=epoch.id if epoch is not None else "",
     )
 
 

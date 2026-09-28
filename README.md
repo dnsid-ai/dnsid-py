@@ -403,6 +403,14 @@ profile, falling back to its bounded complete scanner when the bundle endpoint
 is unavailable or a valid newer bundle needs raw consistency evidence. The
 complete scan must prove both the stored and bundle checkpoint roots.
 
+A version 2 trust profile carries up to eight trust `epochs` for one log
+origin, each a complete `tlog_policy` with its `bundle_verifier_keys` and
+optional inclusive `min_tree_size` / `max_tree_size`, so the log's signing,
+witness and bundle keys can rotate together at a tree size. A checkpoint or
+bundle is accepted only when it satisfies one epoch completely; keys are never
+mixed across epochs. Trusted checkpoint state stays keyed by origin, so
+continuity carries across the rotation. Version 1 profiles are unchanged.
+
 For an explicit application decision to trust DNSid-managed logs,
 use the separately named managed factory:
 
@@ -685,7 +693,7 @@ chose:
 
 - DNS TXT lookup of `_dnsid.<domain>` through your system resolver (no hardcoded resolver)
 - HTTPS GET to the JWKS and status URLs published in that TXT record
-- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dev.dnsid.ai` (C2SP transparency log, bundled public trust roots), cloud KMS endpoints
+- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dev.dnsid.ai` (C2SP transparency log, bundled public trust roots; trust profile v2 epochs let a log rotate its signing, witness and bundle keys without a trust gap, and the bundled roots change only in an SDK release), cloud KMS endpoints
 - No telemetry, usage reporting, update checks, or crash reporting
 
 **Logging.** None today. A standard-library `logging` logger under the `dnsid` namespace is declared for future

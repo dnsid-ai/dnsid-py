@@ -1,0 +1,1155 @@
+{
+  "format": "dnsid-c2sp-trust-profile-epochs@v1",
+  "description": "DNSid C2SP trust profile v2 (epochs) conformance vectors: one log origin whose log, witness and bundle keys rotate at tree size N. All keys are disposable test keys from published seeds.",
+  "generator": "dnsid-go log/c2sptlog/trust_epoch_vectors_gen_test.go; regenerate with DNSID_UPDATE_TRUST_EPOCH_VECTORS=1 go test -run TestTrustEpochVectors ./log/c2sptlog",
+  "documentation": "log/c2sptlog/testdata/c2sp-trust-profile-epochs.md",
+  "reason_codes": {
+    "bundle_signer": "The bundle's sig.kid is in no epoch's bundle_verifier_keys.",
+    "consistency_failed": "The consistency proof from the stored checkpoint does not verify.",
+    "log_signature": "No epoch's log key (name and key hash) signed the checkpoint, or the selected epoch's log key did not.",
+    "max_tree_size": "The checkpoint size is above the epoch's max_tree_size.",
+    "min_tree_size": "The checkpoint size is below the epoch's min_tree_size.",
+    "policy_hash": "The bundle's policy_hash is not the SHA-256 of the tlog_policy of an epoch that accepts its signer.",
+    "profile_invalid": "The trust profile document is rejected at parse time.",
+    "rollback": "The checkpoint is smaller than the trusted checkpoint stored for the origin.",
+    "root_conflict": "The checkpoint has the stored size but a different root.",
+    "stale": "The accepted witness time is older than checkpoint_max_age_seconds.",
+    "witness_quorum": "An epoch's log key signed the checkpoint, but that same epoch's witness quorum is not met."
+  },
+  "parameters": {
+    "scope": "public",
+    "log_prefix": "https://log.example",
+    "origin": "log.example",
+    "lr": "c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ",
+    "fqdn": "agent.example.com",
+    "n": 5,
+    "k": 2,
+    "now": 1782345760,
+    "witness_time": 1782345700,
+    "checkpoint_max_age_seconds": 600,
+    "max_bundle_lifetime_seconds": 600,
+    "clock_skew_seconds": 0
+  },
+  "keys": {
+    "legacy_bundle": "dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO",
+    "legacy_log": "log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd",
+    "legacy_witness": "witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep",
+    "stranger_bundle": "dnsid-stream-bundle+7b25861c+AcBQxWN6RPqGKf/zzMziMAyzYqY9mdlfxUFFJm9DMkRa",
+    "successor_bundle": "dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2",
+    "successor_log": "log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d",
+    "successor_witness": "witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS"
+  },
+  "tree": {
+    "entries": [
+      "eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0=",
+      "eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSAy",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSAz",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSA0",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSA1",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSA2"
+    ],
+    "roots": {
+      "1": "TzqqbPIFvX4tEEoe+n5umoiSZgBZOdjC5WmelAlTv9g=",
+      "2": "f+S2mQjw/nonrkvmD7cHBxnr3L9zSeyuhylafSLDnQo=",
+      "3": "/wdavmphJKeFbZv+lRkLs6hJiiFBGeNoyr0pLnkFOYE=",
+      "4": "afCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4=",
+      "5": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=",
+      "6": "8dHxiqUlRhlB7k1onB8bDeCRg4WSjWUyELkNVLgc6uo=",
+      "7": "jo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo="
+    },
+    "fork_entries": [
+      "eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0=",
+      "eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSAy",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSAz",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZvcmsgZW50cnkgNA==",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSA1",
+      "ZG5zaWQgdHJ1c3QtZXBvY2ggdmVjdG9yIGZpbGxlciBlbnRyeSA2"
+    ],
+    "fork_roots": {
+      "5": "xWh1tKQq8HztYQ81FjMO3nr+EA2E4JllkLuZqoGvYms=",
+      "6": "Rrz0FMkZliJJ3cXICjzzOR38ZBwY8Zs3uWSdW8QCFgo=",
+      "7": "c/iofvogglYE4tx8yidTTWf5C0UsrSaL/gD4obERJNk="
+    }
+  },
+  "profiles": {
+    "v1-legacy": "{\n  \"version\": 1,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n  \"bundle_verifier_keys\": [\n    \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n  ]\n}\n",
+    "v2-bounded": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"max_tree_size\": 5\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"min_tree_size\": 5\n    }\n  ]\n}\n",
+    "v2-legacy-capped": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"max_tree_size\": 5\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ]\n    }\n  ]\n}\n",
+    "v2-legacy-only": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ]\n    }\n  ]\n}\n",
+    "v2-open": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ]\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ]\n    }\n  ]\n}\n",
+    "v2-shared-bundle-key": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ]\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ]\n    }\n  ]\n}\n"
+  },
+  "profile_cases": [
+    {
+      "name": "v1-legacy",
+      "note": "Version 1 parses as one unnamed epoch.",
+      "document": "{\n  \"version\": 1,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n  \"bundle_verifier_keys\": [\n    \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n  ]\n}\n",
+      "expect": {
+        "result": "accept"
+      },
+      "epoch_ids": [
+        ""
+      ]
+    },
+    {
+      "name": "v2-bounded",
+      "note": "Legacy capped at N, successor floored at N.",
+      "document": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"max_tree_size\": 5\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"min_tree_size\": 5\n    }\n  ]\n}\n",
+      "expect": {
+        "result": "accept"
+      },
+      "epoch_ids": [
+        "legacy",
+        "successor"
+      ]
+    },
+    {
+      "name": "v2-null-bounds",
+      "note": "An explicit null bound is the same as an absent one.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": null,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    },\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"id\": \"successor\",\n      \"min_tree_size\": null,\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "accept"
+      },
+      "epoch_ids": [
+        "legacy",
+        "successor"
+      ]
+    },
+    {
+      "name": "v2-shared-bundle-key-distinct-policies",
+      "note": "One bundle key may serve two epochs whose policies differ; policy_hash then selects the epoch.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    },\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "accept"
+      },
+      "epoch_ids": [
+        "legacy",
+        "successor"
+      ]
+    },
+    {
+      "name": "v2-top-level-policy",
+      "note": "Version 2 must not carry tlog_policy at the top level.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "v2-top-level-bundle-keys",
+      "note": "Version 2 must not carry bundle_verifier_keys at the top level, even empty.",
+      "document": "{\n  \"bundle_verifier_keys\": [],\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "v1-with-epochs",
+      "note": "Version 1 must not carry epochs, even empty.",
+      "document": "{\n  \"bundle_verifier_keys\": [\n    \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n  ],\n  \"epochs\": [],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n  \"version\": 1\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "v2-no-epochs",
+      "note": "Version 2 needs at least one epoch.",
+      "document": "{\n  \"epochs\": [],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "v2-missing-epochs",
+      "note": "Version 2 needs the epochs member.",
+      "document": "{\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "unsupported-version",
+      "note": "Only versions 1 and 2 exist.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 3\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "duplicate-epoch-id",
+      "note": "Epoch ids are unique.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    },\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "invalid-epoch-id",
+      "note": "Epoch ids are 1-64 characters of A-Z a-z 0-9 . _ -.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy epoch\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "missing-epoch-id",
+      "note": "Every epoch needs an id.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "epoch-origin-mismatch",
+      "note": "Every epoch's log key must be named for the profile's origin.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    },\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log other.example+0a4a3836+Aa8Go+MpFxTk81bBnJsVzRlR7G5mYqp3vgdUfyiTgzQd\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "epoch-two-log-lines",
+      "note": "An epoch policy has exactly one log line; rotation is expressed with epochs.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nlog log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "epoch-no-bundle-keys",
+      "note": "Every epoch needs a bundle verifier key.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": null,\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "epoch-bundle-key-not-independent",
+      "note": "An epoch's bundle key must not reuse one of that epoch's checkpoint keys.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+b6b4c57a+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "ambiguous-bundle-selection",
+      "note": "Two epochs with the same bundle key and the same policy cannot be told apart.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    },\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "zero-max-tree-size",
+      "note": "Bounds are at least 1; omit a bound to leave it open.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 0,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "unsafe-max-tree-size",
+      "note": "Bounds are at most 2^53-1 so every language reads them exactly.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 9007199254740992,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "fractional-max-tree-size",
+      "note": "Bounds are integers.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 5.5,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "max-tree-size-largest",
+      "note": "2^53-1 is the largest bound, written as a digits-only token.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 9007199254740991,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "accept"
+      },
+      "epoch_ids": [
+        "legacy"
+      ]
+    },
+    {
+      "name": "max-tree-size-decimal-point",
+      "note": "The bound token must match ^[1-9][0-9]*$: 5.0 is rejected even though its value is 5.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 5.0,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "max-tree-size-exponent",
+      "note": "The bound token must match ^[1-9][0-9]*$: 5e0 is rejected even though its value is 5.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 5e0,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "min-tree-size-exponent",
+      "note": "The digits-only rule applies to min_tree_size too.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"min_tree_size\": 5E0,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "max-tree-size-boolean",
+      "note": "true is not a bound (a language that treats booleans as integers must still reject it).",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": true,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "max-tree-size-string",
+      "note": "\"5\" is a string, not a bound.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": \"5\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "max-tree-size-negative",
+      "note": "-1 is rejected: no sign is allowed.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": -1,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "max-tree-size-leading-zero",
+      "note": "05 is rejected: no leading zeros (it is also not valid JSON).",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 05,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "min-above-max",
+      "note": "min_tree_size must not exceed max_tree_size.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 5,\n      \"min_tree_size\": 6,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "unknown-epoch-member",
+      "note": "Unknown epoch members are rejected.",
+      "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"not_before\": 1,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    }
+  ],
+  "checkpoint_cases": [
+    {
+      "name": "t7-6-legacy-below-n",
+      "tags": [
+        "T7-6"
+      ],
+      "note": "A live legacy checkpoint (legacy log key, legacy witness) at size < N verifies under the legacy epoch.",
+      "profile": "v2-bounded",
+      "tree_size": 4,
+      "checkpoint": "log.example\n4\nafCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4=\n\n— log.example nKup9lHj3blTWAi2hRYBpNB/b1YT7hpUPKlvC0eyUvGULBAKzAhVohdMXcKp0tAhRIbYhhvxOWBn9ojpnvsLrgiImg8=\n— witness.example/w1 DwBNpgAAAABqPG/kKI/GLTNvLk9qPysrfjoaLLakQ6FYAqYvzC7CL6NzcMTVz+tpL9O/oMn5ucusNsqgxu/CB9ZTtaC3REPtVQwZDw==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "legacy"
+      }
+    },
+    {
+      "name": "t7-6-legacy-at-n",
+      "tags": [
+        "T7-6"
+      ],
+      "note": "The last legacy checkpoint, at exactly N, verifies: max_tree_size is inclusive.",
+      "profile": "v2-bounded",
+      "tree_size": 5,
+      "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "legacy"
+      }
+    },
+    {
+      "name": "t7-6-successor-at-n",
+      "tags": [
+        "T7-6"
+      ],
+      "note": "The first successor checkpoint, over the same tree at exactly N, verifies: min_tree_size is inclusive.",
+      "profile": "v2-bounded",
+      "tree_size": 5,
+      "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example 4uge6UVRDJC9ag+Bt7N9HmblCdpEMd6LMFXOXPJhYf2rsVGBlZfXY2MToxcKiWmE+9jalBUuTHm/E63XMZyMqjF+QAI=\n— witness.example/w1 8e2MRwAAAABqPG/krybvmK9gvLPmDsCoyR1WtUFwnczk4OJtZFRwQJyEPidvsHGhDi+EjMsemJbR57X8Uv1QWpAHvaTbF5WR6qcPCg==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "successor"
+      }
+    },
+    {
+      "name": "t7-6-successor-above-n",
+      "tags": [
+        "T7-6"
+      ],
+      "note": "A successor checkpoint at N+k over the same tree verifies.",
+      "profile": "v2-bounded",
+      "tree_size": 7,
+      "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example 4uge6f9isOXyphjP73DqATDQtvS1XKuI2WoD/TWoy1BQNsvXZb+QCe8lXsP1M52LX4M+wgIM46pE8euwJg42e6kiYwQ=\n— witness.example/w1 8e2MRwAAAABqPG/k13Vo60DZ+CJU0mCk9nC77mHZe4hWscqS91bmg00uVEZmI8DbJEa0pOtKt+E7rLv52pPXGX4DyMe928CUGek2BA==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "successor"
+      }
+    },
+    {
+      "name": "t7-6-legacy-above-n-capped",
+      "tags": [
+        "T7-6"
+      ],
+      "note": "A fully valid legacy checkpoint past N fails because the legacy epoch has max_tree_size = N.",
+      "profile": "v2-bounded",
+      "tree_size": 7,
+      "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example nKup9inKLjlmgM/XZo9xjNLT0P6ehzsExh2+lAh4xsQO+qZsGSr54ZzeeCt6OL+23Q5ZPEqLnwlxrlz31ShkfniWHQg=\n— witness.example/w1 DwBNpgAAAABqPG/ke+GcQmxbANFipYKXdW6zXgQN1XWZ9YVrZimoV+OpDTw+Jgg69Joy2ToEHt2kEHI9YEmWBtwz/PeX0B8CbahXDg==\n",
+      "expect": {
+        "result": "reject",
+        "reason": "max_tree_size"
+      }
+    },
+    {
+      "name": "t7-6-successor-below-n-floored",
+      "tags": [
+        "T7-6"
+      ],
+      "note": "A fully valid successor checkpoint below N fails because the successor epoch has min_tree_size = N.",
+      "profile": "v2-bounded",
+      "tree_size": 4,
+      "checkpoint": "log.example\n4\nafCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4=\n\n— log.example 4uge6Xq+ZSzbwImmLm6nNvoTdDazvjF9Z2myJeeHM9Q0emd2fjSG0GUvrlLwbs3JDdBLWucUrNfx+/Qt3g1hpJ2NWAQ=\n— witness.example/w1 8e2MRwAAAABqPG/kKQ541R+9msJfW9L1nZ04EjMhvQmT3j/DXEaW4/MH0gwovPVH/6fl2IMI3IVeixK4FpOSY73Y+249/Ll8blSkBg==\n",
+      "expect": {
+        "result": "reject",
+        "reason": "min_tree_size"
+      }
+    },
+    {
+      "name": "legacy-above-n-uncapped",
+      "tags": [
+        "bounds"
+      ],
+      "note": "Without max_tree_size the legacy epoch still accepts growth; the bound, not the epoch list, is what rejects legacy past N.",
+      "profile": "v2-open",
+      "tree_size": 7,
+      "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example nKup9inKLjlmgM/XZo9xjNLT0P6ehzsExh2+lAh4xsQO+qZsGSr54ZzeeCt6OL+23Q5ZPEqLnwlxrlz31ShkfniWHQg=\n— witness.example/w1 DwBNpgAAAABqPG/ke+GcQmxbANFipYKXdW6zXgQN1XWZ9YVrZimoV+OpDTw+Jgg69Joy2ToEHt2kEHI9YEmWBtwz/PeX0B8CbahXDg==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "legacy"
+      }
+    },
+    {
+      "name": "successor-below-n-unfloored",
+      "tags": [
+        "bounds"
+      ],
+      "note": "Without min_tree_size a stateless verifier accepts a successor checkpoint below N; only stored state (see continuity cases) would reject it.",
+      "profile": "v2-open",
+      "tree_size": 4,
+      "checkpoint": "log.example\n4\nafCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4=\n\n— log.example 4uge6Xq+ZSzbwImmLm6nNvoTdDazvjF9Z2myJeeHM9Q0emd2fjSG0GUvrlLwbs3JDdBLWucUrNfx+/Qt3g1hpJ2NWAQ=\n— witness.example/w1 8e2MRwAAAABqPG/kKQ541R+9msJfW9L1nZ04EjMhvQmT3j/DXEaW4/MH0gwovPVH/6fl2IMI3IVeixK4FpOSY73Y+249/Ll8blSkBg==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "successor"
+      }
+    },
+    {
+      "name": "mix-legacy-log-successor-witness",
+      "tags": [
+        "cross-epoch"
+      ],
+      "note": "Legacy log signature plus successor witness cosignature: no single epoch is satisfied. The witness keys share a name, so only the key hash tells them apart.",
+      "profile": "v2-open",
+      "tree_size": 5,
+      "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 8e2MRwAAAABqPG/krybvmK9gvLPmDsCoyR1WtUFwnczk4OJtZFRwQJyEPidvsHGhDi+EjMsemJbR57X8Uv1QWpAHvaTbF5WR6qcPCg==\n",
+      "expect": {
+        "result": "reject",
+        "reason": "witness_quorum"
+      }
+    },
+    {
+      "name": "mix-successor-log-legacy-witness",
+      "tags": [
+        "cross-epoch"
+      ],
+      "note": "Successor log signature plus legacy witness cosignature is rejected.",
+      "profile": "v2-open",
+      "tree_size": 5,
+      "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example 4uge6UVRDJC9ag+Bt7N9HmblCdpEMd6LMFXOXPJhYf2rsVGBlZfXY2MToxcKiWmE+9jalBUuTHm/E63XMZyMqjF+QAI=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+      "expect": {
+        "result": "reject",
+        "reason": "witness_quorum"
+      }
+    },
+    {
+      "name": "dual-log-successor-witness-past-n",
+      "tags": [
+        "cross-epoch",
+        "bounds"
+      ],
+      "note": "Signed by both log keys and cosigned by the successor witness: the legacy epoch fails its bound and quorum, the successor epoch is satisfied completely.",
+      "profile": "v2-bounded",
+      "tree_size": 7,
+      "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example nKup9inKLjlmgM/XZo9xjNLT0P6ehzsExh2+lAh4xsQO+qZsGSr54ZzeeCt6OL+23Q5ZPEqLnwlxrlz31ShkfniWHQg=\n— log.example 4uge6f9isOXyphjP73DqATDQtvS1XKuI2WoD/TWoy1BQNsvXZb+QCe8lXsP1M52LX4M+wgIM46pE8euwJg42e6kiYwQ=\n— witness.example/w1 8e2MRwAAAABqPG/k13Vo60DZ+CJU0mCk9nC77mHZe4hWscqS91bmg00uVEZmI8DbJEa0pOtKt+E7rLv52pPXGX4DyMe928CUGek2BA==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "successor"
+      }
+    },
+    {
+      "name": "dual-log-legacy-witness-past-n",
+      "tags": [
+        "cross-epoch",
+        "bounds"
+      ],
+      "note": "Signed by both log keys, cosigned only by the legacy witness: legacy fails max_tree_size, successor fails witness_quorum. The reported reason is the first epoch whose log key signed.",
+      "profile": "v2-bounded",
+      "tree_size": 7,
+      "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example nKup9inKLjlmgM/XZo9xjNLT0P6ehzsExh2+lAh4xsQO+qZsGSr54ZzeeCt6OL+23Q5ZPEqLnwlxrlz31ShkfniWHQg=\n— log.example 4uge6f9isOXyphjP73DqATDQtvS1XKuI2WoD/TWoy1BQNsvXZb+QCe8lXsP1M52LX4M+wgIM46pE8euwJg42e6kiYwQ=\n— witness.example/w1 DwBNpgAAAABqPG/ke+GcQmxbANFipYKXdW6zXgQN1XWZ9YVrZimoV+OpDTw+Jgg69Joy2ToEHt2kEHI9YEmWBtwz/PeX0B8CbahXDg==\n",
+      "expect": {
+        "result": "reject",
+        "reason": "max_tree_size"
+      }
+    },
+    {
+      "name": "forged-legacy-line-successor-accepts",
+      "tags": [
+        "cross-epoch",
+        "precedence"
+      ],
+      "note": "A valid successor checkpoint plus an invalid signature line under the legacy log key hash: the legacy epoch fails on its log signature, the successor epoch still accepts completely. Do not reject the whole note because a line under another epoch's key is invalid.",
+      "profile": "v2-bounded",
+      "tree_size": 7,
+      "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example 4uge6f9isOXyphjP73DqATDQtvS1XKuI2WoD/TWoy1BQNsvXZb+QCe8lXsP1M52LX4M+wgIM46pE8euwJg42e6kiYwQ=\n— witness.example/w1 8e2MRwAAAABqPG/k13Vo60DZ+CJU0mCk9nC77mHZe4hWscqS91bmg00uVEZmI8DbJEa0pOtKt+E7rLv52pPXGX4DyMe928CUGek2BA==\n— log.example nKup9gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "successor"
+      }
+    },
+    {
+      "name": "forged-legacy-line-precedence",
+      "tags": [
+        "cross-epoch",
+        "precedence",
+        "bounds"
+      ],
+      "note": "The same forged legacy line on a successor checkpoint below the successor's min_tree_size: neither epoch accepts. The legacy epoch is relevant (its name and key hash appear) and comes first, so the reason is its failure, log_signature, not the successor's min_tree_size.",
+      "profile": "v2-bounded",
+      "tree_size": 4,
+      "checkpoint": "log.example\n4\nafCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4=\n\n— log.example 4uge6Xq+ZSzbwImmLm6nNvoTdDazvjF9Z2myJeeHM9Q0emd2fjSG0GUvrlLwbs3JDdBLWucUrNfx+/Qt3g1hpJ2NWAQ=\n— witness.example/w1 8e2MRwAAAABqPG/kKQ541R+9msJfW9L1nZ04EjMhvQmT3j/DXEaW4/MH0gwovPVH/6fl2IMI3IVeixK4FpOSY73Y+249/Ll8blSkBg==\n— log.example nKup9gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n",
+      "expect": {
+        "result": "reject",
+        "reason": "log_signature"
+      }
+    },
+    {
+      "name": "no-epoch-log-key",
+      "tags": [
+        "cross-epoch"
+      ],
+      "note": "A profile that only knows the legacy epoch rejects a successor checkpoint: no epoch's log key signed it.",
+      "profile": "v2-legacy-only",
+      "tree_size": 5,
+      "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example 4uge6UVRDJC9ag+Bt7N9HmblCdpEMd6LMFXOXPJhYf2rsVGBlZfXY2MToxcKiWmE+9jalBUuTHm/E63XMZyMqjF+QAI=\n— witness.example/w1 8e2MRwAAAABqPG/krybvmK9gvLPmDsCoyR1WtUFwnczk4OJtZFRwQJyEPidvsHGhDi+EjMsemJbR57X8Uv1QWpAHvaTbF5WR6qcPCg==\n",
+      "expect": {
+        "result": "reject",
+        "reason": "log_signature"
+      }
+    },
+    {
+      "name": "stale-successor",
+      "tags": [
+        "freshness"
+      ],
+      "note": "Epochs do not relax freshness: a cosignature older than checkpoint_max_age_seconds is rejected.",
+      "profile": "v2-bounded",
+      "tree_size": 7,
+      "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example 4uge6f9isOXyphjP73DqATDQtvS1XKuI2WoD/TWoy1BQNsvXZb+QCe8lXsP1M52LX4M+wgIM46pE8euwJg42e6kiYwQ=\n— witness.example/w1 8e2MRwAAAABqPG3HoLJbzXoy/M37ONXw0HnTxk+5sVcqvU/oMgxD9LfEEJT9yySO4KE9Fy/qxduQOh3O97Whq9fxdwdSMBx+0/jsCg==\n",
+      "expect": {
+        "result": "reject",
+        "reason": "stale"
+      }
+    },
+    {
+      "name": "v1-legacy-at-n",
+      "tags": [
+        "v1"
+      ],
+      "note": "Version 1 back-compat: the legacy checkpoint verifies, reported under the unnamed epoch \"\".",
+      "profile": "v1-legacy",
+      "tree_size": 5,
+      "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": ""
+      }
+    },
+    {
+      "name": "v1-legacy-above-n",
+      "tags": [
+        "v1"
+      ],
+      "note": "Version 1 has no tree-size bounds.",
+      "profile": "v1-legacy",
+      "tree_size": 7,
+      "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example nKup9inKLjlmgM/XZo9xjNLT0P6ehzsExh2+lAh4xsQO+qZsGSr54ZzeeCt6OL+23Q5ZPEqLnwlxrlz31ShkfniWHQg=\n— witness.example/w1 DwBNpgAAAABqPG/ke+GcQmxbANFipYKXdW6zXgQN1XWZ9YVrZimoV+OpDTw+Jgg69Joy2ToEHt2kEHI9YEmWBtwz/PeX0B8CbahXDg==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": ""
+      }
+    },
+    {
+      "name": "v1-rejects-successor",
+      "tags": [
+        "v1"
+      ],
+      "note": "An un-upgraded version 1 profile fails closed on successor keys.",
+      "profile": "v1-legacy",
+      "tree_size": 5,
+      "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example 4uge6UVRDJC9ag+Bt7N9HmblCdpEMd6LMFXOXPJhYf2rsVGBlZfXY2MToxcKiWmE+9jalBUuTHm/E63XMZyMqjF+QAI=\n— witness.example/w1 8e2MRwAAAABqPG/krybvmK9gvLPmDsCoyR1WtUFwnczk4OJtZFRwQJyEPidvsHGhDi+EjMsemJbR57X8Uv1QWpAHvaTbF5WR6qcPCg==\n",
+      "expect": {
+        "result": "reject",
+        "reason": "log_signature"
+      }
+    },
+    {
+      "name": "v2-legacy-only-matches-v1",
+      "tags": [
+        "v1"
+      ],
+      "note": "A single-epoch version 2 profile accepts what the version 1 profile accepts.",
+      "profile": "v2-legacy-only",
+      "tree_size": 5,
+      "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+      "expect": {
+        "result": "accept",
+        "epoch": "legacy"
+      }
+    }
+  ],
+  "bundle_cases": [
+    {
+      "name": "bundle-legacy-epoch-at-n",
+      "tags": [
+        "T7-6",
+        "bundle"
+      ],
+      "note": "Legacy bundle key, legacy policy_hash, legacy checkpoint at N: accepted under the legacy epoch.",
+      "profile": "v2-bounded",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNQpkZzdOc2xWZlpCUXJ0UmRwM0JpN3ZuSDRQTWVWUkV2VktrRWZUbEJFV1BrPQoK4oCUIGxvZy5leGFtcGxlIG5LdXA5bXl0YXlQUkl1eERCblhkek9ZQVB5c2poQzVEYTdCTzBiYzc3Ri9QQXI3MGJ3akIyYmhlS1JMellVRkNnL3pCMEZSZ09ZS1NIY2xCQ1RIT0hjaStGd2M9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgRHdCTnBnQUFBQUJxUEcva2NMUVd1bGpKdnJxd2ViWWRZZ3dOY1lFVVRBY01ZSTFLcktuS1BGbk91cXQ1UHNlTzVhd0VoQVFWZnpmemwvaWppVnY0bWJOU3JnU2tUTis4Umh4T0J3PT0K\",\"complete_through_size\":5,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"QAP4_XqKtQp5221gEo4VFxEPSq8_c9_AOBncFkA2ink\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+5ee26202\",\"value\":\"GvM3pyu_ezUbmswOjtBQvDjGKpe5sr48cavkMFMHwVcGN3KVKWQbeOswzehuixWrOFGtQAZ5xPFGUIKXKUxvBw\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "accept",
+        "epoch": "legacy"
+      }
+    },
+    {
+      "name": "bundle-successor-epoch-above-n",
+      "tags": [
+        "T7-6",
+        "bundle"
+      ],
+      "note": "Successor bundle key, successor policy_hash, successor checkpoint at N+k: accepted under the successor epoch.",
+      "profile": "v2-bounded",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNwpqbzJNT2FQcGs2SHl3ME9IVkJzSXVmN01BS1hhWXhUdzJPMEd4U082eUtvPQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2Zjlpc09YeXBoalA3M0RxQVREUXR2UzFYS3VJMldvRC9UV295MUJRTnN2WFpiK1FDZThsWHNQMU01MkxYNE0rd2dJTTQ2cEU4ZXV3Smc0MmU2a2lZd1E9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcvazEzVm82MERaK0NKVTBtQ2s5bkM3N21IWmU0aFdzY3FTOTFibWcwMHVWRVptSThEYkpFYTBwT3RLdCtFN3JMdjUycFBYR1g0RHlNZTkyOENVR2VrMkJBPT0K\",\"complete_through_size\":7,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"ZG607L-8l3gv1yGQUEMMFaI1dR8Od7LcaCKYkltd8AY\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+6e5278a4\",\"value\":\"EZlJdnSgfXE3mNcfhON6eB5CqqprQrm2zETBO-9asUHGVAS46rwEUyq8JeZSBtvJWoSlhvTv7yytXB7ySTPJAQ\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "accept",
+        "epoch": "successor"
+      }
+    },
+    {
+      "name": "bundle-successor-epoch-at-n",
+      "tags": [
+        "T7-6",
+        "bundle"
+      ],
+      "note": "Successor bundle over the same tree at exactly N.",
+      "profile": "v2-bounded",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNQpkZzdOc2xWZlpCUXJ0UmRwM0JpN3ZuSDRQTWVWUkV2VktrRWZUbEJFV1BrPQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2VVZSREpDOWFnK0J0N045SG1ibENkcEVNZDZMTUZYT1hQSmhZZjJyc1ZHQmxaZlhZMk1Ub3hjS2lXbUUrOWphbEJVdVRIbS9FNjNYTVp5TXFqRitRQUk9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcva3J5YnZtSzlndkxQbURzQ295UjFXdFVGd25jems0T0p0WkZSd1FKeUVQaWR2c0hHaERpK0VqTXNlbUpiUjU3WDhVdjFRV3BBSHZhVGJGNVdSNnFjUENnPT0K\",\"complete_through_size\":5,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"ZG607L-8l3gv1yGQUEMMFaI1dR8Od7LcaCKYkltd8AY\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+6e5278a4\",\"value\":\"d8Actpm5tk51VyNlcJ1Xc10Ymh_CCs89qW9WJopjfY9pLhbTO_8ktdnX4FdF7e-n-Wl55GsZw8X4QT6Sw5sxDg\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "accept",
+        "epoch": "successor"
+      }
+    },
+    {
+      "name": "bundle-legacy-epoch-above-n-capped",
+      "tags": [
+        "T7-6",
+        "bundle",
+        "bounds"
+      ],
+      "note": "A legacy bundle whose checkpoint is past N fails the selected epoch's max_tree_size.",
+      "profile": "v2-bounded",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNwpqbzJNT2FQcGs2SHl3ME9IVkJzSXVmN01BS1hhWXhUdzJPMEd4U082eUtvPQoK4oCUIGxvZy5leGFtcGxlIG5LdXA5aW5LTGpsbWdNL1habzl4ak5MVDBQNmVoenNFeGgyK2xBaDR4c1FPK3Fac0dTcjU0WnplZUN0Nk9MKzIzUTVaUEVxTG53bHhybHozMVNoa2ZuaVdIUWc9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgRHdCTnBnQUFBQUJxUEcva2UrR2NRbXhiQU5GaXBZS1hkVzZ6WGdRTjFYV1o5WVZyWmltb1YrT3BEVHcrSmdnNjlKb3kyVG9FSHQya0VISTlZRW1XQnR3ei9QZVgwQjhDYmFoWERnPT0K\",\"complete_through_size\":7,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"QAP4_XqKtQp5221gEo4VFxEPSq8_c9_AOBncFkA2ink\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+5ee26202\",\"value\":\"aoLLGooq4Q9Z1WmPKELjYUY8JeOgbymT3MAQDoNRakIByy8CkdhhmKjztJhmOSDarQetKLpbl8bOsElKNex8DQ\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "max_tree_size"
+      }
+    },
+    {
+      "name": "bundle-successor-epoch-below-n-floored",
+      "tags": [
+        "T7-6",
+        "bundle",
+        "bounds"
+      ],
+      "note": "A successor bundle whose checkpoint is below N fails the selected epoch's min_tree_size.",
+      "profile": "v2-bounded",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNAphZkNZNE9BcUc1Qy9iM0xFZzA3VCtvMTUwQVNGYmpqVTBMa09UbERaREw0PQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2WHErWlN6YndJbW1MbTZuTnZvVGREYXp2akY5WjJteUplZUhNOVEwZW1kMmZqU0cwR1V2cmxMd2JzM0pEZEJMV3VjVXJOZngrL1F0M2cxaHBKMk5XQVE9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcva0tRNTQxUis5bXNKZlc5TDFuWjA0RWpNaHZRbVQzai9EWEVhVzQvTUgwZ3dvdlBWSC82ZmwySU1JM0lWZWl4SzRGcE9TWTczWSsyNDkvTGw4YmxTa0JnPT0K\",\"complete_through_size\":4,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyQ\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyQ\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"ZG607L-8l3gv1yGQUEMMFaI1dR8Od7LcaCKYkltd8AY\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+6e5278a4\",\"value\":\"VZJuKBkt967Vu6jYTPkQ5MW-9Ra3C9en7uXLVwWvCLc4mWgxbdro4t3_1kQWeSm83qZZmnGrXqzWqk-U-tAXDQ\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "min_tree_size"
+      }
+    },
+    {
+      "name": "bundle-policy-hash-mismatch",
+      "tags": [
+        "bundle",
+        "policy-hash"
+      ],
+      "note": "Successor bundle key with the legacy policy_hash: the kid selects the successor epoch, whose policy does not hash to policy_hash.",
+      "profile": "v2-open",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNwpqbzJNT2FQcGs2SHl3ME9IVkJzSXVmN01BS1hhWXhUdzJPMEd4U082eUtvPQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2Zjlpc09YeXBoalA3M0RxQVREUXR2UzFYS3VJMldvRC9UV295MUJRTnN2WFpiK1FDZThsWHNQMU01MkxYNE0rd2dJTTQ2cEU4ZXV3Smc0MmU2a2lZd1E9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcvazEzVm82MERaK0NKVTBtQ2s5bkM3N21IWmU0aFdzY3FTOTFibWcwMHVWRVptSThEYkpFYTBwT3RLdCtFN3JMdjUycFBYR1g0RHlNZTkyOENVR2VrMkJBPT0K\",\"complete_through_size\":7,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"QAP4_XqKtQp5221gEo4VFxEPSq8_c9_AOBncFkA2ink\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+6e5278a4\",\"value\":\"VYD5omvQ90PbyHZYfNRkRjOeAqJyhJHca6eGSQzphvvjckYlF2Q4X3dFPSkOo_Xjv7-WDTU9bKxK92B6sbHwDA\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "policy_hash"
+      }
+    },
+    {
+      "name": "bundle-policy-hash-combined-document",
+      "tags": [
+        "bundle",
+        "policy-hash"
+      ],
+      "note": "policy_hash over any other document, here the two epoch policies concatenated, is rejected.",
+      "profile": "v2-open",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNwpqbzJNT2FQcGs2SHl3ME9IVkJzSXVmN01BS1hhWXhUdzJPMEd4U082eUtvPQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2Zjlpc09YeXBoalA3M0RxQVREUXR2UzFYS3VJMldvRC9UV295MUJRTnN2WFpiK1FDZThsWHNQMU01MkxYNE0rd2dJTTQ2cEU4ZXV3Smc0MmU2a2lZd1E9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcvazEzVm82MERaK0NKVTBtQ2s5bkM3N21IWmU0aFdzY3FTOTFibWcwMHVWRVptSThEYkpFYTBwT3RLdCtFN3JMdjUycFBYR1g0RHlNZTkyOENVR2VrMkJBPT0K\",\"complete_through_size\":7,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"GY2-deqP5xIZ_4_wHJPh-0Nk8OaqiGcs7sYSO1v7LXo\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+6e5278a4\",\"value\":\"yxp9HudBBOUPdLQtFpYRwYXayxOF9lElsiePgxUDaE4H2PYCxd6rUYggQAsmsqcBDh4fh818_jPIJ59QwhhWBA\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "policy_hash"
+      }
+    },
+    {
+      "name": "bundle-cross-epoch-checkpoint",
+      "tags": [
+        "bundle",
+        "cross-epoch"
+      ],
+      "note": "Legacy bundle key and policy_hash, but the embedded checkpoint is the successor's: it must satisfy the selected legacy epoch and does not.",
+      "profile": "v2-open",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNQpkZzdOc2xWZlpCUXJ0UmRwM0JpN3ZuSDRQTWVWUkV2VktrRWZUbEJFV1BrPQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2VVZSREpDOWFnK0J0N045SG1ibENkcEVNZDZMTUZYT1hQSmhZZjJyc1ZHQmxaZlhZMk1Ub3hjS2lXbUUrOWphbEJVdVRIbS9FNjNYTVp5TXFqRitRQUk9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcva3J5YnZtSzlndkxQbURzQ295UjFXdFVGd25jems0T0p0WkZSd1FKeUVQaWR2c0hHaERpK0VqTXNlbUpiUjU3WDhVdjFRV3BBSHZhVGJGNVdSNnFjUENnPT0K\",\"complete_through_size\":5,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"QAP4_XqKtQp5221gEo4VFxEPSq8_c9_AOBncFkA2ink\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+5ee26202\",\"value\":\"-GfhjPiRFhh6ULjYqfgPZCuWMdvUjmhk4BOPrFKUPtefUxoFw7Q1q7O05g7Ay0yI2gLjlyI_eTRypG5CDZPjAQ\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "log_signature"
+      }
+    },
+    {
+      "name": "bundle-cross-epoch-witness",
+      "tags": [
+        "bundle",
+        "cross-epoch"
+      ],
+      "note": "Legacy bundle, legacy log signature, successor witness cosignature: the selected epoch's quorum is not met.",
+      "profile": "v2-open",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNQpkZzdOc2xWZlpCUXJ0UmRwM0JpN3ZuSDRQTWVWUkV2VktrRWZUbEJFV1BrPQoK4oCUIGxvZy5leGFtcGxlIG5LdXA5bXl0YXlQUkl1eERCblhkek9ZQVB5c2poQzVEYTdCTzBiYzc3Ri9QQXI3MGJ3akIyYmhlS1JMellVRkNnL3pCMEZSZ09ZS1NIY2xCQ1RIT0hjaStGd2M9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcva3J5YnZtSzlndkxQbURzQ295UjFXdFVGd25jems0T0p0WkZSd1FKeUVQaWR2c0hHaERpK0VqTXNlbUpiUjU3WDhVdjFRV3BBSHZhVGJGNVdSNnFjUENnPT0K\",\"complete_through_size\":5,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"QAP4_XqKtQp5221gEo4VFxEPSq8_c9_AOBncFkA2ink\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+5ee26202\",\"value\":\"ZFdBo0QAfHxND4luf8uViORnEb3yeirrweaOvxfyQXrcySGSbg5P_9l3KKxJPuadkeyVCQaNkKQLPK7ckPh-Aw\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "witness_quorum"
+      }
+    },
+    {
+      "name": "bundle-shared-kid-selects-legacy",
+      "tags": [
+        "bundle",
+        "shared-kid"
+      ],
+      "note": "The legacy bundle key is in both epochs; policy_hash equals the legacy policy, so the legacy epoch is selected.",
+      "profile": "v2-shared-bundle-key",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNQpkZzdOc2xWZlpCUXJ0UmRwM0JpN3ZuSDRQTWVWUkV2VktrRWZUbEJFV1BrPQoK4oCUIGxvZy5leGFtcGxlIG5LdXA5bXl0YXlQUkl1eERCblhkek9ZQVB5c2poQzVEYTdCTzBiYzc3Ri9QQXI3MGJ3akIyYmhlS1JMellVRkNnL3pCMEZSZ09ZS1NIY2xCQ1RIT0hjaStGd2M9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgRHdCTnBnQUFBQUJxUEcva2NMUVd1bGpKdnJxd2ViWWRZZ3dOY1lFVVRBY01ZSTFLcktuS1BGbk91cXQ1UHNlTzVhd0VoQVFWZnpmemwvaWppVnY0bWJOU3JnU2tUTis4Umh4T0J3PT0K\",\"complete_through_size\":5,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"QAP4_XqKtQp5221gEo4VFxEPSq8_c9_AOBncFkA2ink\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+5ee26202\",\"value\":\"GvM3pyu_ezUbmswOjtBQvDjGKpe5sr48cavkMFMHwVcGN3KVKWQbeOswzehuixWrOFGtQAZ5xPFGUIKXKUxvBw\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "accept",
+        "epoch": "legacy"
+      }
+    },
+    {
+      "name": "bundle-shared-kid-selects-successor",
+      "tags": [
+        "bundle",
+        "shared-kid"
+      ],
+      "note": "Signed by the shared legacy bundle key with the successor policy_hash and a successor checkpoint: the successor epoch is selected. Picking the first epoch whose keys contain the kid would wrongly reject this.",
+      "profile": "v2-shared-bundle-key",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNwpqbzJNT2FQcGs2SHl3ME9IVkJzSXVmN01BS1hhWXhUdzJPMEd4U082eUtvPQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2Zjlpc09YeXBoalA3M0RxQVREUXR2UzFYS3VJMldvRC9UV295MUJRTnN2WFpiK1FDZThsWHNQMU01MkxYNE0rd2dJTTQ2cEU4ZXV3Smc0MmU2a2lZd1E9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcvazEzVm82MERaK0NKVTBtQ2s5bkM3N21IWmU0aFdzY3FTOTFibWcwMHVWRVptSThEYkpFYTBwT3RLdCtFN3JMdjUycFBYR1g0RHlNZTkyOENVR2VrMkJBPT0K\",\"complete_through_size\":7,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"ZG607L-8l3gv1yGQUEMMFaI1dR8Od7LcaCKYkltd8AY\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+5ee26202\",\"value\":\"IAyuVYyZg2lh5jOqjhLFLT0SNmGIwsN3HRlrJlzaw9BoTe7GSy7sLa-DOpV1MSnhI2fqEFRHjRML96TRZXxgAQ\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "accept",
+        "epoch": "successor"
+      }
+    },
+    {
+      "name": "bundle-shared-kid-policy-hash-mismatch",
+      "tags": [
+        "bundle",
+        "shared-kid",
+        "policy-hash"
+      ],
+      "note": "Signed by the shared key, but policy_hash matches neither epoch holding that kid.",
+      "profile": "v2-shared-bundle-key",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNQpkZzdOc2xWZlpCUXJ0UmRwM0JpN3ZuSDRQTWVWUkV2VktrRWZUbEJFV1BrPQoK4oCUIGxvZy5leGFtcGxlIG5LdXA5bXl0YXlQUkl1eERCblhkek9ZQVB5c2poQzVEYTdCTzBiYzc3Ri9QQXI3MGJ3akIyYmhlS1JMellVRkNnL3pCMEZSZ09ZS1NIY2xCQ1RIT0hjaStGd2M9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgRHdCTnBnQUFBQUJxUEcva2NMUVd1bGpKdnJxd2ViWWRZZ3dOY1lFVVRBY01ZSTFLcktuS1BGbk91cXQ1UHNlTzVhd0VoQVFWZnpmemwvaWppVnY0bWJOU3JnU2tUTis4Umh4T0J3PT0K\",\"complete_through_size\":5,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"GY2-deqP5xIZ_4_wHJPh-0Nk8OaqiGcs7sYSO1v7LXo\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+5ee26202\",\"value\":\"oce6mOdU-zn0VoS1lqnG9iXso5KTRknt9OECnt_Qpi0CxqIuxmjR8yp_FyA8ATRvsut_czsTi2klC3MlLaCUDg\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "policy_hash"
+      }
+    },
+    {
+      "name": "bundle-unknown-signer",
+      "tags": [
+        "bundle"
+      ],
+      "note": "A bundle key in no epoch is rejected before any other check.",
+      "profile": "v2-open",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNwpqbzJNT2FQcGs2SHl3ME9IVkJzSXVmN01BS1hhWXhUdzJPMEd4U082eUtvPQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2Zjlpc09YeXBoalA3M0RxQVREUXR2UzFYS3VJMldvRC9UV295MUJRTnN2WFpiK1FDZThsWHNQMU01MkxYNE0rd2dJTTQ2cEU4ZXV3Smc0MmU2a2lZd1E9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcvazEzVm82MERaK0NKVTBtQ2s5bkM3N21IWmU0aFdzY3FTOTFibWcwMHVWRVptSThEYkpFYTBwT3RLdCtFN3JMdjUycFBYR1g0RHlNZTkyOENVR2VrMkJBPT0K\",\"complete_through_size\":7,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"ZG607L-8l3gv1yGQUEMMFaI1dR8Od7LcaCKYkltd8AY\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+7b25861c\",\"value\":\"rIhsIXd6u_Mee-eP4wtxFpALiuqwidPlikdOcPyEjYpKdVB_bm_NyYcPULIuTT_w2kkyo0Lybo3sstwE5iHKAA\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "bundle_signer"
+      }
+    },
+    {
+      "name": "v1-bundle-legacy",
+      "tags": [
+        "bundle",
+        "v1"
+      ],
+      "note": "Version 1 back-compat: the legacy bundle verifies unchanged.",
+      "profile": "v1-legacy",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNQpkZzdOc2xWZlpCUXJ0UmRwM0JpN3ZuSDRQTWVWUkV2VktrRWZUbEJFV1BrPQoK4oCUIGxvZy5leGFtcGxlIG5LdXA5bXl0YXlQUkl1eERCblhkek9ZQVB5c2poQzVEYTdCTzBiYzc3Ri9QQXI3MGJ3akIyYmhlS1JMellVRkNnL3pCMEZSZ09ZS1NIY2xCQ1RIT0hjaStGd2M9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgRHdCTnBnQUFBQUJxUEcva2NMUVd1bGpKdnJxd2ViWWRZZ3dOY1lFVVRBY01ZSTFLcktuS1BGbk91cXQ1UHNlTzVhd0VoQVFWZnpmemwvaWppVnY0bWJOU3JnU2tUTis4Umh4T0J3PT0K\",\"complete_through_size\":5,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGydsLcri8TUTHmsdz2U46soxZ9_zte7XBrSLSujt8ko4f\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"QAP4_XqKtQp5221gEo4VFxEPSq8_c9_AOBncFkA2ink\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+5ee26202\",\"value\":\"GvM3pyu_ezUbmswOjtBQvDjGKpe5sr48cavkMFMHwVcGN3KVKWQbeOswzehuixWrOFGtQAZ5xPFGUIKXKUxvBw\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "accept",
+        "epoch": ""
+      }
+    },
+    {
+      "name": "v1-bundle-successor",
+      "tags": [
+        "bundle",
+        "v1"
+      ],
+      "note": "A version 1 profile does not know the successor bundle key.",
+      "profile": "v1-legacy",
+      "bundle": "{\"checkpoint\":\"bG9nLmV4YW1wbGUKNwpqbzJNT2FQcGs2SHl3ME9IVkJzSXVmN01BS1hhWXhUdzJPMEd4U082eUtvPQoK4oCUIGxvZy5leGFtcGxlIDR1Z2U2Zjlpc09YeXBoalA3M0RxQVREUXR2UzFYS3VJMldvRC9UV295MUJRTnN2WFpiK1FDZThsWHNQMU01MkxYNE0rd2dJTTQ2cEU4ZXV3Smc0MmU2a2lZd1E9CuKAlCB3aXRuZXNzLmV4YW1wbGUvdzEgOGUyTVJ3QUFBQUJxUEcvazEzVm82MERaK0NKVTBtQ2s5bkM3N21IWmU0aFdzY3FTOTFibWcwMHVWRVptSThEYkpFYTBwT3RLdCtFN3JMdjUycFBYR1g0RHlNZTkyOENVR2VrMkJBPT0K\",\"complete_through_size\":7,\"completeness_mode\":\"trusted-index\",\"events\":[{\"entry\":\"eyJlayI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJlbnRpdHktMSIsImt0eSI6Ik9LUCIsIngiOiJpb2pqM1hRSjhaWDlVdHN0UExwZGNzcG5DYjhkbEJJYjgzU0lBYlFQYjF3In0sImZxZG4iOiJhZ2VudC5leGFtcGxlLmNvbSIsImdpIjoiZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwia3UiOnsiYWxnIjoiRWREU0EiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoib3BlcmF0aW9uYWwtMSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn0sImxvZ19vcmlnaW4iOiJsb2cuZXhhbXBsZSIsImxyIjoiYzJzcC10bG9nOnB1YmxpYzpodHRwczovL2xvZy5leGFtcGxlI0VSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJtZXRob2QiOiJjMnNwLXRsb2ciLCJzZXEiOjAsInNpZ3MiOnsiYWUiOnsia2lkIjoiZW50aXR5LTEiLCJzaWciOiJfZkxMX0g0UDkyWFdjNXNwbGNhcjFBS1dIRmpmWmVMN1N1a1Bwc2xxekFTV1YxTTh5aUd0NWtTUUllbHFXZk5FMWpBZS1GeXgtdlZ6TVQxMnh4RUVDdyJ9LCJvcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiSTlqQ0NMMFktaE4tc2JOQzZ3MEN3RHVWSVU0RnZIUnVIY1A5YnRfeGJIQXZkZ1U5N2NZdG0wQVcwQTNuOXBsVXY0Mi1NSVhxb3h0M0tBOVNoZGVNQ2cifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjE3MjgwMCwidHlwZSI6IklTU1VBTkNFIiwidiI6MX0\",\"index\":0,\"proof\":\"rtMvNEpk4xUOMSvJfEhCo7kjBnPM5TVGpfrJcmO35sHMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"},{\"entry\":\"eyJmcWRuIjoiYWdlbnQuZXhhbXBsZS5jb20iLCJraW5kIjoiZG5zaWQubGlmZWN5Y2xlIiwibG9nX29yaWdpbiI6ImxvZy5leGFtcGxlIiwibHIiOiJjMnNwLXRsb2c6cHVibGljOmh0dHBzOi8vbG9nLmV4YW1wbGUjRVJFUkVSRVJFUkVSRVJFUkVSRVJFUSIsIm1ldGhvZCI6ImMyc3AtdGxvZyIsIm5ld19rdSI6eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJvcGVyYXRpb25hbC0yIiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifSwibmV3X3RodW1iIjoiblJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsInByZXZfZXZlbnRfaWQiOiI1U0Z3YVZuWGZ4UXRGNVZReU9rcjRhNU9pS2pWeE5KdFE3eFg4OHJiOHdNIiwicHJldl9zdGF0ZV9oYXNoIjoibERvcm5XUmp3RjhFY191ck9oekp3RGZzTFYwVEhvRUlHa0Exdm9BTjcwayIsInByZXZfdGh1bWIiOiJhVkJ0YXBMZDExU1VWS0lNR0pmUHpPRUR1TjBzWGNtekpRTlZULV9zS0VVIiwic2VxIjoxLCJzaWdzIjp7Im5ld19vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0yIiwic2lnIjoiNFZIa3owdU1fZUNqc1VlaTRpaFJzcHZ6d0F1T3RqSEc3ME1iZzN1R2hNZm12Rjk1emtjbHdIOHRRVWtGczVJdzEyeDZNbTBWV19TdDNLOFhOQlJkQ2cifSwicHJldl9vcCI6eyJraWQiOiJvcGVyYXRpb25hbC0xIiwic2lnIjoiR2RVQUxvMUdMUk00QnBuYnljejZzM3BnWGpVaVdnNUNzTl9uNGo5eC1xYkV2OFJnYUV0c3ZVODViandJQTM5MGdCT1ZMRm93SFdkNS14b2lFNXljQncifX0sInN0cmVhbV9pZCI6IkVSRVJFUkVSRVJFUkVSRVJFUkVSRVEiLCJ0cyI6MTc4MjI1OTIwMCwidHlwZSI6IktFWV9ST1RBVElPTiIsInYiOjF9\",\"index\":1,\"proof\":\"TzqqbPIFvX4tEEoe-n5umoiSZgBZOdjC5WmelAlTv9jMnZClHzl4HHuHxbkU4ovBcei9t1wiA77KTMmzFJdGyY3P3JNc0f-C8xe838GallOUCadRhT36X2wWdcg4wlC6\"}],\"expires\":1782346000,\"fqdn\":\"agent.example.com\",\"lr\":\"c2sp-tlog:public:https://log.example#EREREREREREREREREREREQ\",\"policy_hash\":\"ZG607L-8l3gv1yGQUEMMFaI1dR8Od7LcaCKYkltd8AY\",\"sig\":{\"alg\":\"EdDSA\",\"kid\":\"dnsid-stream-bundle+6e5278a4\",\"value\":\"EZlJdnSgfXE3mNcfhON6eB5CqqprQrm2zETBO-9asUHGVAS46rwEUyq8JeZSBtvJWoSlhvTv7yytXB7ySTPJAQ\"},\"state\":{\"event_count\":2,\"last_event_type\":\"KEY_ROTATION\",\"logged_state\":\"ACTIVE\"},\"type\":\"dnsid-c2sp-stream-bundle\",\"v\":1}",
+      "expect": {
+        "result": "reject",
+        "reason": "bundle_signer"
+      }
+    }
+  ],
+  "continuity_cases": [
+    {
+      "name": "continuity-equal-root-at-n",
+      "tags": [
+        "T7-6",
+        "continuity"
+      ],
+      "note": "Stored legacy state at N, then the successor checkpoint at N with the same root: an equal-size, equal-root no-op. No consistency proof is needed.",
+      "profile": "v2-bounded",
+      "steps": [
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "accept",
+            "epoch": "legacy"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        },
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example 4uge6UVRDJC9ag+Bt7N9HmblCdpEMd6LMFXOXPJhYf2rsVGBlZfXY2MToxcKiWmE+9jalBUuTHm/E63XMZyMqjF+QAI=\n— witness.example/w1 8e2MRwAAAABqPG/krybvmK9gvLPmDsCoyR1WtUFwnczk4OJtZFRwQJyEPidvsHGhDi+EjMsemJbR57X8Uv1QWpAHvaTbF5WR6qcPCg==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "accept",
+            "epoch": "successor"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        }
+      ]
+    },
+    {
+      "name": "continuity-advance-to-n-plus-k",
+      "tags": [
+        "T7-6",
+        "continuity"
+      ],
+      "note": "Stored legacy state at N, then the successor checkpoint at N+k: advances with an RFC 6962 consistency proof from N to N+k, exactly as within one epoch.",
+      "profile": "v2-bounded",
+      "steps": [
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "accept",
+            "epoch": "legacy"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        },
+        {
+          "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example 4uge6f9isOXyphjP73DqATDQtvS1XKuI2WoD/TWoy1BQNsvXZb+QCe8lXsP1M52LX4M+wgIM46pE8euwJg42e6kiYwQ=\n— witness.example/w1 8e2MRwAAAABqPG/k13Vo60DZ+CJU0mCk9nC77mHZe4hWscqS91bmg00uVEZmI8DbJEa0pOtKt+E7rLv52pPXGX4DyMe928CUGek2BA==\n",
+          "consistency_proof": [
+            "2wtyuLxNRMeax3PZTjqyjFn3/O17tcGtItK6O3ySjh8=",
+            "SvSizKcHDFK62G34nuu9OM59xofaZ4bGpNMMN2JlFlk=",
+            "ZIdZ9FR7LEy901VZhxSvnnthPCKb3E5Zsj4xrF7Py6s=",
+            "afCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4="
+          ],
+          "expect": {
+            "result": "accept",
+            "epoch": "successor"
+          },
+          "trusted_after": {
+            "tree_size": 7,
+            "root_hash": "jo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo="
+          }
+        }
+      ]
+    },
+    {
+      "name": "continuity-bad-consistency-proof",
+      "tags": [
+        "continuity"
+      ],
+      "note": "The successor checkpoint at N+k with a consistency proof for a different tree is rejected and trusted state stays at N.",
+      "profile": "v2-bounded",
+      "steps": [
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "accept",
+            "epoch": "legacy"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        },
+        {
+          "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example 4uge6f9isOXyphjP73DqATDQtvS1XKuI2WoD/TWoy1BQNsvXZb+QCe8lXsP1M52LX4M+wgIM46pE8euwJg42e6kiYwQ=\n— witness.example/w1 8e2MRwAAAABqPG/k13Vo60DZ+CJU0mCk9nC77mHZe4hWscqS91bmg00uVEZmI8DbJEa0pOtKt+E7rLv52pPXGX4DyMe928CUGek2BA==\n",
+          "consistency_proof": [
+            "LNeZ5NBP7JWlDpQ4PswaQpZ7ZbpcYu0rWonzH8LQ5KE=",
+            "SvSizKcHDFK62G34nuu9OM59xofaZ4bGpNMMN2JlFlk=",
+            "ZIdZ9FR7LEy901VZhxSvnnthPCKb3E5Zsj4xrF7Py6s=",
+            "afCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4="
+          ],
+          "expect": {
+            "result": "reject",
+            "reason": "consistency_failed"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        }
+      ]
+    },
+    {
+      "name": "continuity-root-conflict-at-n",
+      "tags": [
+        "continuity",
+        "cross-epoch"
+      ],
+      "note": "A successor checkpoint at N over a forked tree is validly signed but conflicts with the stored legacy root at N.",
+      "profile": "v2-bounded",
+      "steps": [
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "accept",
+            "epoch": "legacy"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        },
+        {
+          "checkpoint": "log.example\n5\nxWh1tKQq8HztYQ81FjMO3nr+EA2E4JllkLuZqoGvYms=\n\n— log.example 4uge6a6LwgVk2wKJVGgVj7paVNYyZX5rx/LOiRutFRQ3jJWz4vo2wrdbqplK1SUYUUWz9XLj3fcQzXjngogQsaaDlg0=\n— witness.example/w1 8e2MRwAAAABqPG/kYXktX4xB0neNL/IYFRtZU4EbB8KyiGhavUHzK+rUqmHZ8Eco0WL3U0uVYp5JWzhWg0On8pGbBqtQTkPgIxMaCQ==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "reject",
+            "reason": "root_conflict"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        }
+      ]
+    },
+    {
+      "name": "continuity-successor-below-n-rollback",
+      "tags": [
+        "continuity"
+      ],
+      "note": "Without min_tree_size, a successor checkpoint below stored legacy state is still refused as a rollback.",
+      "profile": "v2-open",
+      "steps": [
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "accept",
+            "epoch": "legacy"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        },
+        {
+          "checkpoint": "log.example\n4\nafCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4=\n\n— log.example 4uge6Xq+ZSzbwImmLm6nNvoTdDazvjF9Z2myJeeHM9Q0emd2fjSG0GUvrlLwbs3JDdBLWucUrNfx+/Qt3g1hpJ2NWAQ=\n— witness.example/w1 8e2MRwAAAABqPG/kKQ541R+9msJfW9L1nZ04EjMhvQmT3j/DXEaW4/MH0gwovPVH/6fl2IMI3IVeixK4FpOSY73Y+249/Ll8blSkBg==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "reject",
+            "reason": "rollback"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        }
+      ]
+    },
+    {
+      "name": "continuity-legacy-after-successor-rollback",
+      "tags": [
+        "continuity"
+      ],
+      "note": "After the successor advanced to N+k, a legacy checkpoint at N (for example a stale edge still serving legacy) is a rollback.",
+      "profile": "v2-open",
+      "steps": [
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "accept",
+            "epoch": "legacy"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        },
+        {
+          "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example 4uge6f9isOXyphjP73DqATDQtvS1XKuI2WoD/TWoy1BQNsvXZb+QCe8lXsP1M52LX4M+wgIM46pE8euwJg42e6kiYwQ=\n— witness.example/w1 8e2MRwAAAABqPG/k13Vo60DZ+CJU0mCk9nC77mHZe4hWscqS91bmg00uVEZmI8DbJEa0pOtKt+E7rLv52pPXGX4DyMe928CUGek2BA==\n",
+          "consistency_proof": [
+            "2wtyuLxNRMeax3PZTjqyjFn3/O17tcGtItK6O3ySjh8=",
+            "SvSizKcHDFK62G34nuu9OM59xofaZ4bGpNMMN2JlFlk=",
+            "ZIdZ9FR7LEy901VZhxSvnnthPCKb3E5Zsj4xrF7Py6s=",
+            "afCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4="
+          ],
+          "expect": {
+            "result": "accept",
+            "epoch": "successor"
+          },
+          "trusted_after": {
+            "tree_size": 7,
+            "root_hash": "jo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo="
+          }
+        },
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "reject",
+            "reason": "rollback"
+          },
+          "trusted_after": {
+            "tree_size": 7,
+            "root_hash": "jo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo="
+          }
+        }
+      ]
+    },
+    {
+      "name": "continuity-rejected-checkpoint-leaves-state",
+      "tags": [
+        "continuity",
+        "bounds"
+      ],
+      "note": "A checkpoint that fails epoch verification never reaches the store: state stays at N.",
+      "profile": "v2-bounded",
+      "steps": [
+        {
+          "checkpoint": "log.example\n5\ndg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk=\n\n— log.example nKup9mytayPRIuxDBnXdzOYAPysjhC5Da7BO0bc77F/PAr70bwjB2bheKRLzYUFCg/zB0FRgOYKSHclBCTHOHci+Fwc=\n— witness.example/w1 DwBNpgAAAABqPG/kcLQWuljJvrqwebYdYgwNcYEUTAcMYI1KrKnKPFnOuqt5PseO5awEhAQVfzfzl/ijiVv4mbNSrgSkTN+8RhxOBw==\n",
+          "consistency_proof": [],
+          "expect": {
+            "result": "accept",
+            "epoch": "legacy"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        },
+        {
+          "checkpoint": "log.example\n7\njo2MOaPpk6Hyw0OHVBsIuf7MAKXaYxTw2O0GxSO6yKo=\n\n— log.example nKup9inKLjlmgM/XZo9xjNLT0P6ehzsExh2+lAh4xsQO+qZsGSr54ZzeeCt6OL+23Q5ZPEqLnwlxrlz31ShkfniWHQg=\n— witness.example/w1 DwBNpgAAAABqPG/ke+GcQmxbANFipYKXdW6zXgQN1XWZ9YVrZimoV+OpDTw+Jgg69Joy2ToEHt2kEHI9YEmWBtwz/PeX0B8CbahXDg==\n",
+          "consistency_proof": [
+            "2wtyuLxNRMeax3PZTjqyjFn3/O17tcGtItK6O3ySjh8=",
+            "SvSizKcHDFK62G34nuu9OM59xofaZ4bGpNMMN2JlFlk=",
+            "ZIdZ9FR7LEy901VZhxSvnnthPCKb3E5Zsj4xrF7Py6s=",
+            "afCY4OAqG5C/b3LEg07T+o150ASFbjjU0LkOTlDZDL4="
+          ],
+          "expect": {
+            "result": "reject",
+            "reason": "max_tree_size"
+          },
+          "trusted_after": {
+            "tree_size": 5,
+            "root_hash": "dg7NslVfZBQrtRdp3Bi7vnH4PMeVREvVKkEfTlBEWPk="
+          }
+        }
+      ]
+    }
+  ]
+}

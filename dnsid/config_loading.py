@@ -62,7 +62,7 @@ class LogTrust:
     managed: bool | None = None
     """``True`` selects the embedded DNSid-managed trust catalog."""
     profile: C2spTlogTrustProfile | None = None
-    """Parsed ``dnsid-c2sp-tlog-trust-profile@v1`` document."""
+    """Parsed DNSid C2SP trust-profile document (version 1, or version 2 epochs)."""
     policy_document: bytes | None = None
     """Independently trusted C2SP ``tlog-policy`` bytes."""
     policy_url: str | None = None

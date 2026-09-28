@@ -51,7 +51,7 @@ from .merkle import merkle_root_from_entries
 from .policy import (
     C2spTlogPolicy,
     enforce_checkpoint_policy,
-    normalized_origin_policy,
+    policy_unchained,
 )
 from .proof import TlogProofV1, verify_c2sp_tlog_proof
 from .resource_fetcher import C2spBoundedResourceFetcher
@@ -72,6 +72,7 @@ from .stream_verifier import (
     verify_occurrence,
     verify_stream_lifecycle,
 )
+from .trust_profile import C2spTlogTrustEpoch
 
 _DEFAULT_MAX_MIGRATION_DEPTH = 8
 _DEFAULT_MAX_MIGRATION_HISTORY_EVENTS = 10_000
@@ -167,7 +168,10 @@ class C2spTlogReaderOptions:
     A scan transport must also implement ``fetch_bounded(url, maximum)``.
     Supplying independently trusted ``bundle_keys`` and the exact
     ``bundle_policy_document`` prefers bounded per-domain stream bundles;
-    the scanner remains the availability and consistency fallback.
+    the scanner remains the availability and consistency fallback. With an
+    epoch *policy*, ``bundle_epochs`` replaces ``bundle_policy_document``
+    (which must then be ``None``) and ``bundle_keys`` lists every epoch's
+    bundle keys; a bundle must then satisfy one epoch completely.
     """
 
     policy: C2spTlogPolicy
@@ -189,6 +193,7 @@ class C2spTlogReaderOptions:
     checkpoint_store: CheckpointStore = field(default_factory=InMemoryCheckpointStore)
     bundle_policy_document: bytes | None = None
     bundle_keys: list[SignedNoteKey] = field(default_factory=list)
+    bundle_epochs: list[C2spTlogTrustEpoch] | None = None
     bundle_checkpoint_freshness_ms: int = 300_000
     max_bundle_lifetime_ms: int = 300_000
     max_bundle_bytes: int = 8 * 1024 * 1024
@@ -317,8 +322,17 @@ class C2spTlogReader(LogReader):
             raise C2spTlogVerificationError(
                 "require_stream_bundle requires trusted bundle keys"
             )
+        if options.bundle_epochs is not None and (
+            not options.bundle_keys or options.bundle_policy_document is not None
+        ):
+            raise C2spTlogVerificationError(
+                "stream bundle trust epochs require bundle_keys and no "
+                "bundle_policy_document"
+            )
         if options.bundle_keys:
-            if not isinstance(options.bundle_policy_document, bytes):
+            if options.bundle_epochs is None and not isinstance(
+                options.bundle_policy_document, bytes
+            ):
                 raise C2spTlogVerificationError(
                     "stream bundles require the exact trusted policy document"
                 )
@@ -371,12 +385,17 @@ class C2spTlogReader(LogReader):
                     raise C2spTlogVerificationError(
                         "stream bundles require a bounded resource fetcher"
                     )
-                assert options.bundle_policy_document is not None
+                epochs = options.bundle_epochs
+                policy_bytes = (
+                    b"" if epochs is not None else options.bundle_policy_document
+                )
+                assert policy_bytes is not None
                 self._source = _FetchedStreamBundleSource(
                     cast(C2spBoundedResourceFetcher, options.transport),
                     scan_source,
-                    policy_bytes=options.bundle_policy_document,
-                    bundle_keys=options.bundle_keys,
+                    policy_bytes=policy_bytes,
+                    bundle_keys=[] if epochs is not None else options.bundle_keys,
+                    epochs=epochs,
                     checkpoint_freshness_ms=(
                         options.bundle_checkpoint_freshness_ms
                     ),
@@ -890,6 +909,14 @@ class C2spTlogReader(LogReader):
                 self.parsed.scope,
                 self._now_ms(),
                 self._options.max_clock_skew_ms,
+                # An epoch policy selects the first epoch that passes every
+                # check, freshness included, so a stale earlier epoch cannot
+                # shadow a fresh later one.
+                max_checkpoint_age_ms=(
+                    self._options.checkpoint_freshness_ms
+                    if require_fresh and self._options.policy.epochs
+                    else None
+                ),
             )
         except C2spTlogVerificationError as exc:
             if exc.category is None:
@@ -1206,7 +1233,7 @@ class C2spTlogReader(LogReader):
     def _unchained(self, origin: str) -> bool:
         if self._options.unchained is not None:
             return self._options.unchained
-        return normalized_origin_policy(self._options.policy, origin).unchained
+        return policy_unchained(self._options.policy, origin)
 
     def _verifier_options(
         self,

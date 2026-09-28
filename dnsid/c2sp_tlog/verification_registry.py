@@ -26,7 +26,9 @@ from .resource_fetcher import (
 from .signed_note import SignedNoteKey
 from .stream_source import C2spScanLimits
 from .trust_profile import (
+    C2SP_TLOG_TRUST_PROFILE_VERSION_EPOCHS,
     C2spTlogTrustProfile,
+    c2sp_tlog_trust_profile_policy,
     validate_c2sp_bundle_verifier_keys,
     validate_c2sp_tlog_trust_profile,
 )
@@ -54,6 +56,11 @@ class C2spTlogVerificationOptions:
     The built-in fetcher requires HTTPS and HTTP 200, rejects redirects and
     unsafe destinations, pins connections to validated DNS results, bounds
     decoded bytes during reads, and uses finite deadlines.
+
+    A version 2 trust profile binds a list of trust epochs instead of one
+    policy: checkpoints and bundles must then satisfy one epoch completely,
+    with no keys mixed across epochs, and trusted checkpoint state carries
+    across epochs because every epoch names the same origin.
 
     A trust profile or direct ``bundle_verifier_keys`` enables verified
     per-domain stream bundles. Unavailable endpoints fall back to the bounded
@@ -115,8 +122,16 @@ def create_c2sp_tlog_verification_registry(
             )
     if options.bundle_verifier_keys is not None:
         _validate_direct_bundle_verifier_keys(options.bundle_verifier_keys)
+    epoch_profile = (
+        options.trust_profile
+        if options.trust_profile is not None
+        and options.trust_profile.version == C2SP_TLOG_TRUST_PROFILE_VERSION_EPOCHS
+        else None
+    )
     bundle_keys = (
-        options.trust_profile.bundle_verifier_keys
+        [key for epoch in epoch_profile.epochs for key in epoch.bundle_verifier_keys]
+        if epoch_profile is not None
+        else options.trust_profile.bundle_verifier_keys
         if options.trust_profile is not None
         else options.bundle_verifier_keys or []
     )
@@ -161,9 +176,12 @@ def create_c2sp_tlog_verification_registry(
     # supplied as bytes, so reject an insufficient custom fetcher at creation.
     validate_resource_fetcher_capabilities(fetcher)
 
+    document: bytes | None
     if has_profile:
         assert options.trust_profile is not None
-        document = options.trust_profile.policy_document
+        document = (
+            None if epoch_profile is not None else options.trust_profile.policy_document
+        )
     elif has_url:
         assert options.policy_url is not None
         _validate_policy_url(options.policy_url)
@@ -174,11 +192,17 @@ def create_c2sp_tlog_verification_registry(
         if not isinstance(document, bytes):
             raise ArgumentError("c2sp-tlog policy_document must be bytes")
 
-    try:
-        policy_text = document.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise C2spTlogVerificationError("c2sp-tlog policy document must be UTF-8") from exc
-    policy = parse_c2sp_policy_file(policy_text)
+    if epoch_profile is not None:
+        policy = c2sp_tlog_trust_profile_policy(epoch_profile)
+    else:
+        assert document is not None
+        try:
+            policy_text = document.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise C2spTlogVerificationError(
+                "c2sp-tlog policy document must be UTF-8"
+            ) from exc
+        policy = parse_c2sp_policy_file(policy_text)
     if options.bundle_verifier_keys:
         checkpoint_keys = []
         for origin in policy.origins:
@@ -206,6 +230,9 @@ def create_c2sp_tlog_verification_registry(
         max_clock_skew_ms=options.max_clock_skew_ms,
         bundle_policy_document=document if has_bundle_trust else None,
         bundle_keys=list(bundle_keys),
+        bundle_epochs=(
+            epoch_profile.trust_epochs() if epoch_profile is not None else None
+        ),
         bundle_checkpoint_freshness_ms=(
             options.checkpoint_freshness_ms or max_bundle_lifetime_ms
         ),
