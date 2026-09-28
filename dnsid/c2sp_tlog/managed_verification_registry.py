@@ -33,12 +33,12 @@ _DEVELOPMENT_TRUST_PROFILE = (
 _PRODUCTION_TRUST_PROFILE = (
     b'{\n  "version": 1,\n  "scope": "public",\n'
     b'  "log_prefix": "https://log.dnsid.ai",\n  "tlog_policy": "'
-    b"log log.dnsid.ai+c4683585+AWZYC4OLE9KeRnpaI9xaHWwHUKoxgp/24ukzgVYlDwIt\\n"
+    b"log log.dnsid.ai+f10a26bc+Aeo6u4o1XvQlcRczgY462ZdIGpm/ejBC2G3vSbyYYqqY\\n"
     b"witness dnsid-witness-1 "
-    b"witness.dnsid.ai/w1+b5ea211e+BH0nGTkjF4tYpkefsQhHNg0YagPvQ6H96Y3UBbXo7a/b\\n"
+    b"witness.dnsid.ai/w1+706fd4fb+BLqX21Sx9xG5+5vK7kSK5omcu9+2il20PLdfpOp8lQOJ\\n"
     b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
-    b'    "dnsid-stream-bundle+ee2b26d2+'
-    b'AWGLBe4LhJKumyDpH8VJ0vyATB081i1HseVeETu4TONR"\n  ]\n}'
+    b'    "dnsid-stream-bundle+2e77a3f1+'
+    b'AbKj/zrAfK04/NM07Zj7kxP2YXbM5neT8ym6juXC2PXG"\n  ]\n}'
 )
 
 
