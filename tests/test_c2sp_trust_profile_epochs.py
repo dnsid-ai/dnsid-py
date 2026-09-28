@@ -167,7 +167,7 @@ def test_vector_file_format_and_coverage() -> None:
         name: len(VECTORS[name])
         for name in ("profile_cases", "checkpoint_cases", "bundle_cases", "continuity_cases")
     }
-    assert sum(counts.values()) == 73, counts
+    assert sum(counts.values()) == 79, counts
     names = {case["name"] for kind in counts for case in VECTORS[kind]}
     for required in (
         "t7-6-legacy-below-n", "t7-6-legacy-at-n", "t7-6-successor-at-n",
@@ -181,7 +181,9 @@ def test_vector_file_format_and_coverage() -> None:
         "bundle-shared-kid-policy-hash-mismatch", "forged-legacy-line-successor-accepts",
         "forged-legacy-line-precedence", "max-tree-size-decimal-point",
         "max-tree-size-exponent", "max-tree-size-boolean", "max-tree-size-string",
-        "unsafe-max-tree-size", "max-tree-size-largest",
+        "unsafe-max-tree-size", "max-tree-size-largest", "member-case-max-tree-size",
+        "member-case-min-tree-size", "member-case-scope-v2", "member-case-scope-v1",
+        "member-case-epochs", "member-case-duplicate",
     ):
         assert required in names, required
 

@@ -348,6 +348,60 @@
       }
     },
     {
+      "name": "member-case-max-tree-size",
+      "note": "Member names match exactly, including case: Max_Tree_Size is an unknown epoch member, not a bound.",
+      "document": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"Max_Tree_Size\": 5\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"min_tree_size\": 5\n    }\n  ]\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "member-case-min-tree-size",
+      "note": "Min_Tree_Size is an unknown epoch member, not a bound.",
+      "document": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"max_tree_size\": 5\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"Min_Tree_Size\": 5\n    }\n  ]\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "member-case-scope-v2",
+      "note": "Scope is an unknown member; the required scope is then missing.",
+      "document": "{\n  \"version\": 2,\n  \"Scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"max_tree_size\": 5\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"min_tree_size\": 5\n    }\n  ]\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "member-case-scope-v1",
+      "note": "The exact-case rule applies to version 1 too.",
+      "document": "{\n  \"version\": 1,\n  \"Scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n  \"bundle_verifier_keys\": [\n    \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n  ]\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "member-case-epochs",
+      "note": "Epochs is an unknown member; the required epochs is then missing.",
+      "document": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"Epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"max_tree_size\": 5\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"min_tree_size\": 5\n    }\n  ]\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
+      "name": "member-case-duplicate",
+      "note": "max_tree_size and MAX_TREE_SIZE together: the case variant is an unknown member, so the document is rejected (a case-insensitive decoder would let the second silently win).",
+      "document": "{\n  \"version\": 2,\n  \"scope\": \"public\",\n  \"log_prefix\": \"https://log.example\",\n  \"epochs\": [\n    {\n      \"id\": \"legacy\",\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"max_tree_size\": 5,\n      \"MAX_TREE_SIZE\": 9\n    },\n    {\n      \"id\": \"successor\",\n      \"tlog_policy\": \"log log.example+e2e81ee9+AduZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d\\nwitness dnsid-witness-1 witness.example/w1+f1ed8c47+BCFS+NGbeR0kRTJC4V8uq2y3z/p7al7TAJeWDgaYgdsS\\nquorum dnsid-witness-1\\n\",\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+6e5278a4+ASL8KXeS8Lb/wL/P237bDAqhTgJaNl7A40Lobjgpy3S2\"\n      ],\n      \"min_tree_size\": 5\n    }\n  ]\n}\n",
+      "expect": {
+        "result": "reject",
+        "reason": "profile_invalid"
+      }
+    },
+    {
       "name": "max-tree-size-leading-zero",
       "note": "05 is rejected: no leading zeros (it is also not valid JSON).",
       "document": "{\n  \"epochs\": [\n    {\n      \"bundle_verifier_keys\": [\n        \"dnsid-stream-bundle+5ee26202+ARfLefsrQSDysexl5BmNbgiyjoE/6wHkpACDm4XhgIDO\"\n      ],\n      \"id\": \"legacy\",\n      \"max_tree_size\": 05,\n      \"tlog_policy\": \"log log.example+9caba9f6+AUgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd\\nwitness dnsid-witness-1 witness.example/w1+0f004da6+BF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep\\nquorum dnsid-witness-1\\n\"\n    }\n  ],\n  \"log_prefix\": \"https://log.example\",\n  \"scope\": \"public\",\n  \"version\": 2\n}\n",
