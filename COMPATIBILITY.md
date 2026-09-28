@@ -59,6 +59,51 @@ is primarily determined by the `cryptography` package's binary wheel availabilit
 See [cryptography's installation docs](https://cryptography.io/en/latest/installation/)
 for platform-specific details.
 
+## Unreleased: C2SP trust profile v2 (epochs)
+
+Additive for version 1 trust profiles: their accept/reject set is unchanged.
+Behavior matches dnsid-go#40 and its shared vector
+`tests/vectors/c2sp-trust-profile-epochs-v1.json`.
+
+- `parse_c2sp_tlog_trust_profile` accepts `"version": 2`, which replaces the
+  top-level `tlog_policy` and `bundle_verifier_keys` with `epochs`: 1 to 8
+  objects, each with `id` (1-64 of `A-Z a-z 0-9 . _ -`, unique), `tlog_policy`
+  (a complete policy with exactly one `log` line, byte-identical to what that
+  epoch's log server renders, because bundles bind its SHA-256 as
+  `policy_hash`), `bundle_verifier_keys`, and optional inclusive
+  `min_tree_size` / `max_tree_size` (absent or `null` is open). A bound must be
+  a JSON number token matching `^[1-9][0-9]*$` with a value of at most 2^53-1,
+  so `5.0`, `5e0`, `true` and `"5"` are rejected. `scope` and `log_prefix`
+  stay top-level and every epoch names the same origin.
+- A checkpoint is valid when one epoch accepts it completely: that epoch's log
+  signature, tree-size bounds, witness quorum and (where freshness applies)
+  freshness. Signatures never combine across epochs. A bundle's `sig.kid`
+  selects every epoch holding that key, its `policy_hash` must equal one of
+  their policies, and its embedded checkpoint must satisfy that same epoch.
+- Trusted checkpoint state stays keyed by origin, so continuity carries across
+  epochs.
+- Trust-profile parsing (both versions) now rejects fraction, exponent and
+  `NaN`/`Infinity` number tokens anywhere in the document, and matches member
+  names exactly, including case, at the top level and in every epoch; duplicate
+  members were already rejected. No valid version 1 document is affected.
+- Stream-bundle error precedence changed for every profile, version 1 included:
+  after the `policy_hash` encoding check, the signer lookup and Ed25519
+  signature check now run before the checkpoint decode, `complete_through_size`,
+  `completeness_mode` and `policy_hash` value checks, as in dnsid-go. A bundle
+  failing several checks can therefore report a different error; the
+  accept/reject outcome is unchanged.
+- New API in `dnsid.c2sp_tlog`: `C2spTlogTrustEpoch`, `C2spTlogEpochPolicy`,
+  `C2spTlogTrustProfile.epochs` and `.trust_epochs()`,
+  `create_c2sp_tlog_epoch_policy`, `c2sp_tlog_trust_profile_policy`,
+  `C2SP_TLOG_TRUST_PROFILE_VERSION_SINGLE` / `_EPOCHS`,
+  `C2spTlogPolicy.epochs`, `CheckpointPolicyResult.trust_epoch`,
+  `VerifiedC2spStreamBundle.trust_epoch`, `C2spStreamBundleVerifierOptions.epochs`,
+  `C2spTlogReaderOptions.bundle_epochs`, and the keyword-only
+  `max_checkpoint_age_ms` of `enforce_checkpoint_policy`.
+  `C2spTlogTrustProfile.policy_document` and `.bundle_verifier_keys` now
+  default to `b""` / `[]`.
+- The managed production catalog entry is unchanged (still version 1).
+
 ## Compliance update: `5e5c783`
 
 Reviewed the committed `astra-review` changes in `dnsid-sdk-compliance`.
