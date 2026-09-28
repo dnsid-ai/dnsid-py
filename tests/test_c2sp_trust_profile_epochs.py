@@ -46,6 +46,8 @@ from dnsid.c2sp_tlog.stream_bundle import (
 
 VECTOR_PATH = Path(__file__).parent / "vectors" / "c2sp-trust-profile-epochs-v1.json"
 VECTOR_FORMAT = "dnsid-c2sp-trust-profile-epochs@v1"
+#: dnsid-go a52596f3bdc5132f8b6f37ddf77836a5e9133921 (dnsid-go#40).
+VECTOR_SHA256 = "9ee8e63a394aaa3abc55c6c0900783a444ac8ab259032a08db828ebf1abb5fdf"
 VECTORS: dict[str, Any] = json.loads(VECTOR_PATH.read_bytes())
 PARAMS: dict[str, Any] = VECTORS["parameters"]
 NOW_MS = PARAMS["now"] * 1000
@@ -163,6 +165,7 @@ def _case_id(case: dict[str, Any]) -> str:
 
 def test_vector_file_format_and_coverage() -> None:
     assert VECTORS["format"] == VECTOR_FORMAT
+    assert hashlib.sha256(VECTOR_PATH.read_bytes()).hexdigest() == VECTOR_SHA256
     counts = {
         name: len(VECTORS[name])
         for name in ("profile_cases", "checkpoint_cases", "bundle_cases", "continuity_cases")
