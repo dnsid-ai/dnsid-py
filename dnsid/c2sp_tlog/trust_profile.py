@@ -524,5 +524,4 @@ __all__ = [
     "create_c2sp_tlog_epoch_policy",
     "parse_c2sp_tlog_trust_profile",
     "validate_c2sp_bundle_verifier_keys",
-    "validate_c2sp_tlog_trust_epochs",
 ]

@@ -6,6 +6,7 @@ import datetime
 import re
 from dataclasses import dataclass, field
 
+from .canonical import _MAX_SAFE_INT
 from .checkpoint import Checkpoint
 from .errors import C2spTlogVerificationError
 from .signed_note import (
@@ -201,6 +202,8 @@ def enforce_checkpoint_policy(
         raise C2spTlogVerificationError(
             "C2SP epoch policy must carry its origins inside its epochs"
         )
+    for epoch in policy.epochs:
+        _validate_epoch_policy(epoch)
     reported: C2spTlogVerificationError | None = None
     for epoch in policy.epochs:
         if not _epoch_log_key_present(checkpoint, origin, epoch):
@@ -231,10 +234,36 @@ def policy_unchained(policy: C2spTlogPolicy, origin: str) -> bool:
     return normalized_origin_policy(policy, origin).unchained
 
 
+def _validate_epoch_policy(epoch: object) -> None:
+    """Fail closed on a malformed, directly constructed epoch."""
+    if (
+        not isinstance(epoch, C2spTlogEpochPolicy)
+        or not isinstance(epoch.id, str)
+        or not isinstance(epoch.policy, C2spTlogPolicy)
+        or epoch.policy.epochs
+    ):
+        raise C2spTlogVerificationError("invalid C2SP trust epoch policy")
+    for bound in (epoch.min_tree_size, epoch.max_tree_size):
+        if bound is not None and (type(bound) is not int or not 1 <= bound <= _MAX_SAFE_INT):
+            raise C2spTlogVerificationError(
+                "C2SP trust epoch tree-size bounds must be integers from 1 to 2^53-1"
+            )
+    if (
+        epoch.min_tree_size is not None
+        and epoch.max_tree_size is not None
+        and epoch.min_tree_size > epoch.max_tree_size
+    ):
+        raise C2spTlogVerificationError(
+            "C2SP trust epoch min_tree_size exceeds max_tree_size"
+        )
+
+
 def _epoch_log_key_present(
     checkpoint: Checkpoint, origin: str, epoch: C2spTlogEpochPolicy
 ) -> bool:
     """Report whether a signature line names this epoch's log key and key hash."""
+    if origin not in epoch.policy.origins:
+        return False
     log_keys = normalized_origin_policy(epoch.policy, origin).log_keys
     return any(
         key.key_id is not None

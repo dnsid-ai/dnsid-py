@@ -473,3 +473,223 @@ def test_forged_line_in_first_epoch_does_not_block_a_later_epoch() -> None:
 
 def _is_line_under(line: str, key_hash: bytes) -> bool:
     return base64.b64decode(line.rpartition(" ")[2])[:4] == key_hash
+
+
+@pytest.mark.parametrize(
+    "rename",
+    [("scope", "Scope"), ("epochs", "Epochs"), ("version", "VERSION")],
+)
+def test_top_level_member_names_are_exact_case(rename: tuple[str, str]) -> None:
+    text = VECTORS["profiles"]["v2-bounded"].replace(f'"{rename[0]}"', f'"{rename[1]}"', 1)
+    assert text != VECTORS["profiles"]["v2-bounded"]
+    with pytest.raises(C2spTlogParseError):
+        parse_c2sp_tlog_trust_profile(text.encode())
+
+
+@pytest.mark.parametrize(
+    "rename",
+    [("max_tree_size", "Max_Tree_Size"), ("min_tree_size", "MIN_TREE_SIZE"),
+     ("id", "ID"), ("tlog_policy", "Tlog_Policy")],
+)
+def test_epoch_member_names_are_exact_case(rename: tuple[str, str]) -> None:
+    text = VECTORS["profiles"]["v2-bounded"].replace(f'"{rename[0]}"', f'"{rename[1]}"', 1)
+    assert text != VECTORS["profiles"]["v2-bounded"]
+    with pytest.raises(C2spTlogParseError):
+        parse_c2sp_tlog_trust_profile(text.encode())
+
+
+@pytest.mark.parametrize("member", ['"scope": "public"', '"id": "legacy"', '"max_tree_size": 5'])
+def test_duplicate_members_are_rejected(member: str) -> None:
+    text = VECTORS["profiles"]["v2-bounded"]
+    assert member in text
+    with pytest.raises(C2spTlogParseError, match="duplicate"):
+        parse_c2sp_tlog_trust_profile(text.replace(member, f"{member}, {member}", 1).encode())
+
+
+# ---------------------------------------------------------------------------
+# Reader-level epoch selection with freshness (scan path, non-revocation).
+# ---------------------------------------------------------------------------
+
+
+def _seed_key(seed: int):  # noqa: ANN202
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    return ed25519.Ed25519PrivateKey.from_private_bytes(bytes([seed]) * 32)
+
+
+def _key_hash(vkey: str) -> bytes:
+    return bytes.fromhex(vkey.split("+")[1])
+
+
+def _sign_checkpoint(size: int, signers: list[tuple[int, str, int | None]]) -> str:
+    """Sign a vector-tree checkpoint with the vector's published test seeds.
+
+    Each signer is ``(seed, verifier_key, witness_time)``; a ``None`` time is a
+    log signature, otherwise a cosignature/v1 at that time.
+    """
+    root = VECTORS["tree"]["roots"][str(size)]
+    body = f"{PARAMS['origin']}\n{size}\n{root}\n"
+    lines = []
+    for seed, vkey, witness_time in signers:
+        private = _seed_key(seed)
+        name = vkey.split("+")[0]
+        if witness_time is None:
+            raw = _key_hash(vkey) + private.sign(body.encode())
+        else:
+            message = f"cosignature/v1\ntime {witness_time}\n{body}".encode()
+            raw = _key_hash(vkey) + witness_time.to_bytes(8, "big") + private.sign(message)
+        lines.append(f"— {name} {base64.b64encode(raw).decode()}")
+    return body + "\n" + "\n".join(lines) + "\n"
+
+
+class _ScanSource:
+    def __init__(self, text: str) -> None:
+        from dnsid.c2sp_tlog.stream_source import IndexedEntry, StreamEvidence
+
+        checkpoint = parse_checkpoint(text)
+        entries = [
+            IndexedEntry(index=index, data=base64.b64decode(entry))
+            for index, entry in enumerate(VECTORS["tree"]["entries"][: checkpoint.tree_size])
+        ]
+        self.evidence = StreamEvidence(
+            checkpoint=checkpoint,
+            entries=entries,
+            complete=True,
+            checkpoint_bytes=text.encode(),
+        )
+
+    def load_stream(self, reference, fqdn):  # noqa: ANN001, ANN201
+        return self.evidence
+
+    def security_guarantees(self) -> C2spResourceFetchGuarantees:
+        return C2spResourceFetchGuarantees(True, True, True, True, True)
+
+
+def _scan_reader(profile_name: str, text: str, monkeypatch) -> C2spTlogReader:  # noqa: ANN001
+    import dnsid.c2sp_tlog.reader as reader_module
+    from dnsid.c2sp_tlog import C2spTlogReaderOptions, create_c2sp_tlog_epoch_policy
+
+    monkeypatch.setattr(reader_module.time, "time", lambda: PARAMS["now"])
+    profile = parse_c2sp_tlog_trust_profile(VECTORS["profiles"][profile_name].encode())
+    return C2spTlogReader(
+        PARAMS["lr"],
+        C2spTlogReaderOptions(
+            policy=create_c2sp_tlog_epoch_policy(profile.epochs),
+            source=_ScanSource(text),
+            entity_key=_entity_key(),
+            checkpoint_freshness_ms=MAX_AGE_MS,
+        ),
+    )
+
+
+def test_reader_freshness_takes_part_in_epoch_selection(monkeypatch) -> None:  # noqa: ANN001
+    # Dual-signed at N: the legacy witness is stale, the successor witness is
+    # fresh. Freshness is part of each epoch's check, so non-revocation accepts
+    # under the successor instead of failing on the stale legacy epoch.
+    import datetime
+
+    keys = VECTORS["keys"]
+    stale = PARAMS["now"] - PARAMS["checkpoint_max_age_seconds"] - 1
+    text = _sign_checkpoint(
+        PARAMS["n"],
+        [
+            (0x31, keys["legacy_log"], None),
+            (0x41, keys["successor_log"], None),
+            (0x32, keys["legacy_witness"], stale),
+            (0x42, keys["successor_witness"], PARAMS["witness_time"]),
+        ],
+    )
+    reader = _scan_reader("v2-open", text, monkeypatch)
+    at = datetime.datetime.fromtimestamp(PARAMS["now"], tz=datetime.UTC)
+    evidence = reader.verify_non_revocation(PARAMS["fqdn"], at)
+    assert evidence.freshness_time == datetime.datetime.fromtimestamp(
+        PARAMS["witness_time"], tz=datetime.UTC
+    )
+
+    both_stale = _sign_checkpoint(
+        PARAMS["n"],
+        [
+            (0x31, keys["legacy_log"], None),
+            (0x41, keys["successor_log"], None),
+            (0x32, keys["legacy_witness"], stale),
+            (0x42, keys["successor_witness"], stale),
+        ],
+    )
+    with pytest.raises(Exception, match="stale"):
+        _scan_reader("v2-open", both_stale, monkeypatch).verify_non_revocation(
+            PARAMS["fqdn"], at
+        )
+
+
+def test_reader_applies_epoch_bounds_on_the_scan_path(monkeypatch) -> None:  # noqa: ANN001
+    import datetime
+
+    keys = VECTORS["keys"]
+    size = PARAMS["n"] + PARAMS["k"]
+    text = _sign_checkpoint(
+        size,
+        [(0x31, keys["legacy_log"], None), (0x32, keys["legacy_witness"], PARAMS["witness_time"])],
+    )
+    at = datetime.datetime.fromtimestamp(PARAMS["now"], tz=datetime.UTC)
+    with pytest.raises(Exception, match="max_tree_size"):
+        _scan_reader("v2-bounded", text, monkeypatch).verify_non_revocation(PARAMS["fqdn"], at)
+    assert _scan_reader("v2-open", text, monkeypatch).verify_non_revocation(PARAMS["fqdn"], at)
+
+
+def test_reader_requires_bundle_epochs_with_an_epoch_policy() -> None:
+    from dnsid.c2sp_tlog import (
+        C2spTlogReaderOptions,
+        C2spTlogVerificationError,
+        create_c2sp_tlog_epoch_policy,
+    )
+
+    profile = parse_c2sp_tlog_trust_profile(VECTORS["profiles"]["v2-bounded"].encode())
+    legacy = profile.epochs[0]
+    fetcher = _BundleFetcher()
+    base = {
+        "policy": create_c2sp_tlog_epoch_policy(profile.epochs),
+        "transport": fetcher,
+        "bundle_keys": list(legacy.bundle_verifier_keys),
+    }
+    # A single bundle policy under an epoch checkpoint policy would drop the
+    # epoch bounds for bundles, so it is refused.
+    with pytest.raises(C2spTlogVerificationError, match="exactly when"):
+        C2spTlogReader(
+            PARAMS["lr"],
+            C2spTlogReaderOptions(**base, bundle_policy_document=legacy.policy_document),
+        )
+    with pytest.raises(C2spTlogVerificationError, match="must match"):
+        C2spTlogReader(
+            PARAMS["lr"], C2spTlogReaderOptions(**base, bundle_epochs=profile.epochs[:1])
+        )
+    reader = C2spTlogReader(
+        PARAMS["lr"], C2spTlogReaderOptions(**base, bundle_epochs=profile.trust_epochs())
+    )
+    assert isinstance(reader._source, _FetchedStreamBundleSource)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [("max_tree_size", float("nan")), ("max_tree_size", 10**30), ("max_tree_size", "5"),
+     ("min_tree_size", True), ("policy", None)],
+)
+def test_malformed_direct_epoch_policy_fails_closed(field: str, value: object) -> None:
+    from dnsid.c2sp_tlog import C2spTlogVerificationError, create_c2sp_tlog_epoch_policy
+
+    profile = parse_c2sp_tlog_trust_profile(VECTORS["profiles"]["v2-bounded"].encode())
+    policy = create_c2sp_tlog_epoch_policy(profile.epochs)
+    setattr(policy.epochs[0], field, value)
+    case = _case("checkpoint_cases", "t7-6-legacy-above-n-capped")
+    with pytest.raises(C2spTlogVerificationError, match="trust epoch"):
+        enforce_checkpoint_policy(
+            parse_checkpoint(case["checkpoint"]), PARAMS["origin"], policy,
+            PARAMS["scope"], NOW_MS, SKEW_MS,
+        )
+
+
+def test_direct_version_1_profile_with_epochs_is_invalid() -> None:
+    profile = parse_c2sp_tlog_trust_profile(VECTORS["profiles"]["v1-legacy"].encode())
+    other = parse_c2sp_tlog_trust_profile(VECTORS["profiles"]["v2-open"].encode())
+    profile.epochs = other.epochs
+    with pytest.raises(C2spTlogParseError):
+        profile.trust_epochs()

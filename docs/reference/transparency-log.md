@@ -521,8 +521,9 @@ Supplying independently trusted ``bundle_keys`` and the exact
 ``bundle_policy_document`` prefers bounded per-domain stream bundles;
 the scanner remains the availability and consistency fallback. With an
 epoch *policy*, ``bundle_epochs`` replaces ``bundle_policy_document``
-(which must then be ``None``) and ``bundle_keys`` lists every epoch's
-bundle keys; a bundle must then satisfy one epoch completely.
+(which must then be ``None``), must list the same epochs as *policy*,
+and ``bundle_keys`` must be non-empty (the registry passes every epoch's
+keys); a bundle must then satisfy one epoch completely.
 
 ## `C2spTlogSource`
 

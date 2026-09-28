@@ -170,8 +170,9 @@ class C2spTlogReaderOptions:
     ``bundle_policy_document`` prefers bounded per-domain stream bundles;
     the scanner remains the availability and consistency fallback. With an
     epoch *policy*, ``bundle_epochs`` replaces ``bundle_policy_document``
-    (which must then be ``None``) and ``bundle_keys`` lists every epoch's
-    bundle keys; a bundle must then satisfy one epoch completely.
+    (which must then be ``None``), must list the same epochs as *policy*,
+    and ``bundle_keys`` must be non-empty (the registry passes every epoch's
+    keys); a bundle must then satisfy one epoch completely.
     """
 
     policy: C2spTlogPolicy
@@ -328,6 +329,23 @@ class C2spTlogReader(LogReader):
             raise C2spTlogVerificationError(
                 "stream bundle trust epochs require bundle_keys and no "
                 "bundle_policy_document"
+            )
+        if options.bundle_keys and bool(options.policy.epochs) != (
+            options.bundle_epochs is not None
+        ):
+            raise C2spTlogVerificationError(
+                "stream bundle trust epochs are required exactly when the "
+                "checkpoint policy has epochs"
+            )
+        if options.bundle_epochs is not None and [
+            (epoch.id, epoch.min_tree_size, epoch.max_tree_size)
+            for epoch in options.bundle_epochs
+        ] != [
+            (epoch.id, epoch.min_tree_size, epoch.max_tree_size)
+            for epoch in options.policy.epochs
+        ]:
+            raise C2spTlogVerificationError(
+                "stream bundle trust epochs must match the checkpoint policy epochs"
             )
         if options.bundle_keys:
             if options.bundle_epochs is None and not isinstance(
