@@ -667,6 +667,13 @@ def test_reader_requires_bundle_epochs_with_an_epoch_policy() -> None:
         C2spTlogReader(
             PARAMS["lr"], C2spTlogReaderOptions(**base, bundle_epochs=profile.epochs[:1])
         )
+    swapped = profile.trust_epochs()
+    swapped[0].policy_document, swapped[1].policy_document = (
+        swapped[1].policy_document,
+        swapped[0].policy_document,
+    )
+    with pytest.raises(C2spTlogVerificationError, match="must match"):
+        C2spTlogReader(PARAMS["lr"], C2spTlogReaderOptions(**base, bundle_epochs=swapped))
     reader = C2spTlogReader(
         PARAMS["lr"], C2spTlogReaderOptions(**base, bundle_epochs=profile.trust_epochs())
     )

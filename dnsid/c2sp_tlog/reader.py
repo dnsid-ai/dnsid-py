@@ -51,6 +51,7 @@ from .merkle import merkle_root_from_entries
 from .policy import (
     C2spTlogPolicy,
     enforce_checkpoint_policy,
+    parse_c2sp_policy_file,
     policy_unchained,
 )
 from .proof import TlogProofV1, verify_c2sp_tlog_proof
@@ -170,8 +171,9 @@ class C2spTlogReaderOptions:
     ``bundle_policy_document`` prefers bounded per-domain stream bundles;
     the scanner remains the availability and consistency fallback. With an
     epoch *policy*, ``bundle_epochs`` replaces ``bundle_policy_document``
-    (which must then be ``None``), must list the same epochs as *policy*,
-    and ``bundle_keys`` must be non-empty (the registry passes every epoch's
+    (which must then be ``None``) and must list the same epochs as *policy*
+    (same ids, bounds and parsed policy documents, in order), and
+    ``bundle_keys`` must be non-empty (the registry passes every epoch's
     keys); a bundle must then satisfy one epoch completely.
     """
 
@@ -338,10 +340,20 @@ class C2spTlogReader(LogReader):
                 "checkpoint policy has epochs"
             )
         if options.bundle_epochs is not None and [
-            (epoch.id, epoch.min_tree_size, epoch.max_tree_size)
+            (
+                epoch.id,
+                epoch.min_tree_size,
+                epoch.max_tree_size,
+                _epoch_policy_fingerprint(epoch.policy_document),
+            )
             for epoch in options.bundle_epochs
         ] != [
-            (epoch.id, epoch.min_tree_size, epoch.max_tree_size)
+            (
+                epoch.id,
+                epoch.min_tree_size,
+                epoch.max_tree_size,
+                _policy_fingerprint(epoch.policy),
+            )
             for epoch in options.policy.epochs
         ]:
             raise C2spTlogVerificationError(
@@ -1295,6 +1307,22 @@ class C2spTlogReader(LogReader):
     @staticmethod
     def _now_ms() -> float:
         return time.time() * 1000
+
+
+def _epoch_policy_fingerprint(document: object) -> object:
+    if not isinstance(document, bytes):
+        return None
+    try:
+        return _policy_fingerprint(parse_c2sp_policy_file(document.decode("utf-8")))
+    except (C2spTlogError, UnicodeDecodeError):
+        return None
+
+
+def _policy_fingerprint(policy: object) -> object:
+    """Compare policies by their parsed trust content (keys, quorum)."""
+    if not isinstance(policy, C2spTlogPolicy) or policy.epochs:
+        return object()
+    return repr(policy)
 
 
 def _event_ref(lr: str, index: int) -> str:
