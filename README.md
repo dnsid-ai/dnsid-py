@@ -409,7 +409,7 @@ optional inclusive `min_tree_size` / `max_tree_size`, so the log's signing,
 witness and bundle keys can rotate together at a tree size. A checkpoint or
 bundle is accepted only when it satisfies one epoch completely; keys are never
 mixed across epochs. Trusted checkpoint state stays keyed by origin, so
-continuity carries across the rotation. Version 1 profiles are unchanged.
+continuity carries across the rotation. Version 1 profiles keep their accept/reject behavior.
 
 For an explicit application decision to trust DNSid-managed logs,
 use the separately named managed factory:
