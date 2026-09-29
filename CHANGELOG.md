@@ -1,4 +1,15 @@
 
+## [0.23.1] - 2026-09-29
+
+### Chores
+
+- chore(deps): bump github/codeql-action/analyze ([#21](https://github.com/dnsid-ai/dnsid-py/pull/21))
+- chore(deps): bump github/codeql-action/init ([#18](https://github.com/dnsid-ai/dnsid-py/pull/18))
+- chore(deps): bump anchore/sbom-action ([#20](https://github.com/dnsid-ai/dnsid-py/pull/20))
+- chore(deps): bump github/codeql-action/autobuild ([#17](https://github.com/dnsid-ai/dnsid-py/pull/17))
+- chore(deps): bump taiki-e/install-action from 2.87.12 to 2.87.16 ([#19](https://github.com/dnsid-ai/dnsid-py/pull/19))
+
+
 ## [0.23.0] - 2026-09-28
 
 ### Features
