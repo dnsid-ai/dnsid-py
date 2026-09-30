@@ -1,4 +1,12 @@
 
+## [0.23.2] - 2026-09-30
+
+### Bug Fixes
+
+- fix: run A2A example with short local .test domains ([#42](https://github.com/dnsid-ai/dnsid-py/pull/42))
+- fix: leftover sandbox example ([#44](https://github.com/dnsid-ai/dnsid-py/pull/44))
+
+
 ## [0.23.1] - 2026-09-29
 
 ### Chores
