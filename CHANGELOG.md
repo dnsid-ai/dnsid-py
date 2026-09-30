@@ -1,4 +1,11 @@
 
+## [0.23.3] - 2026-09-30
+
+### Chores
+
+- chore(deps): bump urllib3 from 2.7.0 to 2.8.0 ([#45](https://github.com/dnsid-ai/dnsid-py/pull/45))
+
+
 ## [0.23.2] - 2026-09-30
 
 ### Bug Fixes
