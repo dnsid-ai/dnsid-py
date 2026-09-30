@@ -14,7 +14,10 @@ from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 # loaded log trust the example trusts DNSid's managed production log
 # (log.dnsid.ai), whose embedded trust profile enables signed per-domain stream
 # bundles instead of a full scan.
-domain = sys.argv[1] if len(sys.argv) == 2 else "2a7bcd5330fd.sandbox.dnsid.ai"
+if len(sys.argv) != 2:
+    print(f"usage: {sys.argv[0]} <dnsid-domain>", file=sys.stderr)
+    raise SystemExit(2)
+domain = sys.argv[1]
 
 try:
     loaded = load_environment()

@@ -1,11 +1,10 @@
 # DNSid validate-domain example
 
 Minimal Python example that verifies a DNSid-enabled domain whose lifecycle log
-uses DNSid's managed production C2SP log (`https://log.dnsid.ai`). With no
-argument it verifies the DNSid sandbox identity `2a7bcd5330fd.sandbox.dnsid.ai`:
+uses DNSid's managed production C2SP log (`https://log.dnsid.ai`). Pass the
+second-level domain to verify explicitly:
 
 ```sh
-python examples/validate-domain/main.py
 python examples/validate-domain/main.py your-agent.example
 ```
 
