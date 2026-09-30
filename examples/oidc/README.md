@@ -33,10 +33,14 @@ Configuration (environment variables, all optional):
 
 | Variable | Default | Description |
 |---|---|---|
-| `DNSID_EXAMPLE_DOMAIN` | `agent-a.org-a.example` | Agent FQDN (`iss`/`sub`/`fqdn` claims) |
+| `DNSID_EXAMPLE_DOMAIN` | `agent-a.example` | Agent FQDN (`iss`/`sub`/`fqdn` claims) |
 | `DNSID_EXAMPLE_ISSUER` | `https://oidc.dnsid.ai` | OIDC issuer (assertion audience) |
-| `DNSID_EXAMPLE_AUDIENCE` | `https://gateway.org-b.example` | Audience for the minted token |
+| `DNSID_EXAMPLE_AUDIENCE` | `https://gateway.example` | Audience for the minted token |
 | `DNSID_EXAMPLE_MINT` | unset | Set to `1` to perform the live token exchange |
+
+The `.example` defaults are offline placeholders. Live exchange requires a
+published agent domain with the key in `keys.json`, a reachable issuer that
+accepts that identity, and the intended service audience.
 
 Note: The key file is written to `./keys.json` in the current directory.
 Delete that file to reset the example.

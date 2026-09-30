@@ -1,7 +1,7 @@
 # DNSid A2A example (Python)
 
 Runs two A2A agents, Alice and Bob, on the local DNSid testnet. Each agent gets a DNSid
-identity from `dnsid testnet run` and exchanges A2A 1.0 JSON-RPC messages signed with
+identity from `dnsid local run` and exchanges A2A 1.0 JSON-RPC messages signed with
 RFC 9421 HTTP Message Signatures.
 
 Mirrors [dnsid-ts/examples/a2a](../../../dnsid-ts/examples/a2a). Python and TypeScript agents
@@ -19,8 +19,7 @@ pip install fastapi uvicorn dnspython a2a-sdk sse-starlette
 
 Install the `dnsid` CLI ([installation
 guide](https://docs.dnsid.ai/cli-installation)) and make sure Docker is
-running. The CLI manages the testnet directly. By default it pulls `ghcr.io/identity-digital/dnsid-testnet-registry:latest`
-(override with `DNSID_TESTNET_IMAGE`).
+running. The CLI owns the local testnet.
 
 ## Run
 
@@ -29,27 +28,30 @@ ISSUANCE entries before starting either agent (`dnsid log issue` is
 idempotent, so this is safe to rerun for existing identities):
 
 ```sh
-dnsid testnet up
-dnsid testnet agent ensure bob --upstream http://localhost:3002 -- \
-  dnsid log issue --domain bob.dev.dnsid.test
-dnsid testnet agent ensure alice --upstream http://localhost:3001 -- \
-  dnsid log issue --domain alice.dev.dnsid.test
+CLI="${DNSID_CLI:-dnsid}"
+"$CLI" local up --zone test
+"$CLI" local agent ensure bob --upstream http://localhost:3002 \
+  --cu https://bob.test/.well-known/agent-card.json -- \
+  "$CLI" log issue --domain bob.test
+"$CLI" local agent ensure alice --upstream http://localhost:3001 \
+  --cu https://alice.test/.well-known/agent-card.json -- \
+  "$CLI" log issue --domain alice.test
 ```
 
 Then, from the `dnsid-py` project root, in two terminal panes:
 
 ```sh
 # Terminal 1 — start Bob (stays running, listens on :3002)
-dnsid testnet run bob --upstream http://localhost:3002 -- \
+"${DNSID_CLI:-dnsid}" local run bob --port 3002 -- \
   python examples/a2a/main.py
 
 # Terminal 2 — start Alice, send one message to Bob, then exit
-dnsid testnet run alice --upstream http://localhost:3001 -- \
-  python examples/a2a/main.py bob.dev.dnsid.test
+"${DNSID_CLI:-dnsid}" local run alice --port 3001 -- \
+  python examples/a2a/main.py bob.test
 ```
 
-`dnsid testnet run` starts the local testnet if needed, creates/reuses agent identity
-files under `~/.dnsid-testnet`, registers each local upstream, and injects the full
+`dnsid local run` starts the local testnet if needed, creates/reuses agent identity
+files under `~/.dnsid-local`, registers each local upstream, and injects the full
 `DNSID_*` environment: DNS routing (`DNSID_DNS_SERVER`), TLS trust (`DNSID_CA_BUNDLE`),
 the registry session credential (`DNSID_API_KEY`), the independently trusted C2SP
 policy location (`DNSID_LOG_POLICY_URL`), and the provisioned identity directory
@@ -63,11 +65,11 @@ trust independently configured rather than discovering it from log-provided data
 The CLI also owns the testnet lifecycle and state:
 
 ```sh
-dnsid testnet up
-dnsid testnet agent list
-dnsid testnet env alice
-dnsid testnet down
-dnsid testnet reset --hard
+dnsid local up --zone test
+dnsid local agent list
+dnsid local env alice
+dnsid local down
+dnsid local reset --hard
 ```
 
 Or run `bash examples/a2a/run.sh` to execute the whole flow (testnet up, Bob, one
@@ -78,23 +80,23 @@ set `DNSID_CLI=/path/to/dnsid`.
 
 **Bob's terminal** (stays running):
 ```
-bob.dev.dnsid.test -> https://bob.dev.dnsid.test
-bob.dev.dnsid.test published identity record
+bob -> https://bob.test
+bob.test published _dnsid.bob.test
 ```
 Then when Alice connects:
 ```
-[bob.dev.dnsid.test] verified signed POST / from alice.dev.dnsid.test
-[bob.dev.dnsid.test] handling message from verified sender alice.dev.dnsid.test: "hello from alice.dev.dnsid.test"
-[bob.dev.dnsid.test] sending response to alice.dev.dnsid.test: "[from: bob.dev.dnsid.test; verified sender: alice.dev.dnsid.test] hello from alice.dev.dnsid.test"
+[bob.test] verified signed POST / from alice.test
+[bob.test] handling message from verified sender alice.test: "hello from alice.test"
+[bob.test] sending response to alice.test: "[from: bob.test; verified sender: alice.test] hello from alice.test"
 ```
 
 **Alice's terminal** (exits after sending):
 ```
-alice.dev.dnsid.test -> https://alice.dev.dnsid.test
-alice.dev.dnsid.test published identity record
-verified: alice.dev.dnsid.test -> bob.dev.dnsid.test
+alice -> https://alice.test
+alice.test published _dnsid.alice.test
+verified: alice.test -> bob.test
 
-reply: "[from: bob.dev.dnsid.test; verified sender: alice.dev.dnsid.test] hello from alice.dev.dnsid.test"
+reply: "[from: bob.test; verified sender: alice.test] hello from alice.test"
 ```
 
 On subsequent runs (without a testnet reset), both agents show `already published (READY)`

@@ -158,10 +158,12 @@ def _stub_log_registry() -> LogRegistry:
 
 
 class TestVerifyDomain:
-    def test_verify_domain_success(self, ec_pair, ec_provider):
+    def test_verify_domain_success_2ld(self, ec_pair, ec_provider):
         private, pub_jwk = ec_pair
-        target = "service.example.com"
-        txt_raw = _make_signed_txt_record(private, pub_jwk, target)
+        target = "example.com"
+        txt_raw = _make_signed_txt_record(
+            private, pub_jwk, target, ek=f"https://{target}/.well-known/entity-jwks.json"
+        )
 
         dns_resolver = MockDNSResolver(
             {

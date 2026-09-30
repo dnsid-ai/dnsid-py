@@ -56,7 +56,7 @@ def main() -> None:
     bot_auth = WebBotAuthProfile(
         resolver=_DummyResolver(),
         key_provider=key_provider,
-        domain="acmebot.acme.example",
+        domain="acmebot.example",
         bot=bot,
     )
 

@@ -120,7 +120,7 @@ async def _register_and_publish(
 
 
 async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, object]:
-    # `dnsid testnet run` exports the SDK environment: identity fields, DNS
+    # `dnsid local run` exports the SDK environment: identity fields, DNS
     # routing (DNSID_DNS_SERVER), TLS trust (DNSID_CA_BUNDLE), the trusted C2SP
     # policy (DNSID_LOG_POLICY_URL), the key directory (DNSID_CONFIG_DIR), and
     # the registry credential (DNSID_API_KEY). The registry client reads the
@@ -130,7 +130,7 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, object]:
     if not os.environ.get("DNSID_API_KEY", "").strip():
         raise SystemExit(
             "DNSID_API_KEY is required to register with the registry. Run via "
-            "`dnsid testnet run` or export it before starting the agent "
+            "`dnsid local run` or export it before starting the agent "
             "(see examples/a2a/README.md)."
         )
 
@@ -139,7 +139,7 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, object]:
     loaded = load_environment()
     identity = loaded.dnsid.identity
     if identity is None:
-        raise SystemExit("DNSID_DOMAIN is required; run via `dnsid testnet run`")
+        raise SystemExit("DNSID_DOMAIN is required; run via `dnsid local run`")
     overlay = LoadedConfig()
     if not identity.capabilities_url:
         base = (public_url or f"https://{identity.domain}").rstrip("/")

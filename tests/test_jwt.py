@@ -71,17 +71,17 @@ class TestCreateJWT:
         assert header["typ"] == "JWT"
 
     def test_claims_iss_sub_equal_domain(self, ec_provider):
-        jose = _build_profile(ec_provider)
+        jose = _build_profile(ec_provider, domain="example.com")
         token = jose.create_jwt(JWTOptions(audience="other.example.com"))
         _, claims = _decode_jwt(token)
-        assert claims["iss"] == "agent.example.com"
-        assert claims["sub"] == "agent.example.com"
+        assert claims["iss"] == "example.com"
+        assert claims["sub"] == "example.com"
 
     def test_claims_aud_is_audience(self, ec_provider):
         jose = _build_profile(ec_provider)
-        token = jose.create_jwt(JWTOptions(audience="other.example.com"))
+        token = jose.create_jwt(JWTOptions(audience="other.example"))
         _, claims = _decode_jwt(token)
-        assert claims["aud"] == "other.example.com"
+        assert claims["aud"] == "other.example"
 
     def test_claims_exp_in_future(self, ec_provider):
         jose = _build_profile(ec_provider)

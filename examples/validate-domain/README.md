@@ -6,8 +6,10 @@ argument it verifies the DNSid sandbox identity `2a7bcd5330fd.sandbox.dnsid.ai`:
 
 ```sh
 python examples/validate-domain/main.py
-python examples/validate-domain/main.py your-agent.example.com
+python examples/validate-domain/main.py your-agent.example
 ```
+
+Replace `your-agent.example` with a published DNSid-enabled domain.
 
 The example opts into `create_dnsid_managed_verification_registry`, whose
 embedded trust profile carries the log policy and the stream-bundle verifier
@@ -16,12 +18,16 @@ the whole log. Applications with different trust should select an independently
 trusted policy through `C2spTlogVerificationOptions`. Never derive the policy
 location from an unverified identity record, its `lr`, or its log prefix.
 
-Against the local registry, evaluate `dnsid local env` first; it exports
-`DNSID_LOG_POLICY_URL`, `DNSID_DNS_SERVER`, `DNSID_CA_BUNDLE`, and
-`DNSID_PRIVATE_HOSTS=.test`, which `load_environment()` reads and `construct_identity_manager()`
-wires into the verification-only manager and its policy fetch.
+Against the local registry, provision `bob.test` and its ISSUANCE, then evaluate
+`dnsid local env bob`. The agent-specific form includes the identity and key
+paths as well as `DNSID_LOG_POLICY_URL`, `DNSID_DNS_SERVER`, `DNSID_CA_BUNDLE`, and
+`DNSID_PRIVATE_HOSTS=.test`, which `load_environment()` reads and
+`construct_identity_manager()` wires into the manager and its policy fetch.
 
 ```sh
-eval "$(dnsid local env)"
-python examples/validate-domain/main.py bob.dev.dnsid.test
+dnsid local up --zone test
+dnsid local agent ensure bob --upstream http://localhost:3002 -- \
+  dnsid log issue --domain bob.test
+eval "$(dnsid local env bob)"
+python examples/validate-domain/main.py bob.test
 ```

@@ -16,7 +16,7 @@ cd "$(git rev-parse --show-toplevel)"
 DNSID_CLI="${DNSID_CLI:-dnsid}"
 BOB_PORT=3002
 ALICE_PORT=3001
-ZONE=dev.dnsid.test
+ZONE=test
 BOB_CU="https://bob.${ZONE}/.well-known/agent-card.json"
 ALICE_CU="https://alice.${ZONE}/.well-known/agent-card.json"
 BOB_LOG=$(mktemp /tmp/dnsid-bob-XXXXXX.log)
@@ -48,21 +48,21 @@ kill_our_agents
 # 1. Start the testnet (no-op if already running) and prepare identities
 # ---------------------------------------------------------------------------
 echo "==> starting testnet"
-"${DNSID_CLI}" testnet up
+"${DNSID_CLI}" local up --zone "${ZONE}"
 
 # Submit each agent's operationally countersigned C2SP ISSUANCE entry.
 # `dnsid log issue` is idempotent, so this is safe to rerun.
 echo "==> preparing C2SP issuance for Bob and Alice"
-"${DNSID_CLI}" testnet agent ensure bob --upstream "http://localhost:${BOB_PORT}" --cu "${BOB_CU}" -- \
+"${DNSID_CLI}" local agent ensure bob --upstream "http://localhost:${BOB_PORT}" --cu "${BOB_CU}" -- \
     "${DNSID_CLI}" log issue --domain "bob.${ZONE}"
-"${DNSID_CLI}" testnet agent ensure alice --upstream "http://localhost:${ALICE_PORT}" --cu "${ALICE_CU}" -- \
+"${DNSID_CLI}" local agent ensure alice --upstream "http://localhost:${ALICE_PORT}" --cu "${ALICE_CU}" -- \
     "${DNSID_CLI}" log issue --domain "alice.${ZONE}"
 
 # ---------------------------------------------------------------------------
 # 2. Start Bob in the background
 # ---------------------------------------------------------------------------
 echo "==> starting Bob on :${BOB_PORT}"
-"${DNSID_CLI}" testnet run bob --upstream "http://localhost:${BOB_PORT}" --cu "${BOB_CU}" -- \
+"${DNSID_CLI}" local run bob --port "${BOB_PORT}" -- \
     python -u examples/a2a/main.py \
     >"${BOB_LOG}" 2>&1 &
 BOB_PID=$!
@@ -76,7 +76,7 @@ for i in $(seq 1 60); do
         cat "${BOB_LOG}" >&2
         exit 1
     fi
-    if grep -q "-> https://" "${BOB_LOG}" 2>/dev/null; then
+    if grep -q -- "-> https://" "${BOB_LOG}" 2>/dev/null; then
         break
     fi
     echo -n "."
@@ -105,7 +105,7 @@ echo " done"
 # 3. Run Alice — sends one message to Bob then exits
 # ---------------------------------------------------------------------------
 echo "==> starting Alice on :${ALICE_PORT} — sending hello to Bob"
-"${DNSID_CLI}" testnet run alice --upstream "http://localhost:${ALICE_PORT}" --cu "${ALICE_CU}" -- \
+"${DNSID_CLI}" local run alice --port "${ALICE_PORT}" -- \
     python -u examples/a2a/main.py "bob.${ZONE}"
 
 echo ""

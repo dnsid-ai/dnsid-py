@@ -9,9 +9,9 @@ Demonstrates the two halves of OIDCProfile:
    enable with DNSID_EXAMPLE_MINT=1.
 
 Configuration via environment variables (defaults in parentheses):
-- DNSID_EXAMPLE_DOMAIN   agent FQDN (agent-a.org-a.example)
+- DNSID_EXAMPLE_DOMAIN   agent FQDN (agent-a.example)
 - DNSID_EXAMPLE_ISSUER   OIDC issuer (https://oidc.dnsid.ai)
-- DNSID_EXAMPLE_AUDIENCE token audience (https://gateway.org-b.example)
+- DNSID_EXAMPLE_AUDIENCE token audience (https://gateway.example)
 - DNSID_EXAMPLE_MINT     set to 1 to perform the live token exchange
 """
 
@@ -36,9 +36,9 @@ from dnsid.models import VerifiedDomain
 
 KEY_STORE_PATH = Path("keys.json")
 
-DOMAIN = os.environ.get("DNSID_EXAMPLE_DOMAIN", "agent-a.org-a.example")
+DOMAIN = os.environ.get("DNSID_EXAMPLE_DOMAIN", "agent-a.example")
 ISSUER = os.environ.get("DNSID_EXAMPLE_ISSUER", "https://oidc.dnsid.ai")
-AUDIENCE = os.environ.get("DNSID_EXAMPLE_AUDIENCE", "https://gateway.org-b.example")
+AUDIENCE = os.environ.get("DNSID_EXAMPLE_AUDIENCE", "https://gateway.example")
 
 
 def decode_jwt_part(jwt: str, part: int) -> object:

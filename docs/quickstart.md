@@ -30,11 +30,15 @@ pip install "dnsid @ git+https://github.com/dnsid-ai/dnsid-py@main"
 
 Before using DNSid, you need:
 
-1. **A domain name** — Your agent's FQDN (e.g. `my-agent.example.com`)
+1. **A domain name** — Your agent's FQDN (e.g. `my-agent.example`)
 2. **A signing key** — An Ed25519 or P-256 key pair (the SDK can generate one for you)
 3. **DNS TXT record** — A `_dnsid.<your-domain>` TXT record published in DNS
 4. **JWKS endpoint** — Your public keys served at `https://<your-domain>/.well-known/jwks.json`
 5. **Status endpoint** — An HTTPS URL returning your agent's lifecycle status
+
+The `.example` names below are placeholders; replace them with published DNSid
+domains for networked workflows. For a local `.test` identity, see the
+[validate-domain example](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/validate-domain/README.md).
 
 For local development and testing, use `LocalKeyProvider.generate()` for Ed25519 or
 `LocalKeyProvider.generate("ES256")` for P-256.
@@ -53,7 +57,7 @@ from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 # SDK's pinned DNSid-managed public logs; other logs need their own reader.
 manager = IdentityManager(
     DnsidConfig(verification=VerificationConfig(
-        trusted_entities=[TrustedEntity("example.com")],
+        trusted_entities=[TrustedEntity("payments-agent.example")],
     )),
     deps=IdentityManagerDependencies(
         log_registry=create_dnsid_managed_verification_registry(),
@@ -61,7 +65,7 @@ manager = IdentityManager(
 )
 
 # Resolve and verify a counterparty's DNSid identity
-verified = manager.verify_domain("payments-agent.example.com")
+verified = manager.verify_domain("payments-agent.example")
 
 print(f"Domain: {verified.domain}")
 print(f"State: {verified.cached_state()}")
@@ -102,10 +106,10 @@ from dnsid.jose import JoseProfile
 key_provider = LocalKeyProvider.load(Path.home() / ".dnsid" / "keys.json", create_if_missing=True)
 config = DnsidConfig(
     identity=IdentityConfig(
-        domain="billing-agent.example.com",
-        governance_id="example.com",
+        domain="billing-agent.example",
+        governance_id="billing-agent.example",
         log_ref=os.environ["DNSID_LOG_REF"],
-        status_url="https://billing-agent.example.com/status",
+        status_url="https://billing-agent.example/status",
     ),
 )
 manager = IdentityManager(config, key_provider)
@@ -114,13 +118,13 @@ manager = IdentityManager(config, key_provider)
 jose = JoseProfile.from_identity_manager(manager)
 
 # Sign a JWT for a specific audience
-token = jose.create_jwt(JWTOptions(audience="payments-agent.example.com"))
+token = jose.create_jwt(JWTOptions(audience="payments-agent.example"))
 print(f"Signed JWT: {token}")
 
 # You can also include custom claims
 token_with_claims = jose.create_jwt(
     JWTOptions(
-        audience="payments-agent.example.com",
+        audience="payments-agent.example",
         additional_claims={"action": "charge", "amount": 100},
     )
 )
@@ -154,7 +158,7 @@ jose = JoseProfile.from_identity_manager(manager, config=JoseConfig())
 incoming_token = "eyJ..."  # JWT received from the counterparty
 
 try:
-    verified = jose.verify_jwt(incoming_token, expected_audience="payments-agent.example.com")
+    verified = jose.verify_jwt(incoming_token, expected_audience="payments-agent.example")
     print(f"Verified issuer: {verified.domain}")
     print(f"Issuer state: {verified.cached_state()}")
     print(f"Governance: {verified.record.gi}")
@@ -178,7 +182,7 @@ from dnsid.exceptions import (
 from dnsid.enums import VerificationCode
 
 try:
-    verified = manager.verify_domain("some-agent.example.com")
+    verified = manager.verify_domain("some-agent.example")
 except VerificationError as e:
     match e.code:
         case VerificationCode.DNS_RESOLUTION:

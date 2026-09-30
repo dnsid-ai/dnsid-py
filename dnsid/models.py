@@ -165,7 +165,7 @@ class TransportConfig:
             SDK-managed HTTPS fetches.
         private_address_hosts: Hostnames whose SDK-managed HTTPS destinations
             may resolve to loopback or private-use (RFC 1918/4193) addresses.
-            An exact entry (``"registry.dnsid.test"``) matches that host only; a
+            An exact entry (``"registry.test"``) matches that host only; a
             leading-dot entry (``".test"``) matches ``test`` and every name
             beneath it, label-bounded and case-insensitive. Link-local,
             multicast, reserved, and unspecified addresses stay rejected, as does
