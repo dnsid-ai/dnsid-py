@@ -11,11 +11,11 @@ When a peer FQDN is given as an argument, Alice sends one signed message to
 that peer then exits.  Without an argument the agent stays running (Bob mode).
 
 Usage:
-    dnsid testnet run bob --upstream http://localhost:3002 -- \
+    dnsid local run bob --port 3002 -- \
         python examples/a2a/main.py
 
-    dnsid testnet run alice --upstream http://localhost:3001 -- \
-        python examples/a2a/main.py bob.dev.dnsid.test
+    dnsid local run alice --port 3001 -- \
+        python examples/a2a/main.py bob.test
 
 All DNSID_* variables must be present in the process environment before startup.
 DNS routing and TLS trust are wired automatically from DNSID_DNS_SERVER and
