@@ -63,11 +63,11 @@ def main() -> None:
     jose = JoseProfile(
         resolver=_DummyResolver(),
         key_provider=key_provider,
-        domain="alice.example.com",
+        domain="alice.example",
     )
     jwt = jose.create_jwt(
         JWTOptions(
-            audience="bob.example.com",
+            audience="bob.example",
             additional_claims={"example": "local-key-provider"},
         )
     )

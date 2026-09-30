@@ -35,6 +35,8 @@ For this local signing identity, set `DNSID_LOG_REF` to its persisted,
 registry-provided `c2sp-tlog:public:` reference on a supported DNSid-managed
 log. A verification-only manager needs no local identity or reference (see the
 [Quickstart](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/quickstart.md)).
+The `.example` domains below are placeholders; networked flows require published
+DNSid identities. Local CLI examples use the `.test` zone.
 
 ```python
 import os
@@ -45,9 +47,9 @@ from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 
 manager = IdentityManager(
     DnsidConfig(identity=IdentityConfig(
-        domain="billing-agent.acme.example", governance_id="acme.example",
+        domain="billing-agent.example", governance_id="billing-agent.example",
         log_ref=os.environ["DNSID_LOG_REF"],  # persisted c2sp-tlog identity-instance reference
-        status_url="https://billing-agent.acme.example/status",
+        status_url="https://billing-agent.example/status",
     )),
     LocalKeyProvider.load(Path("~/.dnsid/keys.json").expanduser(), create_if_missing=True),
     # Explicitly trust the SDK's pinned DNSid-managed public log roots.
@@ -55,7 +57,7 @@ manager = IdentityManager(
 )
 
 # For a counterparty using a supported DNSid-managed public log:
-vd = manager.verify_domain("payments-agent.acme.example")
+vd = manager.verify_domain("payments-agent.example")
 print(vd.domain, vd.cached_state())
 ```
 
@@ -97,7 +99,7 @@ from dnsid.jose import JoseProfile
 jose = JoseProfile.from_identity_manager(manager)
 
 # Create a signed JWT to send to a counterparty
-token = jose.create_jwt(JWTOptions(audience="payments-agent.acme.example"))
+token = jose.create_jwt(JWTOptions(audience="payments-agent.example"))
 
 # Verify a JWT received from a counterparty
 vd = jose.verify_jwt(token)
@@ -129,10 +131,10 @@ key_provider = LocalKeyProvider.load(Path("/var/lib/dnsid/agent-signing-key.jwk"
 manager = IdentityManager(
     DnsidConfig(
         identity=IdentityConfig(
-            domain="agent-a.org-a.example",
-            governance_id="org-a.example",
+            domain="agent-a.example",
+            governance_id="agent-a.example",
             log_ref=os.environ["DNSID_LOG_REF"],  # this agent's persisted c2sp-tlog reference
-            status_url="https://agent-a.org-a.example/status",
+            status_url="https://agent-a.example/status",
         ),
     ),
     key_provider,
@@ -149,7 +151,7 @@ with httpx.Client(timeout=5.0) as http:
     )
     token_response = oidc.mint_oidc_token(
         OIDCTokenExchangeOptions(
-            audience="https://gateway.org-b.example",
+            audience="https://gateway.example",
             scope=["openid", "dnsid"],
         )
     )
@@ -175,7 +177,7 @@ from dnsid.http_signatures import HttpSignatureProfile
 http_sig = HttpSignatureProfile.from_identity_manager(manager)
 
 # Sign an outbound request
-req = HttpRequest(method="POST", url="https://payments-agent.acme.example/charge", body=b'{"amount":100}')
+req = HttpRequest(method="POST", url="https://payments-agent.example/charge", body=b'{"amount":100}')
 signed = http_sig.create_signed_http_request(req)
 
 # Verify an inbound request
@@ -231,7 +233,7 @@ result = verifier.verify_bot_request(
     headers={"Authorization": "Bearer <jwt-from-request>"},
     expected_audience="https://my-server.example",  # configured server origin, not request Host
 )
-print(result.domain)       # "acmebot.acme.example"
+print(result.domain)       # "acmebot.example"
 print(result.bot.name)     # "AcmeSearchBot"
 print(result.bot.purpose)  # "search-indexing"
 ```
@@ -250,12 +252,12 @@ from dnsid import DnsidConfig, IdentityConfig, IdentityManager, IdentityManagerD
 agent_key = LocalKeyProvider.generate()
 entity_key = LocalKeyProvider.generate()
 config = DnsidConfig(identity=IdentityConfig(
-    domain="billing-agent.acme.example",
-    governance_id="acme.example",
+    domain="billing-agent.example",
+    governance_id="billing-agent.example",
     log_ref=os.environ["DNSID_LOG_REF"],  # assigned/persisted identity-instance reference
-    status_url="https://billing-agent.acme.example/status",
-    ku_url="https://billing-agent.acme.example/.well-known/jwks.json",
-    ek_url="https://acme.example/.well-known/jwks.json",
+    status_url="https://billing-agent.example/status",
+    ku_url="https://billing-agent.example/.well-known/jwks.json",
+    ek_url="https://billing-agent.example/.well-known/entity-jwks.json",
 ))
 manager = IdentityManager(config, agent_key, IdentityManagerDependencies(
     entity_key_provider=entity_key,
@@ -266,7 +268,7 @@ ku_jwks = manager.get_key_set()
 ek_jwks = manager.get_entity_key_set()
 
 # Publish only after the registry has accepted the bilateral ISSUANCE.
-txt_record = manager.create_txt_record()  # then publish at _dnsid.billing-agent.acme.example
+txt_record = manager.create_txt_record()  # then publish at _dnsid.billing-agent.example
 ```
 
 The bundled C2SP registry is **read-only**: it cannot append the ISSUANCE.
@@ -445,7 +447,7 @@ and [examples/a2a/startup.py](https://github.com/dnsid-ai/dnsid-py/blob/main/exa
 `dnsid local up` at `http://127.0.0.1:7755` unless told otherwise:
 
 ```sh
-dnsid local up                                # local registry, DNS, and CA in Docker
+dnsid local up --zone test                    # local registry, DNS, and CA in Docker
 dnsid local run my-agent -- python app.py     # registers my-agent if needed, runs with DNSID_* set
 ```
 
@@ -454,8 +456,8 @@ from dnsid import AgentRegistrationInput, registry_client_from_environment
 
 # DNSID_REGISTRY_URL and DNSID_API_KEY when set; otherwise the local registry, no credential.
 client = registry_client_from_environment()
-client.register_agent(AgentRegistrationInput(domain="agent.example.com"))
-client.verify_agent("agent.example.com")
+client.register_agent(AgentRegistrationInput(domain="my-agent.test"))
+client.verify_agent("my-agent.test")
 ```
 
 To export the same variables into your shell instead of wrapping one command:
@@ -470,7 +472,7 @@ from dnsid import RegistryClient
 
 client = RegistryClient("https://api.dnsid.ai", api_key="<console-issued key>")
 # Legacy status reads need no credential:
-RegistryClient("https://api.dnsid.ai").get_agent_status("agent.example.com")
+RegistryClient("https://api.dnsid.ai").get_agent_status("agent.example")
 ```
 
 `base_url` must be HTTPS, or HTTP on loopback. Constructors never read the
@@ -522,7 +524,7 @@ inspect the registry-managed signed record (effective `ku`/`su`).
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `domain` | yes | — | Agent FQDN (e.g. `billing-agent.acme.example`) |
+| `domain` | yes | — | Agent FQDN (e.g. `billing-agent.example`) |
 | `governance_id` | yes | — | Registrant domain (`gi` tag) |
 | `log_ref` | yes | — | Persisted C2SP identity-instance reference (`c2sp-tlog:<scope>:<log-prefix>#<stream-id>`); use the reference assigned by your registry |
 | `status_url` | yes | — | HTTPS URL for the agent's status endpoint |
@@ -619,12 +621,12 @@ Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/
 | Example | Description | Prerequisites |
 |---|---|---|
 | [examples/local-key-provider/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/local-key-provider) | File-backed local key provider demo | None — fully self-contained |
-| [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Testnet environment |
-| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | None — uses DNSid's public test log |
+| [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Local registry (Docker + DNSid CLI) |
+| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | Network access — defaults to a hosted sandbox identity and the managed production log |
 | [examples/webbotauth/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/webbotauth) | Sign and verify bot HTTP requests with `WebBotAuthProfile` | None — fully self-contained |
-| [examples/oidc/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/oidc) | Mint and inspect a DNSid OIDC token with `OIDCProfile` | OIDC token endpoint (defaults to `https://oidc.dnsid.ai`) |
+| [examples/oidc/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/oidc) | Mint and inspect a DNSid OIDC assertion with `OIDCProfile` | None offline; published identity + OIDC endpoint for opt-in exchange |
 
-### Self-contained example (no testnet needed)
+### Self-contained example (no local registry needed)
 
 The local-key-provider example runs entirely offline — it demonstrates key
 lifecycle, JWKS construction, and JWT signing without any network dependencies:
@@ -634,18 +636,20 @@ source .venv/bin/activate
 python examples/local-key-provider/main.py
 ```
 
-### Testnet-dependent examples
+### Local-registry examples
 
-The `a2a` example requires the local testnet managed by the `dnsid` CLI
+The `a2a` example requires the local registry managed by the `dnsid` CLI
 ([installation guide](https://docs.dnsid.ai/cli-installation);
-`dnsid testnet up` / `dnsid testnet run`), which provides local DNS, a
+`dnsid local up --zone test` / `dnsid local run`), which provides local DNS, a
 CA, and a registry. See
 [examples/a2a/README.md](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/a2a/README.md) for full prerequisites and
 step-by-step instructions.
 
-### Validate-domain example (no testnet needed)
+### Validate-domain example (no local registry needed)
 
-Verifies a domain's DNSid identity against DNSid's public test log:
+Verifies the default hosted sandbox identity against DNSid's managed production log.
+See the [example README](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/validate-domain/README.md)
+for local verification of `bob.test`:
 
 ```bash
 source .venv/bin/activate
