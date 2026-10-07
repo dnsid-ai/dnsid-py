@@ -1759,7 +1759,16 @@ class HttpRequest:
 
 @dataclass
 class AgentRegistrationInput:
-    """Input for registering an agent with the registry."""
+    """Unified registration selectors and optional legacy settings.
+
+    Use domain for an exact FQDN, root_domain for an assigned name under an
+    active delegated zone, or governance_domain for GI-selected creation.
+    domain and root_domain are mutually exclusive. Assigned names require a
+    public key; public-key-only input selects the sandbox root. The registry
+    determines hosting and publication authority, not the request shape.
+    Legacy environment, tier, managed, and zone_id are not defaulted by the SDK.
+    idempotency_key is retained for compatibility; prefer the method argument.
+    """
 
     # Empty for server-assigned managed identities.
     domain: str = ""
@@ -1771,6 +1780,9 @@ class AgentRegistrationInput:
     name: str = ""
     zone_id: str = ""
     idempotency_key: str = ""
+    governance_domain: str = ""
+    root_domain: str = ""
+    tier: str = ""
 
 
 @dataclass

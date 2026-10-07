@@ -126,19 +126,20 @@ Initialize the client with a registry base URL and optional credential.
 ### `register_agent`
 
 ```python
-RegistryClient.register_agent(input: AgentRegistrationInput) -> AgentRegistration
+RegistryClient.register_agent(input: AgentRegistrationInput, idempotency_key: str | None = None) -> AgentRegistration
 ```
 
-Register an agent with the registry.
+Create an identity using exact-domain, GI/root, or public-key-only input.
 
-``POST /api/v1/agent``
+Omitted selectors generate a sandbox name. The registry resolves hosting;
+an exact domain does not imply client-controlled publication. Explicit
+legacy selectors are sent unchanged. Managed Live uses register_live_agent.
 
-Pass ``domain`` to register a name you control (self-managed), or
-``zone_id`` to have the registry assign a name in a delegated zone
-(registry-managed). The two are mutually exclusive, and
-``managed=True`` requires ``zone_id``. ``environment`` defaults to
-``"production"``; ``"sandbox"`` is also accepted. For Live names use
-`register_live_agent`.
+An optional idempotency key is transport metadata. Retry with the same
+complete request and key; this method never retries automatically.
+SDK errors retain registration_request, registration_idempotency_key, and
+registration_response (known creation facts), without exposing credentials.
+The returned publication snapshot does not establish counterparty trust.
 
 ### `register_live_agent`
 
@@ -299,7 +300,18 @@ mirror the TypeScript ``RegistryAgentStatus`` interface.
 RegistryClient.get_registration(domain: str) -> AgentRegistration | None
 ```
 
-Return the current registry registration without conflating status namespaces.
+Read authenticated management status without conflating status namespaces.
+
+Owner credentials are required on hosted registries. Failed authenticated
+reads are never retried anonymously. This is not the public protocol su route.
+
+### `get_agent_detail`
+
+```python
+RegistryClient.get_agent_detail(domain: str) -> AgentRegistration | None
+```
+
+Read authenticated agent detail to obtain publication authority.
 
 ### `wait_for_status`
 
@@ -427,7 +439,15 @@ different bytes.
 from dnsid import AgentRegistrationInput
 ```
 
-Input for registering an agent with the registry.
+Unified registration selectors and optional legacy settings.
+
+Use domain for an exact FQDN, root_domain for an assigned name under an
+active delegated zone, or governance_domain for GI-selected creation.
+domain and root_domain are mutually exclusive. Assigned names require a
+public key; public-key-only input selects the sandbox root. The registry
+determines hosting and publication authority, not the request shape.
+Legacy environment, tier, managed, and zone_id are not defaulted by the SDK.
+idempotency_key is retained for compatibility; prefer the method argument.
 
 ## `AgentRegistration`
 

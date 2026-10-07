@@ -8,7 +8,7 @@ VerificationCode; ArgumentError an invalid caller-supplied argument.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .enums import LifecycleErrorCategory, VerificationCode
@@ -16,7 +16,18 @@ if TYPE_CHECKING:
 
 
 class DNSidError(Exception):
-    """Base for all DNSid SDK errors."""
+    """Base for all DNSid SDK errors.
+
+    Failed registration attempts retain the exact request, idempotency key, and
+    known creation response for recovery. They do not prove no agent was created.
+    These attributes are not included in the error message or repr.
+    """
+
+    status_code: int | None = None
+    error_code: str = ""
+    registration_request: dict[str, Any] | None = None
+    registration_idempotency_key: str = ""
+    registration_response: dict[str, Any] | None = None
 
 
 class ParseError(DNSidError):

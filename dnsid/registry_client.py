@@ -186,91 +186,126 @@ class RegistryClient(AbstractRegistryClient):
     # Registration lifecycle
     # ------------------------------------------------------------------
 
-    def register_agent(self, input: AgentRegistrationInput) -> AgentRegistration:
-        """Register an agent with the registry.
+    def register_agent(
+        self, input: AgentRegistrationInput, idempotency_key: str | None = None
+    ) -> AgentRegistration:
+        """Create an identity using exact-domain, GI/root, or public-key-only input.
 
-        ``POST /api/v1/agent``
+        Omitted selectors generate a sandbox name. The registry resolves hosting;
+        an exact domain does not imply client-controlled publication. Explicit
+        legacy selectors are sent unchanged. Managed Live uses register_live_agent.
 
-        Pass ``domain`` to register a name you control (self-managed), or
-        ``zone_id`` to have the registry assign a name in a delegated zone
-        (registry-managed). The two are mutually exclusive, and
-        ``managed=True`` requires ``zone_id``. ``environment`` defaults to
-        ``"production"``; ``"sandbox"`` is also accepted. For Live names use
-        :meth:`register_live_agent`.
+        An optional idempotency key is transport metadata. Retry with the same
+        complete request and key; this method never retries automatically.
+        SDK errors retain registration_request, registration_idempotency_key, and
+        registration_response (known creation facts), without exposing credentials.
+        The returned publication snapshot does not establish counterparty trust.
         """
         self._require_auth("register_agent")
-        from .exceptions import ArgumentError
+        from copy import deepcopy
 
-        environment = input.environment or "production"
-        if environment not in {"production", "sandbox"}:
+        from ._utils import normalize_fqdn
+        from .exceptions import ArgumentError, DNSidError, ValidationError
+        from .models import _parse_https_uri_host
+
+        if input.environment and input.environment not in {"production", "sandbox"}:
             raise ArgumentError('environment must be "production" or "sandbox"')
+        if input.domain and input.root_domain:
+            raise ArgumentError("domain and root_domain cannot both be supplied")
         if input.zone_id and input.domain:
             raise ArgumentError("zone_id and domain cannot both be supplied")
-        if input.managed and not input.zone_id:
-            raise ArgumentError("managed registration requires zone_id")
-        effective_managed = input.managed or bool(input.zone_id)
-        if effective_managed and input.domain:
-            raise ArgumentError(
-                "domain must not be supplied for managed registrations; the registry assigns it"
-            )
-        if not effective_managed and not input.domain:
-            raise ArgumentError("self-managed registration requires a domain")
-        if input.managed and input.public_key_jwk is None:
-            raise ArgumentError("managed registration requires public_key_jwk")
-        if input.idempotency_key:
-            _validate_tlog_idempotency_key(input.idempotency_key)
+        if (not input.domain or input.managed or input.zone_id) and input.public_key_jwk is None:
+            raise ArgumentError("assigned or managed registration requires public_key_jwk")
+        if input.tier == "live":
+            raise ArgumentError("use register_live_agent for managed Live registration")
+        if idempotency_key is not None and input.idempotency_key:
+            if idempotency_key != input.idempotency_key:
+                raise ArgumentError("conflicting idempotency keys")
+        key = input.idempotency_key if idempotency_key is None else idempotency_key
+        if key:
+            _validate_tlog_idempotency_key(key)
+        elif idempotency_key is not None:
+            raise ArgumentError("idempotency_key must not be empty")
 
         body: dict[str, Any] = {}
-        if input.domain:
-            body["domain"] = input.domain
-        if input.public_key_jwk:
+        for name in ("domain", "governance_domain", "root_domain"):
+            value = getattr(input, name)
+            if value:
+                try:
+                    body[name] = normalize_fqdn(value, agent_fqdn=name == "domain")
+                except (ValidationError, ValueError) as exc:
+                    raise ArgumentError(f"invalid {name}: {exc}") from exc
+        if input.public_key_jwk is not None:
             body["public_key"] = _public_jwk_dict(input.public_key_jwk)
-        body["environment"] = environment
+        for name in ("environment", "tier", "zone_id"):
+            value = getattr(input, name)
+            if value:
+                body[name] = value
         if input.managed:
-            body["managed"] = input.managed
+            body["managed"] = True
         if input.capabilities_url:
+            try:
+                _parse_https_uri_host(input.capabilities_url, field_name="capabilities_url")
+            except ValidationError as exc:
+                raise ArgumentError(str(exc)) from exc
             body["capabilities_url"] = input.capabilities_url
         if input.name:
-            body["name"] = input.name
-        if input.zone_id:
-            body["zone_id"] = input.zone_id
+            name = input.name.strip()
+            if len(name) > 255:
+                raise ArgumentError("name must be at most 255 characters after trimming")
+            body["name"] = name
 
-        headers = (
-            {"Idempotency-Key": input.idempotency_key}
-            if input.idempotency_key
-            else None
-        )
-        data = self._post(
-            "/api/v1/agent", body, extra_headers=headers, expected_status=201
-        )
-        domain = _require_str(data, "domain", "registry register response")
-        publication_config = _publication_config_from_response(data)
-        registration = self.get_registration(domain)
-        if registration is None:
-            from .exceptions import ValidationError
-
-            raise ValidationError("registry created the agent but returned no registration")
-        if publication_config is not None:
-            registration = replace(registration, publication_config=publication_config)
-        oidc_issuer_url = data.get("oidc_issuer_url")
-        if oidc_issuer_url is not None:
-            if not isinstance(oidc_issuer_url, str):
-                from .exceptions import ValidationError
-
+        data: dict[str, Any] | None = None
+        try:
+            data = self._post(
+                "/api/v1/agent",
+                body,
+                extra_headers={"Idempotency-Key": key} if key else None,
+                expected_status=201,
+            )
+            created_id = _require_str(data, "id", "registry register response")
+            domain = normalize_fqdn(
+                _require_str(data, "domain", "registry register response"), agent_fqdn=True
+            )
+            if body.get("domain") and domain != body["domain"]:
+                raise ValidationError("registry returned a different domain")
+            if body.get("root_domain") and not domain.endswith("." + body["root_domain"]):
+                raise ValidationError("registry domain is not beneath root_domain")
+            publication_config = _publication_config_from_response(data)
+            if publication_config is None:
+                raise ValidationError("registry register response is missing publication_config")
+            _validate_publication_config(publication_config, domain)
+            if body.get("governance_domain") and (
+                publication_config.governance_id != body["governance_domain"]
+            ):
+                raise ValidationError("registry returned a different governance domain")
+            issuer = data.get("oidc_issuer_url", "")
+            if not isinstance(issuer, str):
                 raise ValidationError("registry register response has invalid oidc_issuer_url")
-            registration = replace(registration, oidc_issuer_url=oidc_issuer_url)
-        # The create response is the authoritative source of the agent ID;
-        # keep it even when the status view omits it.
-        created_id = data.get("id")
-        if isinstance(created_id, str) and created_id:
+            if issuer:
+                _parse_https_uri_host(issuer, field_name="oidc_issuer_url")
+            registration = self.get_agent_detail(domain)
+            if registration is None:
+                raise ValidationError("registry created the agent but returned no registration")
+            if registration.domain != domain:
+                raise ValidationError("registry detail names a different domain")
             if registration.id and registration.id != created_id:
-                from .exceptions import ValidationError
-
                 raise ValidationError(
-                    "registry status names a different agent than the one just created"
+                    "registry detail names a different agent than the one created"
                 )
-            registration = replace(registration, id=created_id)
-        return registration
+            if registration.publication_authority not in {"client", "registry"}:
+                raise ValidationError("registry registration has unknown publication authority")
+            return replace(
+                registration,
+                id=created_id,
+                publication_config=publication_config,
+                oidc_issuer_url=issuer,
+            )
+        except DNSidError as exc:
+            exc.registration_request = deepcopy(body)
+            exc.registration_idempotency_key = key
+            exc.registration_response = deepcopy(data or exc.registration_response)
+            raise
 
     def register_live_agent(
         self, input: LiveAgentRegistrationInput, idempotency_key: str
@@ -632,12 +667,26 @@ class RegistryClient(AbstractRegistryClient):
         )
 
     def get_registration(self, domain: str) -> AgentRegistration | None:
-        """Return the current registry registration without conflating status namespaces."""
+        """Read authenticated management status without conflating status namespaces.
+
+        Owner credentials are required on hosted registries. Failed authenticated
+        reads are never retried anonymously. This is not the public protocol su route.
+        """
+        self._require_auth("get_registration")
+        return self._get_registration(domain, detail=False)
+
+    def get_agent_detail(self, domain: str) -> AgentRegistration | None:
+        """Read authenticated agent detail to obtain publication authority."""
+        self._require_auth("get_agent_detail")
+        return self._get_registration(domain, detail=True)
+
+    def _get_registration(self, domain: str, *, detail: bool) -> AgentRegistration | None:
         from urllib.parse import quote
 
         import httpx
 
-        url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
+        suffix = "" if detail else "/status"
+        url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}{suffix}"
         try:
             resp = httpx.get(url, headers=self._auth_headers(), timeout=10.0)
         except httpx.TransportError as exc:
@@ -653,13 +702,12 @@ class RegistryClient(AbstractRegistryClient):
         if resp.status_code == 404:
             return None
         if not resp.is_success:
-            from .enums import VerificationCode
-            from .exceptions import VerificationError
+            from .exceptions import RegistryRequestError
 
-            raise VerificationError(
-                VerificationCode.LOG_ERROR,
-                f"Registry registration returned HTTP {resp.status_code} for {domain!r}",
-                transient=resp.status_code >= 500,
+            raise RegistryRequestError(
+                f"/api/v1/agent/{quote(domain, safe='')}{suffix}",
+                resp.status_code,
+                _registry_error_code(resp),
             )
         data = _parse_json(resp, f"registry registration response for {domain!r}")
         return _registration_from_response(domain, self._base_url, data)
@@ -1118,19 +1166,47 @@ class RegistryClient(AbstractRegistryClient):
             # The registry's short error code is the one safe, useful token.
             from .exceptions import RegistryRequestError
 
-            raise RegistryRequestError(path, resp.status_code, _registry_error_code(resp))
+            error = RegistryRequestError(path, resp.status_code, _registry_error_code(resp))
+            if path == "/api/v1/agent":
+                error.registration_response = _creation_facts(resp)
+            raise error
         if expected_status is not None and resp.status_code != expected_status:
-            raise VerificationError(
+            status_error = VerificationError(
                 VerificationCode.RECORD_INVALID,
                 f"Registry request to {path!r} expected HTTP {expected_status}, "
                 f"received {resp.status_code}",
             )
-        return _parse_json(resp, f"registry response for {path!r}")
+            status_error.status_code = resp.status_code
+            status_error.error_code = _registry_error_code(resp)
+            if path == "/api/v1/agent":
+                status_error.registration_response = _creation_facts(resp)
+            raise status_error
+        from .exceptions import DNSidError
+
+        try:
+            return _parse_json(resp, f"registry response for {path!r}")
+        except DNSidError as exc:
+            exc.status_code = resp.status_code
+            raise
 
 
 # ------------------------------------------------------------------
 # Module-level helpers
 # ------------------------------------------------------------------
+
+
+def _creation_facts(resp: Any) -> dict[str, Any] | None:
+    try:
+        data = resp.json()
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {
+        name: data[name]
+        for name in ("id", "domain", "publication_config", "oidc_issuer_url")
+        if name in data
+    }
 
 
 _ERROR_CODE_RE = re.compile(r"^[A-Z0-9_]{1,64}$")
@@ -1205,7 +1281,12 @@ def _validate_tlog_idempotency_key(key: str) -> None:
     """Enforce the product's exact tlog Idempotency-Key constraints."""
     from .exceptions import ArgumentError
 
-    if not key or key != key.strip() or len(key.encode("utf-8")) > 200:
+    if (
+        not key
+        or key != key.strip()
+        or len(key.encode("utf-8")) > 200
+        or any(c < "\x20" or c == "\x7f" for c in key)
+    ):
         raise ArgumentError("idempotency_key must be 1 to 200 bytes without surrounding whitespace")
 
 
@@ -1215,12 +1296,17 @@ def _public_jwk_dict(key: JWK) -> dict[str, Any]:
 
     if not isinstance(key, JWK) or not isinstance(key._raw, dict):
         raise ArgumentError("public_key_jwk must be a JWK")
-    private_members = set(key._raw) & _PRIVATE_JWK_MEMBERS
-    nested = key._raw.get("keys")
-    if isinstance(nested, list):
-        for item in nested:
-            if isinstance(item, dict):
-                private_members.update(set(item) & _PRIVATE_JWK_MEMBERS)
+
+    def private_fields(value: Any) -> set[str]:
+        if isinstance(value, dict):
+            return (set(value) & _PRIVATE_JWK_MEMBERS).union(
+                *(private_fields(item) for item in value.values())
+            )
+        if isinstance(value, list):
+            return set().union(*(private_fields(item) for item in value))
+        return set()
+
+    private_members = private_fields(key._raw)
     if private_members:
         raise ArgumentError(
             f"public_key_jwk contains private JWK members: {sorted(private_members)}"
@@ -1484,11 +1570,15 @@ def _protocol_status_from_response(data: dict[str, Any]) -> AgentStatus | None:
 def _registration_from_response(
     requested_domain: str, registry_url: str, data: dict[str, Any]
 ) -> AgentRegistration:
+    from ._utils import normalize_fqdn
     from .exceptions import ValidationError
 
     domain_value = data.get("domain") or data.get("fqdn") or requested_domain
     if not isinstance(domain_value, str) or not domain_value:
         raise ValidationError("registry registration is missing domain")
+    domain_value = normalize_fqdn(domain_value, agent_fqdn=True)
+    if domain_value != normalize_fqdn(requested_domain, agent_fqdn=True):
+        raise ValidationError("registry registration names a different domain")
     managed = data.get("managed")
     if managed == "dnsid":
         authority = "registry"
@@ -1502,6 +1592,8 @@ def _registration_from_response(
     raw_dns_published = data.get("dns_published", data.get("dnsPublished"))
     dns_published = raw_dns_published if isinstance(raw_dns_published, bool) else None
     publication_config = _publication_config_from_response(data)
+    if publication_config is not None:
+        _validate_publication_config(publication_config, domain_value)
     raw_id = data.get("id")
     return AgentRegistration(
         domain=domain_value,
@@ -1519,6 +1611,29 @@ def _registration_from_response(
         id=raw_id if isinstance(raw_id, str) else "",
         raw=data,
     )
+
+
+def _validate_publication_config(config: PublicationConfig, domain: str) -> None:
+    from ._utils import is_valid_tag_value
+    from .exceptions import ValidationError
+    from .models import DnsIdTxtRecord, publish_allowed_version
+
+    if not publish_allowed_version(config.publish_profile):
+        raise ValidationError("registry returned unsupported publish_profile")
+    values = vars(config).values()
+    if any(not is_valid_tag_value(value) for value in values):
+        raise ValidationError("registry publication_config contains invalid record values")
+    DnsIdTxtRecord(
+        v=config.publish_profile,
+        gi=config.governance_id,
+        ku=config.ku_url,
+        ek=config.ek_url,
+        lr=config.log_ref,
+        su=config.status_url,
+        cu=config.capabilities_url,
+        ka=config.max_key_age,
+        identity_fqdn=domain,
+    ).validate()
 
 
 def _publication_config_from_response(data: dict[str, Any]) -> PublicationConfig | None:
