@@ -311,7 +311,10 @@ reads are never retried anonymously. This is not the public protocol su route.
 RegistryClient.get_agent_detail(domain: str) -> AgentRegistration | None
 ```
 
-Read authenticated agent detail to obtain publication authority.
+Read authenticated management detail to obtain publication authority.
+
+The product exposes agent detail on the management status route, not
+GET /api/v1/agent/{domain}. This does not read the public protocol su URL.
 
 ### `wait_for_status`
 

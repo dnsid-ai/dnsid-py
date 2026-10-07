@@ -197,7 +197,7 @@ def test_creation_uses_authenticated_detail_and_preserves_snapshot_on_failure(ma
         else:
             result = _make_client().register_agent(AgentRegistrationInput(domain=_DOMAIN))
             assert result.publication_authority == ("registry" if managed == "dnsid" else "client")
-        assert get.call_args.args[0] == f"https://registry.example.com/api/v1/agent/{_DOMAIN}"
+        assert get.call_args.args[0] == f"https://registry.example.com/api/v1/agent/{_DOMAIN}/status"
         assert get.call_args.kwargs["headers"] == {"Authorization": f"Bearer {_FAKE_API_KEY}"}
         assert get.call_count == 1
 

@@ -673,20 +673,11 @@ class RegistryClient(AbstractRegistryClient):
         reads are never retried anonymously. This is not the public protocol su route.
         """
         self._require_auth("get_registration")
-        return self._get_registration(domain, detail=False)
-
-    def get_agent_detail(self, domain: str) -> AgentRegistration | None:
-        """Read authenticated agent detail to obtain publication authority."""
-        self._require_auth("get_agent_detail")
-        return self._get_registration(domain, detail=True)
-
-    def _get_registration(self, domain: str, *, detail: bool) -> AgentRegistration | None:
         from urllib.parse import quote
 
         import httpx
 
-        suffix = "" if detail else "/status"
-        url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}{suffix}"
+        url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
         try:
             resp = httpx.get(url, headers=self._auth_headers(), timeout=10.0)
         except httpx.TransportError as exc:
@@ -705,12 +696,20 @@ class RegistryClient(AbstractRegistryClient):
             from .exceptions import RegistryRequestError
 
             raise RegistryRequestError(
-                f"/api/v1/agent/{quote(domain, safe='')}{suffix}",
+                f"/api/v1/agent/{quote(domain, safe='')}/status",
                 resp.status_code,
                 _registry_error_code(resp),
             )
         data = _parse_json(resp, f"registry registration response for {domain!r}")
         return _registration_from_response(domain, self._base_url, data)
+
+    def get_agent_detail(self, domain: str) -> AgentRegistration | None:
+        """Read authenticated management detail to obtain publication authority.
+
+        The product exposes agent detail on the management status route, not
+        GET /api/v1/agent/{domain}. This does not read the public protocol su URL.
+        """
+        return self.get_registration(domain)
 
     def wait_for_status(
         self,
