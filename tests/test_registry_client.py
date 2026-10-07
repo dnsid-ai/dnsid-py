@@ -49,7 +49,20 @@ def _make_client() -> RegistryClient:
     return RegistryClient("https://registry.example.com", api_key=_FAKE_API_KEY)
 
 
-_REGISTER_RESPONSE = {"domain": _DOMAIN, "status": "PENDING"}
+_PUBLICATION_CONFIG = {
+    "publish_profile": "dnsid-draft-01",
+    "governance_id": "example.com",
+    "ku_url": f"https://{_DOMAIN}/jwks.json",
+    "ek_url": "https://example.com/entity.jwks",
+    "log_ref": f"c2sp-tlog:testnet:https://log.example#{_DOMAIN}",
+    "status_url": f"https://registry.example.com/status/{_DOMAIN}",
+}
+_REGISTER_RESPONSE = {
+    "id": "agent-123",
+    "domain": _DOMAIN,
+    "status": "PENDING",
+    "publication_config": _PUBLICATION_CONFIG,
+}
 
 
 def _registration(
@@ -119,7 +132,7 @@ def _live_challenge_response(
 class TestRegisterAgent:
     def test_capabilities_url_included_when_set(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration()):
             _make_client().register_agent(
                 AgentRegistrationInput(
                     domain=_DOMAIN,
@@ -133,7 +146,7 @@ class TestRegisterAgent:
 
     def test_register_agent_adopts_the_created_agent_id(self):
         ctx, _ = _post_capturing(dict(_REGISTER_RESPONSE, id="agent-123"))
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration()):
             reg = _make_client().register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="production")
             )
@@ -144,7 +157,7 @@ class TestRegisterAgent:
         other = replace(_registration(), id="agent-999")
         with (
             ctx,
-            patch.object(RegistryClient, "get_registration", return_value=other),
+            patch.object(RegistryClient, "get_agent_detail", return_value=other),
             pytest.raises(ValidationError, match="different agent"),
         ):
             _make_client().register_agent(
@@ -159,7 +172,7 @@ class TestRegisterAgent:
 
     def test_capabilities_url_omitted_when_not_set(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration()):
             _make_client().register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="production")
             )
@@ -272,7 +285,7 @@ class TestRegisterAgent:
         response = {**_REGISTER_RESPONSE, "publication_config": publication_config}
         detail = _registration()
         ctx, _ = _post_capturing(response)
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=detail):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=detail):
             result = _make_client().register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="production")
             )
@@ -286,7 +299,7 @@ class TestRegisterAgent:
             "oidc_issuer_url": "https://issuer.example.com/live",
         }
         ctx, _ = _post_capturing(response)
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration()):
             result = _make_client().register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="production")
             )
@@ -294,20 +307,20 @@ class TestRegisterAgent:
         assert isinstance(result, AgentRegistration)
         assert result.oidc_issuer_url == "https://issuer.example.com/live"
 
-    def test_omitted_environment_defaults_to_self_managed_production(self):
+    def test_omitted_environment_does_not_inject_legacy_defaults(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration()):
             _make_client().register_agent(AgentRegistrationInput(domain=_DOMAIN))
         assert captured[0]["body"]["domain"] == _DOMAIN
-        assert captured[0]["body"]["environment"] == "production"
+        assert "environment" not in captured[0]["body"]
 
     def test_omitted_environment_without_domain_is_rejected(self):
-        with pytest.raises(ArgumentError, match="requires a domain"):
+        with pytest.raises(ArgumentError, match="requires public_key_jwk"):
             _make_client().register_agent(AgentRegistrationInput())
 
     def test_self_managed_sends_explicit_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration()):
             _make_client().register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="production")
             )
@@ -320,17 +333,28 @@ class TestRegisterAgent:
                 AgentRegistrationInput(domain=_DOMAIN, environment="staging")
             )
 
-    def test_managed_without_zone_is_rejected(self):
-        with pytest.raises(ArgumentError, match="requires zone_id"):
+    def test_managed_without_zone_is_sent_to_registry(self):
+        ctx, captured = _post_capturing(_REGISTER_RESPONSE)
+        with (
+            ctx,
+            patch.object(
+                RegistryClient, "get_agent_detail", return_value=_registration(authority="registry")
+            ),
+        ):
             _make_client().register_agent(
                 AgentRegistrationInput(managed=True, public_key_jwk=_live_key())
             )
+        assert captured[0]["body"]["managed"] is True
+        assert "zone_id" not in captured[0]["body"]
 
     def test_server_assigned_managed_omits_domain(self):
         key = _live_key()
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(
-            RegistryClient, "get_registration", return_value=_registration(authority="registry")
+        with (
+            ctx,
+            patch.object(
+                RegistryClient, "get_agent_detail", return_value=_registration(authority="registry")
+            ),
         ):
             _make_client().register_agent(
                 AgentRegistrationInput(managed=True, zone_id="zone-1", public_key_jwk=key)
@@ -338,7 +362,7 @@ class TestRegisterAgent:
         assert "domain" not in captured[0]["body"]
         assert captured[0]["body"]["managed"] is True
         assert captured[0]["body"]["zone_id"] == "zone-1"
-        assert captured[0]["body"]["environment"] == "production"
+        assert "environment" not in captured[0]["body"]
 
     def test_managed_rejects_client_supplied_domain(self):
         key = _live_key()
@@ -351,33 +375,43 @@ class TestRegisterAgent:
 
     def test_self_managed_accepts_sandbox_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration()):
             _make_client().register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="sandbox")
             )
         assert captured[0]["body"]["environment"] == "sandbox"
 
-    def test_zone_managed_defaults_to_production_environment(self):
+    def test_zone_managed_omits_environment_defaults(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(
-            RegistryClient,
-            "get_registration",
-            return_value=_registration(authority="registry"),
+        with (
+            ctx,
+            patch.object(
+                RegistryClient,
+                "get_agent_detail",
+                return_value=_registration(authority="registry"),
+            ),
         ):
-            _make_client().register_agent(AgentRegistrationInput(zone_id="zone-1"))
+            _make_client().register_agent(
+                AgentRegistrationInput(zone_id="zone-1", public_key_jwk=_live_key())
+            )
 
         assert captured[0]["body"]["zone_id"] == "zone-1"
-        assert captured[0]["body"]["environment"] == "production"
+        assert "environment" not in captured[0]["body"]
 
     def test_zone_managed_accepts_production_environment(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(
-            RegistryClient,
-            "get_registration",
-            return_value=_registration(authority="registry"),
+        with (
+            ctx,
+            patch.object(
+                RegistryClient,
+                "get_agent_detail",
+                return_value=_registration(authority="registry"),
+            ),
         ):
             _make_client().register_agent(
-                AgentRegistrationInput(zone_id="zone-1", environment="production")
+                AgentRegistrationInput(
+                    zone_id="zone-1", environment="production", public_key_jwk=_live_key()
+                )
             )
 
         assert captured[0]["body"]["environment"] == "production"
@@ -430,7 +464,7 @@ class TestRegisterAgent:
 
     def test_registration_idempotency_key_is_forwarded(self):
         ctx, captured = _post_capturing(_REGISTER_RESPONSE)
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration()):
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration()):
             _make_client().register_agent(
                 AgentRegistrationInput(
                     domain=_DOMAIN,
@@ -512,9 +546,7 @@ class TestPreparedEventTransport:
         response.is_success = True
         response.content = entry
         response.headers = (
-            {"DNSID-Log-Reference": log_reference}
-            if log_reference is not None
-            else {}
+            {"DNSID-Log-Reference": log_reference} if log_reference is not None else {}
         )
         return response
 
@@ -684,6 +716,7 @@ class TestRegistryAgentStatusPublicationConfig:
         assert result.publication_config is not None
         assert result.publication_config.ek_url == publication_config["ek_url"]
 
+
 class TestPublishedRecordModel:
     def test_keeps_publication_status_separate_without_fabricating_protocol_status(self):
         response = {
@@ -782,9 +815,7 @@ class TestLiveProof:
         with ctx, pytest.raises(VerificationError, match="challenge transcript"):
             _make_client().reissue_live_proof(
                 _DOMAIN,
-                LiveProofReissueRequest(
-                    request_id="live-1", public_key_jwk=_live_key()
-                ),
+                LiveProofReissueRequest(request_id="live-1", public_key_jwk=_live_key()),
             )
 
     @pytest.mark.parametrize("key", [_live_key(x="abc"), _live_key(d="private")])
@@ -868,7 +899,14 @@ class TestVerifyAgent:
         # The current registry omits fqdn from the verify response; it is
         # optional and falls back to the requested domain.
         ctx, _ = _post_capturing({"status": "VERIFICATION"})
-        with ctx, patch.object(RegistryClient, "get_registration", return_value=_registration(registry_status="VERIFICATION")):
+        with (
+            ctx,
+            patch.object(
+                RegistryClient,
+                "get_registration",
+                return_value=_registration(registry_status="VERIFICATION"),
+            ),
+        ):
             result = _make_client().verify_agent(_DOMAIN)
         assert result.domain == _DOMAIN
         assert result.registry_status == "VERIFICATION"
@@ -1188,8 +1226,9 @@ class TestAuthentication:
             captured["headers"] = headers
             return _FakeResponse(201, _REGISTER_RESPONSE)
 
-        with patch("httpx.post", fake_post), patch.object(
-            client, "get_registration", return_value=_registration()
+        with (
+            patch("httpx.post", fake_post),
+            patch.object(client, "get_agent_detail", return_value=_registration()),
         ):
             client.register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="production")
@@ -1463,8 +1502,9 @@ class TestRegistrationCarriesAgentId:
         def fake_post(url, json=None, headers=None, timeout=None):
             return _FakeResponse(201, created)
 
-        with patch("httpx.post", fake_post), patch.object(
-            client, "get_registration", return_value=_registration()
+        with (
+            patch("httpx.post", fake_post),
+            patch.object(client, "get_agent_detail", return_value=_registration()),
         ):
             reg = client.register_agent(
                 AgentRegistrationInput(domain=_DOMAIN, environment="production")

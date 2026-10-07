@@ -478,10 +478,18 @@ RegistryClient("https://api.dnsid.ai").get_agent_status("agent.example")
 `base_url` must be HTTPS, or HTTP on loopback. Constructors never read the
 environment; only `registry_client_from_environment()` does.
 
-Registration defaults to production: `AgentRegistrationInput(domain=...)` for a
-domain you control, `zone_id=...` for a delegated zone, `register_live_agent()`
-for Live. Pass `environment="sandbox"` for a sandbox agent. `managed=True`
-without `zone_id` is rejected.
+Registration accepts an exact `domain`, `root_domain`, or `governance_domain`.
+Public-key-only input gets a managed sandbox name. Assigned names require
+`public_key_jwk`; the registry determines hosting even for an exact domain.
+Explicit legacy selectors (`environment`, `managed`, `zone_id`, `tier`) are
+preserved without injected defaults. Use `register_live_agent()` for managed Live.
+
+Supply `register_agent(input, idempotency_key="...")` for retry-safe creation.
+Retry with the same complete input and key. Errors retain `registration_request`,
+`registration_idempotency_key`, and `registration_response` for recovery; a failure
+does not prove no identity was created. Save the returned immutable `id`,
+`publication_config`, and OIDC issuer. Publication authority comes from authenticated
+agent detail, not the requested selectors; this configuration does not grant trust.
 
 Hosted mutation calls require owner credentials: an organization session or API key,
 passed as `api_key` and sent as an `Authorization: Bearer` header. The local

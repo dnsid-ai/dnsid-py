@@ -15,6 +15,10 @@ from dnsid import DNSidError
 
 Base for all DNSid SDK errors.
 
+Failed registration attempts retain the exact request, idempotency key, and
+known creation response for recovery. They do not prove no agent was created.
+These attributes are not included in the error message or repr.
+
 ## `ParseError`
 
 ```python
