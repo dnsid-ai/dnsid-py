@@ -1,4 +1,16 @@
 
+## [0.24.0] - 2026-10-07
+
+### Chores
+
+- chore(deps): bump urllib3 from 2.7.0 to 2.8.0 ([#45](https://github.com/dnsid-ai/dnsid-py/pull/45))
+- chore(deps): bump taiki-e/install-action from 2.87.16 to 2.87.23 ([#47](https://github.com/dnsid-ai/dnsid-py/pull/47))
+
+### Features
+
+- feat: implement unified registry registration contract ([#48](https://github.com/dnsid-ai/dnsid-py/pull/48))
+
+
 ## [0.23.2] - 2026-09-30
 
 ### Bug Fixes
