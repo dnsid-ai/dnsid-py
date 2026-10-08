@@ -275,6 +275,18 @@ Rebuild the full event history for *domain* in chronological order.
 
 MUST verify inclusion proofs, timestamp proofs, and append-only consistency.
 
+### `recover_issuance`
+
+```python
+LogReader.recover_issuance(domain: str, entity_key: JWK) -> tuple[bytes, LogRef]
+```
+
+Return the exact included ISSUANCE and its reference under trusted history.
+
+Managed recovery uses this binding-owned read to compact accepted bytes
+and to open an already-issued identity without preparation or append.
+Unsupported readers fail closed.
+
 ### `rebuild_history_through`
 
 ```python

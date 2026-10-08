@@ -60,7 +60,7 @@ retry and what to surface to users or logs.
 ### `VerificationError` constructor
 
 ```python
-VerificationError(code: VerificationCode, message: str, *, transient: bool = False, agent_state: str | None = None, category: str | None = None, cause: BaseException | None = None, verified_governance_id: str | None = None, verified_entity_key_thumbprint: str | None = None) -> None
+VerificationError(code: VerificationCode, message: str, *, transient: bool = False, agent_state: str | None = None, category: str | None = None, cause: BaseException | None = None, verified_governance_id: str | None = None, verified_entity_key_thumbprint: str | None = None, resource_absent: bool = False) -> None
 ```
 
 Initialize the error with a structured code and message.
@@ -69,6 +69,7 @@ Initialize the error with a structured code and message.
 
 - `code` (`VerificationCode`): Failure category from `VerificationCode`.
 - `message` (`str`): Human-readable description of the failure.
+- `resource_absent` (`bool`): True only for a missing expected DNS resource. — default `False`
 - `transient` (`bool`): True when retrying the operation may succeed. — default `False`
 - `agent_state` (`str | None`): Agent lifecycle state reported by the status endpoint, when known. — default `None`
 - `category` (`str | None`): Stable lifecycle failure-category string, when the failure maps to one (see LifecycleErrorCategory). — default `None`
@@ -99,6 +100,24 @@ RegistryRequestError(path: str, status_code: int, error_code: str = '') -> None
 ```
 
 Build the error for *path* from the status and the registry's error code.
+
+## `ManagedRegistrationError`
+
+```python
+from dnsid import ManagedRegistrationError
+```
+
+*Bases:* `DNSidError`
+
+Setup failure retaining phase and identity, without credentials or private material.
+
+### `ManagedRegistrationError` constructor
+
+```python
+ManagedRegistrationError(category: str, phase: str, state: dict[str, Any] | None = None, *, cause: BaseException | None = None, resumable: bool = False) -> None
+```
+
+Initialize structured recovery guidance and preserve the underlying category.
 
 ## `LifecycleVerificationError`
 

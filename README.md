@@ -535,6 +535,41 @@ references and exact signed bytes. Activation requires verified current publicat
 and rotation continuity; application signing stays paused until durable reconciliation.
 Changing deployment configuration alone neither rotates nor imports a private key.
 
+## Managed registration (requires server changes)
+
+`register_managed_identity()` owns named recovery, issuance, publication observation,
+and isolated public verification. It leaves the application's acceptance policy unchanged.
+
+```python
+from dnsid import FileRegistrationStore, load_file, register_managed_identity
+
+result = register_managed_identity(
+    "billing-agent", load_file("deployment.json"), owner_credential,
+    FileRegistrationStore("/durable/identities"),
+)
+# Close result.manager when the application stops.
+```
+
+Configuration requires explicit log trust and `registration.entityKeyUrl`.
+Organization/GI can be configured or resolved from verified authenticated onboarding.
+Expected GI does not select creation routing; request selectors remain in `input`.
+
+**Requires server-side named creation, permanent organization-scoped replay, and
+historical-key-safe replacement. Those server prerequisites remain outstanding.**
+The groundwork APIs above do not promise these guarantees.
+
+Keep the same name/store and back up both `operations/` and `keys/` on durable POSIX
+storage. Initial-key-based replay survives interruptions and credential replacement;
+missing/corrupt state never permits replacement generation. Completed calls retrieve
+included issuance and observe authorized operational-key/URL rotation without reissuing.
+`replace_terminal=True` requires confirmed terminal history and a fresh key; old history
+and key files remain. Recovery schema 3 rejects older stores unchanged; use earlier
+code to recover them rather than changing names/directories.
+
+SDK retries share a five-minute deadline. Injected key/log providers need stable
+references and must honor the verification budget. Errors retain phase, known identity,
+registry progress, and the underlying structured cause without exposing credentials.
+
 ## Configuration reference
 
 `DnsidConfig` is the single core configuration entry point:
