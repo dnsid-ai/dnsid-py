@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Any
 from urllib.parse import urlsplit
 
+from ._verification_budget import remaining_seconds
 from .enums import RegistryRevocationReason
 from .interfaces import AbstractRegistryClient
 from .models import (
@@ -29,6 +30,7 @@ from .models import (
     PublishedRecord,
     RegistryAgentStatus,
     SubmissionResult,
+    TransportConfig,
 )
 
 
@@ -85,7 +87,8 @@ class RegistryClient(AbstractRegistryClient):
     resolving and verifying the record with ``IdentityManager.verify_domain``.
     """
 
-    def __init__(self, base_url: str | None = None, *, api_key: str | None = None) -> None:
+    def __init__(self, base_url: str | None = None, *, api_key: str | None = None,
+                 transport_config: TransportConfig | None = None) -> None:
         """Initialize the client with a registry base URL and optional credential.
 
         Args:
@@ -94,6 +97,7 @@ class RegistryClient(AbstractRegistryClient):
                 registry from ``dnsid local up``). Hosted use requires an explicit
                 URL; see :func:`dnsid.registry_client_from_environment`.
                 A trailing slash is stripped.
+            transport_config: Effective DNS/TLS settings for SDK-managed requests.
             api_key: Owner session or organization API-key credential sent as
                 an ``Authorization: Bearer`` header. Whitespace-only values are
                 treated as absent; without one hosted clients can only read legacy status.
@@ -135,7 +139,15 @@ class RegistryClient(AbstractRegistryClient):
         # which _post() would wrap into VerificationError and leak the credential.
         if stripped is not None and any(c < "\x20" or c == "\x7f" for c in stripped):
             raise ValueError("api_key contains illegal control characters")
+        import copy
+
+        from .manager import validate_dnsid_config
+        from .models import DnsidConfig
+
+        if transport_config is not None:
+            validate_dnsid_config(DnsidConfig(transport=transport_config))
         self._api_key = stripped
+        self._transport_config = copy.deepcopy(transport_config)
 
     def __repr__(self) -> str:
         """Return a repr that reports whether a credential is set, never its value."""
@@ -146,6 +158,45 @@ class RegistryClient(AbstractRegistryClient):
         )
 
     __str__ = __repr__
+
+    def _http_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        import httpx
+
+        from .safe_transport import make_ssrf_safe_transport
+
+        kwargs["timeout"] = remaining_seconds(kwargs.pop("timeout", 10.0))
+        if self._transport_config is None:
+            if method == "DELETE":
+                return httpx.request(method, url, **kwargs)
+            return getattr(httpx, method.lower())(url, **kwargs)
+        with httpx.Client(
+            transport=make_ssrf_safe_transport(
+                self._transport_config,
+                allow_loopback_host=urlsplit(self._base_url).hostname
+                if self._is_loopback
+                else None,
+            ),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            with client.stream(method, url, **kwargs) as response:
+                body = bytearray()
+                for chunk in response.iter_bytes(chunk_size=65536):
+                    remaining_seconds()
+                    if len(body) + len(chunk) > 4 * 1024 * 1024:
+                        from .enums import VerificationCode
+                        from .exceptions import VerificationError
+
+                        raise VerificationError(
+                            VerificationCode.LOG_ERROR, "registry response resource limit exceeded"
+                        )
+                    body.extend(chunk)
+                return httpx.Response(
+                    response.status_code,
+                    headers=response.headers,
+                    content=bytes(body),
+                    request=response.request,
+                )
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
@@ -460,8 +511,8 @@ class RegistryClient(AbstractRegistryClient):
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/challenge"
         _transport_err: Exception | None = None
         try:
-            resp = httpx.post(
-                url,
+            resp = self._http_request(
+                "POST", url,
                 json={"nonce": nonce, "signature": sig_text},
                 headers=self._auth_headers(),
                 timeout=10.0,
@@ -579,7 +630,7 @@ class RegistryClient(AbstractRegistryClient):
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
         _transport_err: Exception | None = None
         try:
-            resp = httpx.get(url, headers=self._auth_headers(), timeout=10.0)
+            resp = self._http_request("GET", url, headers=self._auth_headers(), timeout=10.0)
         except httpx.TransportError as exc:
             from .enums import VerificationCode
             from .exceptions import VerificationError
@@ -624,7 +675,7 @@ class RegistryClient(AbstractRegistryClient):
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
         _transport_err: Exception | None = None
         try:
-            resp = httpx.get(url, headers=self._auth_headers(), timeout=10.0)
+            resp = self._http_request("GET", url, headers=self._auth_headers(), timeout=10.0)
         except httpx.TransportError as exc:
             from .enums import VerificationCode
             from .exceptions import VerificationError
@@ -666,6 +717,35 @@ class RegistryClient(AbstractRegistryClient):
             raw=data,
         )
 
+    def get_organization_onboarding(self) -> dict[str, Any]:
+        """Read account/GI proofs and delegation using authenticated effective transport.
+
+        Pending proofs are not ready bindings. This read supplies no entity JWKS
+        URL and makes no claim about named creation or permanent replay support.
+        """
+        import httpx
+
+        from .enums import VerificationCode
+        from .exceptions import RegistryRequestError, VerificationError
+
+        self._require_auth("get_organization_onboarding")
+        path = "/api/v1/org/onboarding"
+        try:
+            response = self._http_request(
+                "GET",
+                f"{self._base_url}{path}",
+                headers=self._auth_headers(),
+            )
+        except httpx.TransportError as error:
+            raise VerificationError(
+                VerificationCode.LOG_ERROR,
+                f"Organization onboarding unavailable: {self._transport_detail(error)}",
+                transient=True,
+            ) from None
+        if not response.is_success:
+            raise RegistryRequestError(path, response.status_code, _registry_error_code(response))
+        return _parse_json(response, "organization onboarding")
+
     def get_registration(self, domain: str) -> AgentRegistration | None:
         """Read authenticated management status without conflating status namespaces.
 
@@ -679,7 +759,7 @@ class RegistryClient(AbstractRegistryClient):
 
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
         try:
-            resp = httpx.get(url, headers=self._auth_headers(), timeout=10.0)
+            resp = self._http_request("GET", url, headers=self._auth_headers(), timeout=10.0)
         except httpx.TransportError as exc:
             from .enums import VerificationCode
             from .exceptions import VerificationError
@@ -827,7 +907,7 @@ class RegistryClient(AbstractRegistryClient):
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}"
         _transport_err: Exception | None = None
         try:
-            resp = httpx.request("DELETE", url, headers=self._auth_headers(), timeout=10.0)
+            resp = self._http_request("DELETE", url, headers=self._auth_headers(), timeout=10.0)
         except httpx.TransportError as exc:
             from .enums import VerificationCode
             from .exceptions import VerificationError
@@ -911,8 +991,8 @@ class RegistryClient(AbstractRegistryClient):
 
         path = f"/api/v1/agent/{quote(domain, safe='')}/tlog/issuance/prepare"
         try:
-            response = httpx.post(
-                f"{self._base_url}{path}",
+            response = self._http_request(
+                "POST", f"{self._base_url}{path}",
                 headers={
                     **self._auth_headers(),
                     "Content-Type": "application/json",
@@ -989,8 +1069,8 @@ class RegistryClient(AbstractRegistryClient):
 
         path = f"/api/v1/agent/{quote(domain, safe='')}/tlog/key-rotation/prepare"
         try:
-            response = httpx.post(
-                f"{self._base_url}{path}",
+            response = self._http_request(
+                "POST", f"{self._base_url}{path}",
                 json={
                     "previous_key_id": request.previous_key_id,
                     "public_key": raw_jwk,
@@ -1058,8 +1138,8 @@ class RegistryClient(AbstractRegistryClient):
         fqdn_enc = quote(domain, safe="")
         path = f"/api/v1/agent/{fqdn_enc}/tlog/events"
         try:
-            response = httpx.post(
-                f"{self._base_url}{path}",
+            response = self._http_request(
+                "POST", f"{self._base_url}{path}",
                 content=entry_bytes,
                 headers={
                     **self._auth_headers(),
@@ -1148,9 +1228,9 @@ class RegistryClient(AbstractRegistryClient):
         _transport_err: Exception | None = None
         try:
             if body is not None:
-                resp = httpx.post(url, json=body, headers=headers, timeout=10.0)
+                resp = self._http_request("POST", url, json=body, headers=headers, timeout=10.0)
             else:
-                resp = httpx.post(url, headers=headers, timeout=10.0)
+                resp = self._http_request("POST", url, headers=headers, timeout=10.0)
         except httpx.TransportError as exc:
             _transport_err = VerificationError(
                 VerificationCode.LOG_ERROR,

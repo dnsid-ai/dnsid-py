@@ -217,11 +217,13 @@ Persists the updated store when the provider is file-backed.
 ### `supersede`
 
 ```python
-LocalKeyProvider.supersede(kid: str) -> None
+LocalKeyProvider.supersede(kid: str, *, allow_active: bool = False) -> None
 ```
 
-Rotate a retained key out of live use entirely.
+Remove a retained key, or an active key after verified cross-provider rotation.
 
+``allow_active`` is reserved for an accepted, publicly verified rotation.
+Removing the active key leaves this provider unable to sign.
 Persists the updated store when the provider is file-backed.
 
 **Raises:**
@@ -371,11 +373,12 @@ Promote *kid* from pending to active; current active moves to retained.
 ### `supersede`
 
 ```python
-AwsKmsKeyProvider.supersede(kid: str) -> None
+AwsKmsKeyProvider.supersede(kid: str, *, allow_active: bool = False) -> None
 ```
 
-Rotate a retained key out of live use.
+Remove a retained key, or the active key after verified cross-provider rotation.
 
+``allow_active`` is reserved for an accepted, publicly verified rotation.
 Schedules KMS key deletion first when
 ``schedule_key_deletion_on_supersede`` is enabled.
 

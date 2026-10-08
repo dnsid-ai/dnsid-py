@@ -9,13 +9,15 @@ and Idempotency).
 from __future__ import annotations
 
 import datetime
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from dnsid import (
     JWK,
+    JWKS,
     IdentityManager,
     IdentityManagerDependencies,
     KeyRotationPreparationRequest,
@@ -109,7 +111,7 @@ class FakeRotationRegistry:
         new_key = request.public_key
         event = KeyRotationEvent(
             domain=domain,
-            previous_kid="ku-1",
+            previous_kid=getattr(self, "previous_kid", "ku-1"),
             previous_thumbprint=request.previous_key_id,
             new_kid=new_key.kid,
             new_thumbprint=new_key.thumbprint(),
@@ -152,7 +154,15 @@ def _manager(provider: RotationProvider) -> IdentityManager:
         status_url=f"https://{_DOMAIN}/status",
     )
     with patch("dnsid.manager.normalize_fqdn", side_effect=lambda s, **_: s):
-        return IdentityManager(config, provider, IdentityManagerDependencies())
+        manager = IdentityManager(config, provider, IdentityManagerDependencies())
+    manager._verify_publication_evidence = Mock(return_value=SimpleNamespace(
+        record=SimpleNamespace(
+            gi=config.identity.governance_id, lr=_LR,
+            v=config.identity.publish_profile, ku=config.identity.ku_url,
+        ),
+        jwks=JWKS([provider.jwk("ku-2")]),
+    ))
+    return manager
 
 
 def _hooks():

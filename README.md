@@ -518,6 +518,23 @@ appears in `repr()`/`str()`, exceptions, or logs. See the
 [registry reference](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/registry.md) for the full method list and how to
 inspect the registry-managed signed record (effective `ku`/`su`).
 
+## Registration groundwork
+
+Deployment files can select an existing operational key with `keySource.provider`,
+`keySource.keyRef`, and non-secret `keySource.settings`. Known cloud factories load
+only the selected optional package; missing packages fail without file fallback.
+Constructors never generate keys. Local file selection warns against production use.
+
+`RegistryClient.get_organization_onboarding()` explicitly reads existing account
+proof/delegation status; it does not create an identity or promise permanent replay.
+Pending proofs are not verified bindings, and this response supplies no entity JWKS URL.
+
+To move an established signer, use explicit `rotate_operational_key()` with a
+`target_key_provider` and stable old/target provider references. Recovery reuses those
+references and exact signed bytes. Activation requires verified current publication
+and rotation continuity; application signing stays paused until durable reconciliation.
+Changing deployment configuration alone neither rotates nor imports a private key.
+
 ## Configuration reference
 
 `DnsidConfig` is the single core configuration entry point:
@@ -591,7 +608,7 @@ combines them field-wise (later wins, lists replace, `log_trust` is atomic);
 from dnsid import (
     identity_manager_from_environment,  # DNSID_* variables
     identity_manager_from_dnsid,        # ~/.dnsid or a DNSid CLI identity directory
-    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry"}
+    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry", "keySource"}
     load_environment, load_file, load_cli_directory, merge_loaded_config, construct_identity_manager, LoadedConfig,
 )
 

@@ -156,16 +156,20 @@ variant.
 from dnsid import KeySource
 ```
 
-Where local key material lives. Variants are not exclusive.
+Select an operational provider using non-secret deployment settings.
 
-``cli_directory`` supplies the operational key when present, otherwise
-``key_store_path``; ``entity_key_path`` supplies the entity key whenever set.
+CLI/key-store selections cannot combine with cloud providers or ``key_ref``.
+``cli_directory``
+wins over ``key_store_path``; ``entity_key_path`` is independent.
 
 **Attributes:**
 
 - `cli_directory` (`str | None`): DNSid CLI identity directory holding ``private.jwk`` or ``<domain>/private.jwk``.
 - `entity_key_path` (`str | None`): Accountable-entity private JWK file.
 - `key_store_path` (`str | None`): :meth:`LocalKeyProvider.load` key-store file; used only without ``cli_directory``.
+- `provider` (`str | None`): Known provider name: file, aws-kms, google-kms, or azure-key-vault.
+- `key_ref` (`str | None`): Stable existing operational key reference.
+- `settings` (`dict[str, Any] | None`): Non-secret provider settings; authentication uses ambient credentials.
 
 ## `load_environment`
 
@@ -203,10 +207,9 @@ from dnsid import load_file
 load_file(path: Path | str) -> LoadedConfig
 ```
 
-Read a JSON deployment file: ``{"dnsid"?, "logTrust"?, "registry"?}``.
+Read camelCase deployment sections, including non-secret ``keySource`` settings.
 
-Members are camelCase, the JSON encoding of `LoadedConfig` minus
-``keySource``. Registry credentials are never part of loaded configuration.
+Registry credentials and private keys are never part of loaded configuration.
 Unknown members, mistyped values, and duplicate members are rejected with
 ArgumentError; ``dnsid``
 contents are otherwise validated by the IdentityManager constructor.

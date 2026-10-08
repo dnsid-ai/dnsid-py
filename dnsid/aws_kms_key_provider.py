@@ -333,6 +333,8 @@ class AwsKmsKeyProvider(KeyProvider):
 
     def signing_key(self) -> JWK:
         """Return the public JWK of the current active signing key."""
+        if not self._state.active_key_id:
+            raise ArgumentError("provider has no active signing key")
         return self._public_jwk(self._state.active_key_id)
 
     def jwk(self, kid: str) -> JWK:
@@ -347,7 +349,9 @@ class AwsKmsKeyProvider(KeyProvider):
 
     def list_key_ids(self) -> list[str]:
         """Return the active key ID followed by all retained key IDs."""
-        return [self._state.active_key_id] + list(self._state.retained_key_ids)
+        return ([self._state.active_key_id] if self._state.active_key_id else []) + list(
+            self._state.retained_key_ids
+        )
 
     def sign(self, payload: bytes) -> bytes:
         """Sign *payload* with the active KMS key.
@@ -364,6 +368,8 @@ class AwsKmsKeyProvider(KeyProvider):
                 or the KMS response is inconsistent (missing signature,
                 algorithm mismatch, or unexpected signing key).
         """
+        if not self._state.active_key_id:
+            raise ArgumentError("provider has no active signing key")
         use_digest = (
             len(payload) > _AWS_KMS_RAW_SIGN_LIMIT_BYTES and self._algorithm == "ECDSA_SHA_256"
         )
@@ -438,9 +444,10 @@ class AwsKmsKeyProvider(KeyProvider):
         self._state.retained_key_ids.append(self._state.active_key_id)
         self._state.active_key_id = canonical_kid
 
-    def supersede(self, kid: str) -> None:
-        """Rotate a retained key out of live use.
+    def supersede(self, kid: str, *, allow_active: bool = False) -> None:
+        """Remove a retained key, or the active key after verified cross-provider rotation.
 
+        ``allow_active`` is reserved for an accepted, publicly verified rotation.
         Schedules KMS key deletion first when
         ``schedule_key_deletion_on_supersede`` is enabled.
 
@@ -448,9 +455,10 @@ class AwsKmsKeyProvider(KeyProvider):
             ArgumentError: If *kid* is the active key, is not a retained key,
                 or deletion scheduling is enabled but unsupported by the facade.
         """
-        if self._state.active_key_id == kid:
+        active = self._state.active_key_id == kid
+        if active and not allow_active:
             raise ArgumentError("cannot supersede the active key; activate a replacement first")
-        if kid not in self._state.retained_key_ids:
+        if not active and kid not in self._state.retained_key_ids:
             raise ArgumentError(f"no retained key with kid {kid!r}")
 
         if self._schedule_deletion:
@@ -459,7 +467,10 @@ class AwsKmsKeyProvider(KeyProvider):
             except NotImplementedError as e:
                 raise ArgumentError(str(e)) from e
 
-        self._state.retained_key_ids.remove(kid)
+        if active:
+            self._state.active_key_id = ""
+        else:
+            self._state.retained_key_ids.remove(kid)
         self._jwk_cache.pop(kid, None)
 
     # ------------------------------------------------------------------
