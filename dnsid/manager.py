@@ -1540,6 +1540,7 @@ class IdentityManager:
             raise VerificationError(
                 VerificationCode.RECORD_INVALID,
                 f"expected exactly one _dnsid TXT record, got {len(records)}",
+                resource_absent=not records,
             )
 
         raw = records[0].concatenate_strings()

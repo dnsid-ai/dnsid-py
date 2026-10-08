@@ -107,12 +107,14 @@ class VerificationError(DNSidError):
         cause: BaseException | None = None,
         verified_governance_id: str | None = None,
         verified_entity_key_thumbprint: str | None = None,
+        resource_absent: bool = False,
     ) -> None:
         """Initialize the error with a structured code and message.
 
         Args:
             code: Failure category from :class:`~dnsid.enums.VerificationCode`.
             message: Human-readable description of the failure.
+            resource_absent: True only for a missing expected DNS resource.
             transient: True when retrying the operation may succeed.
             agent_state: Agent lifecycle state reported by the status endpoint,
                 when known.
@@ -128,6 +130,7 @@ class VerificationError(DNSidError):
         self.code = code
         self.message = message
         self.transient = transient
+        self.resource_absent = resource_absent
         self.agent_state = agent_state
         self.category = category
         self.verified_governance_id = verified_governance_id

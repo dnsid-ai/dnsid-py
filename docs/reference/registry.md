@@ -448,6 +448,135 @@ returns the original pending/accepted result for the same
 (identity, key, byte-hash) triple and rejects key reuse with
 different bytes.
 
+## `ManagedIssuanceState`
+
+```python
+from dnsid import ManagedIssuanceState
+```
+
+Durable intent, trusted key bindings, exact signed bytes, and append outcome.
+
+Persist this with `to_dict` in owner-only atomic storage. Resume with
+`from_dict`; never replace bytes or keys after an unknown outcome.
+
+### `to_dict`
+
+```python
+ManagedIssuanceState.to_dict() -> dict[str, Any]
+```
+
+Return JSON-compatible recovery data (no private keys or credentials).
+
+### `from_dict`
+
+```python
+ManagedIssuanceState.from_dict(data: dict[str, Any]) -> ManagedIssuanceState
+```
+
+Restore exact bytes and typed submission data from trusted local storage.
+
+## `issue_managed_identity`
+
+```python
+from dnsid import issue_managed_identity
+```
+
+```python
+issue_managed_identity(*, domain: str, governance_id: str, log_reference: str, entity_key: JWK, operational_key_provider: KeyProvider, registry_client: AbstractRegistryClient, idempotency_key: str, persist_issuance: Callable[[ManagedIssuanceState], None], issuance: ManagedIssuanceState | None = None) -> ManagedIssuanceState
+```
+
+Issue or resume one operation, persisting intent and bytes before writes.
+
+The caller serializes operations and loads the existing state. Every
+persistence hook must complete durably or raise. Pending results require
+another call with the saved state; accepted/rejected results are not sent
+again. Publication and independent public verification remain separate.
+
+## `register_managed_identity`
+
+```python
+from dnsid import register_managed_identity
+```
+
+```python
+register_managed_identity(name: str, loaded: LoadedConfig, credential: str, store: FileRegistrationStore, input: AgentRegistrationInput | None = None, *, key_provider: KeyProvider | None = None, provider_reference: str = '', deps: IdentityManagerDependencies | None = None, log_registry_reference: str = '', timeout: float = 300.0, interval: float = 1.0, cancelled: threading.Event | None = None, replace_terminal: bool = False) -> ManagedRegistrationResult
+```
+
+Register/resume a case-sensitive name with fresh public ACTIVE evidence.
+
+Requires permanent organization-scoped named replay on the registry.
+Resolve verified account bindings before generation; retain the initial
+public key and derive replay keys from organization/name/thumbprint.
+Use the same store to resume. Explicit replacement requires verified terminal
+history and a fresh key. Caller-injected key/log providers need stable references.
+The five-minute deadline covers SDK networking; injected dependencies must honor
+remaining_seconds(). Final verification is isolated from application policy/cache,
+and does not widen the returned manager's counterparty acceptance.
+
+## `ManagedRegistrationResult`
+
+```python
+from dnsid import ManagedRegistrationResult
+```
+
+Retained creation snapshot, local application manager, and fresh public evidence.
+
+## `FileRegistrationStore`
+
+```python
+from dnsid import FileRegistrationStore
+```
+
+Named operations and separate private keys on durable POSIX local storage.
+
+Requires an existing parent, flock, atomic replace, and file/directory fsync.
+Back up both operations/ and keys/ trees; container-local storage is not durable.
+Kernel locks recover after process exit. Never delete a live lock sidecar.
+
+**Attributes:**
+
+- `key_path` (`Path`): Return the stable private-key location, separate from recovery state.
+
+### `FileRegistrationStore` constructor
+
+```python
+FileRegistrationStore(directory: Path | str) -> None
+```
+
+Select an explicit durable directory; initialization occurs under exclusive().
+
+### `select`
+
+```python
+FileRegistrationStore.select(registry: str, organization: str, name: str) -> FileRegistrationStore
+```
+
+Select a safe tenant-isolated path; the tuple is also checked in state.
+
+### `exclusive`
+
+```python
+FileRegistrationStore.exclusive() -> Iterator[None]
+```
+
+Hold a nonblocking process/thread lock; kernel recovery handles process death.
+
+### `load`
+
+```python
+FileRegistrationStore.load() -> dict[str, Any] | None
+```
+
+Read bounded JSON, rejecting abandoned or partial initialization artifacts.
+
+### `save`
+
+```python
+FileRegistrationStore.save(state: dict[str, Any]) -> None
+```
+
+Flush public state before atomic replacement, then flush the parent directory.
+
 ## `AgentRegistrationInput`
 
 ```python
