@@ -715,6 +715,15 @@ class C2spTlogReader(LogReader):
         return verify_occurrence(entry, verified, verifier_options).event
 
     @_verification_boundary
+    def recover_issuance(self, domain: str, entity_key: JWK) -> tuple[bytes, LogRef]:
+        """Recover exact ISSUANCE bytes from complete, inclusion-verified history."""
+        history = self._load_complete_history(domain, entity_key)
+        for entry in history.current_stream_events:
+            if isinstance(entry.event, IssuanceEvent):
+                return entry.data, LogRef.parse(f"{self.parsed.lr}@{entry.index}")
+        raise _log_error("verified stream has no ISSUANCE")
+
+    @_verification_boundary
     def rebuild_history(self, domain: str) -> list[AnyLogEvent]:
         """Return the verified lifecycle events for *domain* in log order.
 

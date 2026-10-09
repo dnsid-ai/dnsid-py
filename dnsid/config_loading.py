@@ -71,6 +71,14 @@ class LogTrust:
 
 
 @dataclass
+class KeyGenerationConfig:
+    """Recoverable key-generation selection, scoped to one named operation."""
+
+    locator: str
+    algorithm: str
+
+
+@dataclass
 class KeySource:
     """Select an operational provider using non-secret deployment settings.
 
@@ -90,8 +98,19 @@ class KeySource:
     """Known provider name: file, aws-kms, google-kms, or azure-key-vault."""
     key_ref: str | None = None
     """Stable existing operational key reference."""
+    generation: KeyGenerationConfig | None = None
+    """Stable generation locator and algorithm; used only by managed registration."""
     settings: dict[str, Any] | None = None
     """Non-secret provider settings; authentication uses ambient credentials."""
+
+
+@dataclass
+class ManagedRegistrationConfig:
+    """Setup-only expected accountability and independently selected bootstrap URL."""
+
+    governance_id: str = ""
+    entity_key_url: str = ""
+    organization_id: str = ""
 
 
 @dataclass
@@ -105,6 +124,7 @@ class LoadedConfig:
     log_trust: LogTrust = field(default_factory=LogTrust)
     registry: RegistryConfig = field(default_factory=RegistryConfig)
     key_source: KeySource = field(default_factory=KeySource)
+    registration: ManagedRegistrationConfig = field(default_factory=ManagedRegistrationConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +219,7 @@ def load_file(path: Path | str) -> LoadedConfig:
     """
     source = str(path)
     root = _json_object(Path(path).read_bytes(), source)
-    _reject_unknown(root, source, ("dnsid", "logTrust", "registry", "keySource"))
+    _reject_unknown(root, source, ("dnsid", "logTrust", "registry", "keySource", "registration"))
     loaded = LoadedConfig()
 
     if "dnsid" in root:
@@ -228,6 +248,18 @@ def load_file(path: Path | str) -> LoadedConfig:
         loaded.registry = RegistryConfig(
             registry_url=_typed(registry, "registryUrl", str, f"{source}: registry") or ""
         )
+    if "registration" in root:
+        registration = _object(root["registration"], f"{source}: registration")
+        _reject_unknown(
+            registration,
+            f"{source}: registration",
+            ("organizationId", "governanceId", "entityKeyUrl"),
+        )
+        loaded.registration = ManagedRegistrationConfig(
+            governance_id=_typed(registration, "governanceId", str, source) or "",
+            entity_key_url=_typed(registration, "entityKeyUrl", str, source) or "",
+            organization_id=_typed(registration, "organizationId", str, source) or "",
+        )
     if "keySource" in root:
         raw = _object(root["keySource"], f"{source}: keySource")
         _reject_unknown(
@@ -236,12 +268,21 @@ def load_file(path: Path | str) -> LoadedConfig:
             (
                 "provider",
                 "keyRef",
+                "generation",
                 "settings",
                 "cliDirectory",
                 "entityKeyPath",
                 "keyStorePath",
             ),
         )
+        generation = None
+        if "generation" in raw:
+            spec = _object(raw["generation"], f"{source}: generation")
+            _reject_unknown(spec, source, ("locator", "algorithm"))
+            generation = KeyGenerationConfig(
+                _typed(spec, "locator", str, source) or "",
+                _typed(spec, "algorithm", str, source) or "",
+            )
         loaded.key_source = KeySource(
             **_snake_keys(
                 {
@@ -255,6 +296,7 @@ def load_file(path: Path | str) -> LoadedConfig:
                     )
                 }
             ),
+            generation=generation,
             settings=_object(raw["settings"], source) if "settings" in raw else None,
         )
     return loaded
@@ -428,6 +470,7 @@ def merge_loaded_config(base: LoadedConfig, overlay: LoadedConfig) -> LoadedConf
             entity_key_path=source.entity_key_path
             if source.entity_key_path is not None else base.key_source.entity_key_path,
         ),
+        registration=_merge_fields(base.registration, overlay.registration),
     )
 
 
@@ -496,15 +539,8 @@ def _log_registry_from_trust(trust: LogTrust, transport: TransportConfig) -> Log
         create_dnsid_managed_verification_registry,
     )
 
-    variants = [f.name for f in fields(trust) if getattr(trust, f.name) is not None]
-    if len(variants) != 1:
-        raise ArgumentError(
-            "log_trust requires exactly one of managed, profile, policy_document, "
-            f"policy_url; got {variants or 'none'}"
-        )
+    _validate_log_trust(trust)
     if trust.managed is not None:
-        if trust.managed is not True:
-            raise ArgumentError("log_trust.managed must be true when present")
         return create_dnsid_managed_verification_registry()
     return create_c2sp_tlog_verification_registry(
         C2spTlogVerificationOptions(
@@ -517,6 +553,14 @@ def _log_registry_from_trust(trust: LogTrust, transport: TransportConfig) -> Log
             max_clock_skew_ms=0,
         )
     )
+
+
+def _validate_log_trust(trust: LogTrust) -> None:
+    variants = [f.name for f in fields(trust) if getattr(trust, f.name) is not None]
+    if len(variants) != 1:
+        raise ArgumentError("log_trust requires exactly one trust source")
+    if trust.managed is not None and trust.managed is not True:
+        raise ArgumentError("log_trust.managed must be true when present")
 
 
 _CLOUD_PACKAGES = {
@@ -543,7 +587,22 @@ def _validate_key_source(source: KeySource) -> Any:
     provider = source.provider or "file"
     if provider not in {"file", *_CLOUD_PACKAGES}:
         raise ArgumentError("unknown key_source.provider")
-    if (source.cli_directory or source.key_store_path) and (provider != "file" or source.key_ref):
+    if source.generation is not None:
+        if (
+            not isinstance(source.generation, KeyGenerationConfig)
+            or not isinstance(source.generation.locator, str)
+            or not source.generation.locator
+            or source.generation.algorithm not in {"EdDSA", "ES256"}
+            or source.key_ref
+        ):
+            raise ArgumentError(
+                "generation requires a stable locator and EdDSA or ES256, not key_ref"
+            )
+        if provider != "file":
+            raise ArgumentError(f"{provider} cannot guarantee concurrent generation; use key_ref")
+    if (source.cli_directory or source.key_store_path) and (
+        provider != "file" or source.key_ref or source.generation
+    ):
         raise ArgumentError("CLI/key_store_path cannot combine with provider key selection")
     if provider == "file":
         if source.settings:
@@ -578,6 +637,8 @@ def _operational_key_provider(source: KeySource, domain: str) -> KeyProvider | N
     from .local_key_provider import LocalKeyProvider
 
     factory = _validate_key_source(source)
+    if source.generation is not None:
+        raise ArgumentError("Construct opens existing keys only; use managed registration")
     if source.provider == "aws-kms":
         from .aws_kms_key_provider import AwsKmsConfig, AwsKmsKeyProvider, BotoKmsFacade
 
@@ -681,7 +742,8 @@ def registry_client_from_environment(env: Mapping[str, str] | None = None) -> Re
     loaded = load_environment(env)
     source = os.environ if env is None else env
     return RegistryClient(
-        loaded.registry.registry_url or None, api_key=source.get("DNSID_API_KEY"),
+        loaded.registry.registry_url or None,
+        api_key=source.get("DNSID_API_KEY"),
         transport_config=loaded.dnsid.transport,
     )
 
