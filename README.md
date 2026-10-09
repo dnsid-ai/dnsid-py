@@ -642,6 +642,8 @@ replace another mode. To clear a loaded field, edit the merged config before
 
 ## Examples
 
+For status intervals, entity-key pins, and log/bundle trust, see the [trust policy example](examples/trust-policy/) and [full guide](https://docs.dnsid.ai/sdk-trust-policy/).
+
 Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples). Each subdirectory is self-contained.
 
 | Example | Description | Prerequisites |
