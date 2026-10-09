@@ -264,6 +264,16 @@ class LogReader(ABC):
         MUST verify inclusion proofs, timestamp proofs, and append-only consistency.
         """
 
+    def recover_issuance(self, domain: str, entity_key: JWK) -> tuple[bytes, LogRef]:
+        """Return the exact included ISSUANCE and its reference under trusted history.
+
+        Managed recovery uses this binding-owned read to compact accepted bytes
+        and to open an already-issued identity without preparation or append.
+        Unsupported readers fail closed.
+        """
+        raise VerificationError(VerificationCode.LOG_ERROR, "ISSUANCE recovery unavailable")
+
+
     def rebuild_history_through(
         self,
         domain: str,
