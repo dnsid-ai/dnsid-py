@@ -312,7 +312,7 @@ Return the public JWK for *kid*.
 
 **Raises:**
 
-- `ArgumentError`: If *kid* is neither the active key nor a retained key.
+- `ArgumentError`: If *kid* is not an active, retained, or pending key.
 
 ### `list_key_ids`
 
@@ -341,6 +341,17 @@ converted from DER to the JOSE IEEE P1363 format.
 **Raises:**
 
 - `ArgumentError`: If the payload exceeds the RAW limit for Ed25519, or the KMS response is inconsistent (missing signature, algorithm mismatch, or unexpected signing key).
+
+### `sign_key`
+
+```python
+AwsKmsKeyProvider.sign_key(kid: str, payload: bytes) -> bytes
+```
+
+Sign with an active or pending KMS key for rotation authorization.
+
+Applies the same payload limits and response validation as ``sign``.
+Retained keys cannot sign.
 
 ### `generate_key`
 

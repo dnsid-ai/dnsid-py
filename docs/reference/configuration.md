@@ -275,8 +275,9 @@ Apply *overlay* onto *base* field-wise; a present overlay field wins.
 
 Presence, not truthiness: ``trusted_entities=[]`` replaces a loaded list.
 Lists replace, never concatenate. ``log_trust`` is replaced as a whole when
-the overlay sets any variant. See the module docstring for the default
-values that cannot express presence.
+the overlay sets any variant. Operational ``key_source`` fields replace as
+a group; ``entity_key_path`` merges independently. See the module docstring
+for the default values that cannot express presence.
 
 ## `construct_identity_manager`
 

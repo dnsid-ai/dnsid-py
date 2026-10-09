@@ -633,7 +633,8 @@ or environment variables; loading is a separate step, below.
 
 Loaders parse; constructors default. Each source has one loader returning a
 `LoadedConfig` with only the fields the source actually carries; `merge_loaded_config`
-combines them field-wise (later wins, lists replace, `log_trust` is atomic);
+combines them field-wise (later wins, lists replace; `log_trust` and operational
+`key_source` fields replace as groups);
 `construct_identity_manager` fills `deps.log_registry` from `log_trust` and key providers from
 `key_source` when the caller did not supply them, then calls the ordinary
 `IdentityManager` constructor. The one-call constructors are exactly
