@@ -647,6 +647,7 @@ Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/
 | Example | Description | Prerequisites |
 |---|---|---|
 | [examples/local-key-provider/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/local-key-provider) | File-backed local key provider demo | None — fully self-contained |
+| [examples/published-signing/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/published-signing) | Load deployment config, verify an existing identity, and sign with AWS KMS or file custody | Published identity and its existing operational key |
 | [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Local registry (Docker + DNSid CLI) |
 | [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | Network access — defaults to a hosted sandbox identity and the managed production log |
 | [examples/webbotauth/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/webbotauth) | Sign and verify bot HTTP requests with `WebBotAuthProfile` | None — fully self-contained |
