@@ -98,6 +98,8 @@ token is not sufficient. Legacy status reads are public, but Live status
 requires the same owner authentication because it
 may expose a proof challenge. A configured credential is sent on all reads.
 The credential is never included in ``repr()``/``str()``, exceptions, or logs.
+Requests share a protected connection pool, including when transport settings
+are omitted. Use a ``with`` block or call ``close()`` after the last request.
 
 Restore/reactivation operations (un-retiring or un-revoking an agent) are
 deliberately not exposed: the registry treats RETIRED and REVOKED as
@@ -123,6 +125,14 @@ Initialize the client with a registry base URL and optional credential.
 **Raises:**
 
 - `ValueError`: If *base_url* is not a safe HTTPS or loopback HTTP URL, or *api_key* contains control characters that could corrupt the Authorization header.
+
+### `close`
+
+```python
+RegistryClient.close() -> None
+```
+
+Close pooled registry connections after the last request.
 
 ### `register_agent`
 

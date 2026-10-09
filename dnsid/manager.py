@@ -883,7 +883,21 @@ class IdentityManager:
         )
 
         if rotation.activated:
-            self._local_identity.ku_url = self._rotation_publication(rotation)
+            try:
+                active = target.signing_key()
+                if (
+                    active.kid != rotation.new_kid
+                    or active.thumbprint() != rotation.new_thumbprint
+                ):
+                    raise ValidationError("active target key does not match persisted rotation")
+                ku_url = self._rotation_publication(rotation)
+            except Exception as exc:
+                raise ManagedKeyRotationActivationError(
+                    "failed to restore the activated managed key rotation",
+                    self._clone_rotation(rotation),
+                    cause=exc,
+                ) from exc
+            self._local_identity.ku_url = ku_url
             self._key_provider = target
             if not rotation.application_signing_paused:
                 return rotation

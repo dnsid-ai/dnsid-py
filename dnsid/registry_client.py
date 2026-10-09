@@ -7,6 +7,8 @@ from dataclasses import replace
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
+
 from ._verification_budget import remaining_seconds
 from .enums import RegistryRevocationReason
 from .interfaces import AbstractRegistryClient
@@ -78,6 +80,8 @@ class RegistryClient(AbstractRegistryClient):
     requires the same owner authentication because it
     may expose a proof challenge. A configured credential is sent on all reads.
     The credential is never included in ``repr()``/``str()``, exceptions, or logs.
+    Requests share a protected connection pool, including when transport settings
+    are omitted. Use a ``with`` block or call ``close()`` after the last request.
 
     Restore/reactivation operations (un-retiring or un-revoking an agent) are
     deliberately not exposed: the registry treats RETIRED and REVOKED as
@@ -144,10 +148,11 @@ class RegistryClient(AbstractRegistryClient):
         from .manager import validate_dnsid_config
         from .models import DnsidConfig
 
-        if transport_config is not None:
-            validate_dnsid_config(DnsidConfig(transport=transport_config))
+        transport_config = transport_config if transport_config is not None else TransportConfig()
+        validate_dnsid_config(DnsidConfig(transport=transport_config))
         self._api_key = stripped
         self._transport_config = copy.deepcopy(transport_config)
+        self._http_client: httpx.Client | None = None
 
     def __repr__(self) -> str:
         """Return a repr that reports whether a credential is set, never its value."""
@@ -159,44 +164,48 @@ class RegistryClient(AbstractRegistryClient):
 
     __str__ = __repr__
 
-    def _http_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        import httpx
+    def close(self) -> None:
+        """Close pooled registry connections after the last request."""
+        if self._http_client is not None:
+            self._http_client.close()
 
+    def __enter__(self) -> RegistryClient:
+        """Return this client for use in a ``with`` block."""
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        """Close pooled connections on leaving a ``with`` block."""
+        self.close()
+
+    def _http_request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        from ._https_client import _read_limited
+        from .enums import VerificationCode
         from .safe_transport import make_ssrf_safe_transport
 
         kwargs["timeout"] = remaining_seconds(kwargs.pop("timeout", 10.0))
-        if self._transport_config is None:
-            if method == "DELETE":
-                return httpx.request(method, url, **kwargs)
-            return getattr(httpx, method.lower())(url, **kwargs)
-        with httpx.Client(
-            transport=make_ssrf_safe_transport(
-                self._transport_config,
-                allow_loopback_host=urlsplit(self._base_url).hostname
-                if self._is_loopback
-                else None,
-            ),
-            trust_env=False,
-            follow_redirects=False,
-        ) as client:
-            with client.stream(method, url, **kwargs) as response:
-                body = bytearray()
-                for chunk in response.iter_bytes(chunk_size=65536):
-                    remaining_seconds()
-                    if len(body) + len(chunk) > 4 * 1024 * 1024:
-                        from .enums import VerificationCode
-                        from .exceptions import VerificationError
-
-                        raise VerificationError(
-                            VerificationCode.LOG_ERROR, "registry response resource limit exceeded"
-                        )
-                    body.extend(chunk)
-                return httpx.Response(
-                    response.status_code,
-                    headers=response.headers,
-                    content=bytes(body),
-                    request=response.request,
-                )
+        if self._http_client is None:
+            self._http_client = httpx.Client(
+                transport=make_ssrf_safe_transport(
+                    self._transport_config,
+                    allow_loopback_host=urlsplit(self._base_url).hostname
+                    if self._is_loopback
+                    else None,
+                ),
+                trust_env=False,
+                follow_redirects=False,
+            )
+        with self._http_client.stream(method, url, **kwargs) as response:
+            body = _read_limited(
+                response, 4 * 1024 * 1024, VerificationCode.LOG_ERROR,
+                "registry response resource limit exceeded",
+            )
+            headers = response.headers.copy()
+            # The body is decoded; do not decode it again or retain its compressed length.
+            headers.pop("content-encoding", None)
+            headers.pop("content-length", None)
+            return httpx.Response(
+                response.status_code, headers=headers, content=body, request=response.request,
+            )
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}

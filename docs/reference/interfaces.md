@@ -82,7 +82,7 @@ encode key IDs as '{domain}#{kid}'.
 KeyProvider.jwk(kid: str) -> JWK
 ```
 
-Return the JWK for the given kid (active or retained).
+Return the JWK for the given kid (active, retained, or pending).
 
 **Raises:**
 
