@@ -228,6 +228,15 @@ def test_fresh_setup_and_completed_resume_preserve_application_policy(tmp_path):
     assert setup.client.register_agent.call_count == 1
     assert setup.client.prepare_issuance.call_count == 1
     assert setup.client.submit_prepared_event.call_count == 1
+    assert setup.client.close.call_count == 2
+
+
+def test_failed_setup_closes_owned_registry_client(tmp_path):
+    setup = Setup(tmp_path)
+    setup.client.register_agent.side_effect = RuntimeError("registry unavailable")
+    with pytest.raises(ManagedRegistrationError):
+        setup.run()
+    setup.client.close.assert_called_once()
 
 
 def test_configuration_file_and_merge_keep_setup_outside_core(tmp_path):

@@ -739,6 +739,7 @@ def register_managed_identity(
             or (isinstance(error, OSError) and category != "missing_key"),
         ) from error
     finally:
+        client.close()
         if manager is not None and not success:
             manager.close()
 

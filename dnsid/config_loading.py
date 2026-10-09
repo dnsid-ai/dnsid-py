@@ -4,7 +4,8 @@ Loaders parse; constructors default. Each loader returns a :class:`LoadedConfig`
 holding only the fields present in its source: empty or whitespace-only values
 are absent, nothing is defaulted or derived, and no second source is consulted.
 :func:`merge_loaded_config` combines partial results field-wise (later wins; lists replace;
-``log_trust`` is atomic). :func:`construct_identity_manager` fills the dependencies the caller
+``log_trust`` and operational ``key_source`` are atomic).
+:func:`construct_identity_manager` fills the dependencies the caller
 did not supply from ``log_trust`` and ``key_source``, then calls the ordinary
 :class:`~dnsid.IdentityManager` constructor, which applies every default and
 validation.
@@ -451,14 +452,24 @@ def merge_loaded_config(base: LoadedConfig, overlay: LoadedConfig) -> LoadedConf
 
     Presence, not truthiness: ``trusted_entities=[]`` replaces a loaded list.
     Lists replace, never concatenate. ``log_trust`` is replaced as a whole when
-    the overlay sets any variant. See the module docstring for the default
-    values that cannot express presence.
+    the overlay sets any variant. Operational ``key_source`` fields replace as
+    a group; ``entity_key_path`` merges independently. See the module docstring
+    for the default values that cannot express presence.
     """
+    source = overlay.key_source
+    operational_source = source if any(
+        getattr(source, f.name) is not None
+        for f in fields(source) if f.name != "entity_key_path"
+    ) else base.key_source
     return LoadedConfig(
         dnsid=_merge_fields(base.dnsid, overlay.dnsid),
         log_trust=replace(overlay.log_trust if _has_trust(overlay.log_trust) else base.log_trust),
         registry=_merge_fields(base.registry, overlay.registry),
-        key_source=_merge_fields(base.key_source, overlay.key_source),
+        key_source=replace(
+            operational_source,
+            entity_key_path=source.entity_key_path
+            if source.entity_key_path is not None else base.key_source.entity_key_path,
+        ),
         registration=_merge_fields(base.registration, overlay.registration),
     )
 
