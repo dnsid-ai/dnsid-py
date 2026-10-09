@@ -9,13 +9,15 @@ and Idempotency).
 from __future__ import annotations
 
 import datetime
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from dnsid import (
     JWK,
+    JWKS,
     IdentityManager,
     IdentityManagerDependencies,
     KeyRotationPreparationRequest,
@@ -33,6 +35,7 @@ from dnsid.exceptions import (
 )
 from dnsid.interfaces import KeyProvider
 from tests._config import make_config
+from tests._registry_http import patch_registry_http
 
 _DOMAIN = "agent.example.com"
 _LR = "c2sp-tlog:testnet:https://log.example#instance_AAAAAAAAAAAAAAAAAAAAAA"
@@ -109,7 +112,7 @@ class FakeRotationRegistry:
         new_key = request.public_key
         event = KeyRotationEvent(
             domain=domain,
-            previous_kid="ku-1",
+            previous_kid=getattr(self, "previous_kid", "ku-1"),
             previous_thumbprint=request.previous_key_id,
             new_kid=new_key.kid,
             new_thumbprint=new_key.thumbprint(),
@@ -152,7 +155,15 @@ def _manager(provider: RotationProvider) -> IdentityManager:
         status_url=f"https://{_DOMAIN}/status",
     )
     with patch("dnsid.manager.normalize_fqdn", side_effect=lambda s, **_: s):
-        return IdentityManager(config, provider, IdentityManagerDependencies())
+        manager = IdentityManager(config, provider, IdentityManagerDependencies())
+    manager._verify_publication_evidence = Mock(return_value=SimpleNamespace(
+        record=SimpleNamespace(
+            gi=config.identity.governance_id, lr=_LR,
+            v=config.identity.publish_profile, ku=config.identity.ku_url,
+        ),
+        jwks=JWKS([provider.jwk("ku-2")]),
+    ))
+    return manager
 
 
 def _hooks():
@@ -687,7 +698,7 @@ class TestRegistryRotationEndpoints:
             captured.update(url=url, json=json, headers=headers, timeout=timeout)
             return response
 
-        with patch("httpx.post", fake_post):
+        with patch_registry_http("httpx.post", fake_post):
             data = self._client().prepare_key_rotation(_DOMAIN, self._request(), "idem-9")
 
         assert data == PreparedRegistryEvent(b"prepared-bytes", _LR)
@@ -705,7 +716,7 @@ class TestRegistryRotationEndpoints:
         response.status_code = 200
         response.content = b"prepared-bytes"
         response.headers = {}
-        with patch("httpx.post", return_value=response):
+        with patch_registry_http("httpx.post", return_value=response):
             with pytest.raises(VerificationError, match="DNSID-Log-Reference"):
                 self._client().prepare_key_rotation(_DOMAIN, self._request(), "idem-9")
 
@@ -741,7 +752,7 @@ class TestRegistryRotationEndpoints:
             captured.update(url=url, content=content, headers=headers, timeout=timeout)
             return response
 
-        with patch("httpx.post", fake_post):
+        with patch_registry_http("httpx.post", fake_post):
             result = self._client().submit_prepared_event(_DOMAIN, b"entry", "idem-9")
 
         assert captured["url"].endswith("/tlog/events")
@@ -762,7 +773,7 @@ class TestRegistryRotationEndpoints:
         response.status_code = 200
         response.json.return_value = {"state": "weird"}
 
-        with patch("httpx.post", return_value=response):
+        with patch_registry_http("httpx.post", return_value=response):
             result = self._client().submit_prepared_event(_DOMAIN, b"entry", "idem-9")
 
         assert result.state == "pending"
@@ -771,7 +782,7 @@ class TestRegistryRotationEndpoints:
     def test_submit_transport_failure_remains_pending_for_same_byte_retry(self):
         import httpx
 
-        with patch("httpx.post", side_effect=httpx.ReadTimeout("timed out")):
+        with patch_registry_http("httpx.post", side_effect=httpx.ReadTimeout("timed out")):
             result = self._client().submit_prepared_event(
                 _DOMAIN, b"exact-entry", "idem-9"
             )
@@ -788,7 +799,7 @@ class TestRegistryRotationEndpoints:
         response.is_success = False
         response.status_code = 503
         response.json.return_value = {"error": code, "message": "retry exact bytes"}
-        with patch("httpx.post", return_value=response):
+        with patch_registry_http("httpx.post", return_value=response):
             result = self._client().submit_prepared_event(_DOMAIN, b"entry", "idem-9")
         assert result.state == "pending"
         assert result.error_code == code
@@ -802,7 +813,7 @@ class TestRegistryRotationEndpoints:
             "error": "TLOG_PREPARATION_MISMATCH",
             "message": "different bytes",
         }
-        with patch("httpx.post", return_value=response):
+        with patch_registry_http("httpx.post", return_value=response):
             result = self._client().submit_prepared_event(_DOMAIN, b"entry", "idem-9")
         assert result.state == "rejected"
         assert result.error_code == "TLOG_PREPARATION_MISMATCH"
@@ -815,7 +826,7 @@ class TestRegistryRotationEndpoints:
             "state": "accepted",
             "entry_hash": "0" * 64,
         }
-        with patch("httpx.post", return_value=response):
+        with patch_registry_http("httpx.post", return_value=response):
             with pytest.raises(VerificationError, match="different prepared-event"):
                 self._client().submit_prepared_event(_DOMAIN, b"entry", "idem-9")
 

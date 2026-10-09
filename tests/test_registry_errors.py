@@ -1,8 +1,7 @@
-from unittest.mock import patch
-
 import pytest
 
 from dnsid import RegistryClient, RegistryRequestError, VerificationError
+from tests._registry_http import patch_registry_http
 
 _KEY = "dnsid_test_key"
 
@@ -27,7 +26,7 @@ def _post(resp):
 def test_registry_error_carries_status_and_code_but_not_the_body():
     client = RegistryClient("https://registry.example.com", api_key=_KEY)
     body = {"error": "INVALID_TRANSITION", "message": "secret-ish detail token=abc"}
-    with patch("httpx.post", _post(_Resp(409, body))), pytest.raises(RegistryRequestError) as ei:
+    with patch_registry_http("httpx.post", _post(_Resp(409, body))), pytest.raises(RegistryRequestError) as ei:
         client.cancel_agent("a.example")
     err = ei.value
     assert isinstance(err, VerificationError)  # existing handlers still catch it
@@ -40,13 +39,13 @@ def test_registry_error_carries_status_and_code_but_not_the_body():
 def test_registry_error_ignores_free_text_codes_and_non_json():
     client = RegistryClient("https://registry.example.com", api_key=_KEY)
     with (
-        patch("httpx.post", _post(_Resp(500, {"error": "something went wrong: token=abc"}))),
+        patch_registry_http("httpx.post", _post(_Resp(500, {"error": "something went wrong: token=abc"}))),
         pytest.raises(RegistryRequestError) as ei,
     ):
         client.cancel_agent("a.example")
     assert ei.value.error_code == "" and ei.value.transient
     with (
-        patch("httpx.post", _post(_Resp(502, None, "<html>bad gateway</html>"))),
+        patch_registry_http("httpx.post", _post(_Resp(502, None, "<html>bad gateway</html>"))),
         pytest.raises(RegistryRequestError) as ei,
     ):
         client.cancel_agent("a.example")
@@ -61,7 +60,7 @@ def test_cancel_agent_posts_to_cancel_and_returns_lifecycle_result():
         seen["url"], seen["auth"] = url, headers.get("Authorization")
         return _Resp(200, {"id": "agent-1", "status": "cancelled"})
 
-    with patch("httpx.post", fake_post):
+    with patch_registry_http("httpx.post", fake_post):
         res = client.cancel_agent("a.example")
     assert seen["url"].endswith("/api/v1/agent/a.example/cancel")
     assert seen["auth"] == f"Bearer {_KEY}"

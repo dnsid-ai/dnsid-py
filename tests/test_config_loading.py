@@ -666,7 +666,7 @@ def test_merge_is_field_wise_and_log_trust_is_atomic():
         dns_server="1.1.1.1:53", ca_bundle_path="/ca.pem"
     )
     assert merged.log_trust == LogTrust(policy_document=b"policy")
-    assert merged.key_source == KeySource(cli_directory="/cli", key_store_path="/keys.json")
+    assert merged.key_source == KeySource(key_store_path="/keys.json")
     # Inputs are untouched.
     assert base.log_trust == LogTrust(managed=True)
 

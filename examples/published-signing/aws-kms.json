@@ -1,0 +1,23 @@
+{
+  "dnsid": {
+    "identity": {
+      "domain": "agent.example",
+      "governanceId": "example.com",
+      "ekUrl": "https://example.com/.well-known/dnsid/jwks.json",
+      "kuUrl": "https://agent.example/.well-known/dnsid/jwks.json",
+      "statusUrl": "https://agent.example/.well-known/dnsid/status.json",
+      "logRef": "<persisted lifecycle-log reference>"
+    }
+  },
+  "logTrust": {
+    "managed": true
+  },
+  "keySource": {
+    "provider": "aws-kms",
+    "keyRef": "<immutable signing-key ARN>",
+    "settings": {
+      "region": "us-east-1",
+      "algorithm": "ES256"
+    }
+  }
+}

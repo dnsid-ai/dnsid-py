@@ -2026,6 +2026,8 @@ class KeyRotationResult:
     submission: SubmissionResult | None = None
     activated: bool = False
     application_signing_paused: bool = False
+    previous_provider_reference: str = ""
+    new_provider_reference: str = ""
 
 
 # ---------------------------------------------------------------------------

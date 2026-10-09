@@ -108,7 +108,7 @@ class KeyProvider(ABC):
 
     @abstractmethod
     def jwk(self, kid: str) -> JWK:
-        """Return the JWK for the given kid (active or retained).
+        """Return the JWK for the given kid (active, retained, or pending).
 
         Raises:
             ArgumentError: If *kid* is not found.
@@ -159,11 +159,13 @@ class KeyProvider(ABC):
         """
 
     @abstractmethod
-    def supersede(self, kid: str) -> None:
+    def supersede(self, kid: str, *, allow_active: bool = False) -> None:
         """Rotate *kid* out of live use after a completed key rotation.
 
         The key leaves the live JWKS and is never used for signing again;
         implementations may retain the material in a log/archive/KMS for audit.
+        ``allow_active`` is only for an accepted, publicly verified cross-provider
+        rotation, after activation of the replacement in the target provider.
 
         Raises:
             ArgumentError: If *kid* is the current active key (activate a

@@ -98,6 +98,8 @@ token is not sufficient. Legacy status reads are public, but Live status
 requires the same owner authentication because it
 may expose a proof challenge. A configured credential is sent on all reads.
 The credential is never included in ``repr()``/``str()``, exceptions, or logs.
+Requests share a protected connection pool, including when transport settings
+are omitted. Use a ``with`` block or call ``close()`` after the last request.
 
 Restore/reactivation operations (un-retiring or un-revoking an agent) are
 deliberately not exposed: the registry treats RETIRED and REVOKED as
@@ -109,7 +111,7 @@ resolving and verifying the record with ``IdentityManager.verify_domain``.
 ### `RegistryClient` constructor
 
 ```python
-RegistryClient(base_url: str | None = None, *, api_key: str | None = None) -> None
+RegistryClient(base_url: str | None = None, *, api_key: str | None = None, transport_config: TransportConfig | None = None) -> None
 ```
 
 Initialize the client with a registry base URL and optional credential.
@@ -117,11 +119,20 @@ Initialize the client with a registry base URL and optional credential.
 **Arguments:**
 
 - `base_url` (`str | None`): HTTPS registry base URL, or HTTP loopback URL for the local registry; defaults to ``DEFAULT_REGISTRY_URL`` (the local registry from ``dnsid local up``). Hosted use requires an explicit URL; see `dnsid.registry_client_from_environment`. A trailing slash is stripped. — default `None`
+- `transport_config` (`TransportConfig | None`): Effective DNS/TLS settings for SDK-managed requests. — default `None`
 - `api_key` (`str | None`): Owner session or organization API-key credential sent as an ``Authorization: Bearer`` header. Whitespace-only values are treated as absent; without one hosted clients can only read legacy status. The loopback registry does not require a credential. Constructors never read the environment themselves. — default `None`
 
 **Raises:**
 
 - `ValueError`: If *base_url* is not a safe HTTPS or loopback HTTP URL, or *api_key* contains control characters that could corrupt the Authorization header.
+
+### `close`
+
+```python
+RegistryClient.close() -> None
+```
+
+Close pooled registry connections after the last request.
 
 ### `register_agent`
 
@@ -293,6 +304,17 @@ Returns ``None`` if the agent is not registered (HTTP 404). Live status
 requires owner/session/API-key authentication; legacy status is public.
 Returns a `RegistryAgentStatus` with computed boolean flags that
 mirror the TypeScript ``RegistryAgentStatus`` interface.
+
+### `get_organization_onboarding`
+
+```python
+RegistryClient.get_organization_onboarding() -> dict[str, Any]
+```
+
+Read account/GI proofs and delegation using authenticated effective transport.
+
+Pending proofs are not ready bindings. This read supplies no entity JWKS
+URL and makes no claim about named creation or permanent replay support.
 
 ### `get_registration`
 
