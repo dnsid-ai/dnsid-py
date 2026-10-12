@@ -1,4 +1,4 @@
-"""Web Bot Authentication profile.
+"""JWT bot bearer authentication (legacy module name, not RFC 9421 WBA).
 
 Application-layer helpers for authenticating web bots/agents via HTTP requests
 using DNSid-issued JWTs in the ``Authorization: Bearer`` header.
@@ -77,7 +77,7 @@ class BotIdentity:
 
 @dataclass
 class BotAuthConfig:
-    """Configuration for the Web Bot Auth profile.
+    """Configuration for JWT bot bearer authentication.
 
     Attributes:
         max_lifetime: Maximum acceptable JWT lifetime. Default 15 minutes.
@@ -115,7 +115,10 @@ _DEFAULT_BOT_JWT_EXPIRY = datetime.timedelta(minutes=5)
 
 
 class WebBotAuthProfile:
-    """Web bot authentication helpers using DNSid-issued JWTs.
+    """JWT bot bearer authentication using DNSid-issued JWTs.
+
+    The legacy class name is retained for compatibility. This is not RFC 9421
+    Web Bot Auth; use WBAHttpSigner and WBAHttpVerifier for that profile.
 
     Implements the Agent Identity Assertion (AIA) pattern for HTTP bot auth:
     - Signs outbound requests with ``Authorization: Bearer <dnsid-jwt>``

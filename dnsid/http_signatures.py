@@ -594,16 +594,25 @@ def _generate_nonce() -> str:
     return b64url_encode(os.urandom(32))
 
 
-def _build_signature_base(req: HttpRequest, params: SignatureParams) -> bytes:
+def _build_signature_base(
+    req: HttpRequest, params: SignatureParams, request_context: HttpRequest | None = None
+) -> bytes:
     from urllib.parse import parse_qsl, quote, urlsplit
 
-    _validate_component_identifiers(params.components, request_context=False)
+    _validate_component_identifiers(
+        params.components, request_context=request_context is not None
+    )
 
+    response = req
     lines: list[str] = []
     for component in params.components:
         name, component_parameters = _parse_component_identifier(component)
         parameter_values = dict(component_parameters)
         identifier = _canonical_component_identifier(component)
+        req = response
+        if "req" in parameter_values:
+            assert request_context is not None
+            req = request_context
         if name == "@method":
             value = req.method
         elif name == "@authority":

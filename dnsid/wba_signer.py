@@ -60,12 +60,11 @@ class WebBotAuthConfig:
     signature_agent_type: str = "directory"
     #: Request signature lifetime in seconds (sets ``expires``).
     signature_ttl: int = DEFAULT_SIGNATURE_TTL
-    #: Whether to send Signature-Agent.  The WBA draft makes it optional, but
-    #: Cloudflare interop requires it.
+    #: Whether to send Signature-Agent. Disable only with trusted out-of-band discovery.
     include_signature_agent: bool = True
     #: Lifetime for signatures attached to directory responses.
     directory_signature_ttl: int = DEFAULT_DIRECTORY_SIGNATURE_TTL
-    #: Non-negative verification tolerance reserved for the verifier API.
+    #: Non-negative verification tolerance in seconds.
     clock_skew: int = 5
 
     def __post_init__(self) -> None:
@@ -404,18 +403,8 @@ def serve_http_message_signatures_directory(
         tag=WBA_DIRECTORY_TAG,
     )
 
-    # Response signature base: @authority comes from the request context
-    # (";req"); the remaining components are response fields.
-    from .http_signatures import _resolve_authority
-
-    lines = [
-        f'"@authority";req: {_resolve_authority(req)}',
-        f'"content-type": {headers["content-type"]}',
-        f'"cache-control": {headers["cache-control"]}',
-        f'"content-digest": {headers["content-digest"]}',
-        f'"@signature-params": {params.value_string()}',
-    ]
-    sig_base = "\n".join(lines).encode("utf-8")
+    response = HttpRequest(method=req.method, url=req.url, headers=headers, body=body)
+    sig_base = _build_signature_base(response, params, request_context=req)
     sig_bytes = key_provider.sign(sig_base)
 
     headers["signature-input"] = params.serialize()

@@ -184,7 +184,44 @@ signed = http_sig.create_signed_http_request(req)
 vd = http_sig.verify_signed_http_request(signed)
 ```
 
-### Web bot authentication
+### Web Bot Auth (RFC 9421)
+
+Sign and verify DNSid WBA requests, including signed-directory discovery:
+
+```python
+from dnsid import (
+    HttpRequest, WBAHttpSigner, WBAHttpVerifier, WebBotAuthVerificationOptions,
+)
+
+request = HttpRequest(method="GET", url="https://target.example/api")
+WBAHttpSigner(key_provider, "agent.example").sign(request)
+identity = WBAHttpVerifier(manager).verify_web_bot_auth_signed_request(
+    request,
+    WebBotAuthVerificationOptions(signer_domain="agent.example"),
+)
+```
+
+The verifier needs only an identity resolver, not local signing keys. It verifies
+both signatures, binds the directory key to current DNSid `ku` material, and
+applies the resolver's entity acceptance on each invocation. Supply `peer_cert`
+in the options for the current application peer when `fl=mtls` applies; the
+directory endpoint's certificate is not a substitute.
+
+Discovery uses public-address-only HTTPS and same-host redirects. The complete
+operation has a default 30-second deadline; `timeout` can lower it. Directory
+responses are not cached. For one-time semantics, supply an atomic `replay_policy`
+callback (see the [API reference](https://docs.dnsid.ai/reference/py/profile-web-bot-auth/)).
+Without it, time validity limits reuse but does not detect it. Applications must
+decide whether the covered components are sufficient: WBA requires `@authority`,
+not `@method` or `@target-uri`.
+
+This is the narrower DNSid WBA profile targeting protocol and directory draft
+revision `00`, not a claim of general WBA or partner interoperability.
+
+### JWT bot bearer authentication
+
+The legacy `WebBotAuthProfile` name is retained for compatibility. It implements
+JWT bearer authentication, not RFC 9421 Web Bot Auth.
 
 Authenticate outbound bot/agent HTTP requests with DNSid-issued JWTs, and
 verify inbound bot identity from the `Authorization: Bearer` header.
@@ -288,7 +325,9 @@ dnsid/
 ├── registry_client.py   # RegistryClient — operator-side registry workflows
 ├── config_loading.py    # load_environment / load_file / load_cli_directory → merge → construct
 ├── c2sp_tlog/           # C2SP tile-log LogReader binding (lr=c2sp-tlog:...)
-├── web_bot_auth.py      # WebBotAuthProfile — web bot/agent HTTP authentication
+├── web_bot_auth.py      # Legacy WebBotAuthProfile — JWT bot bearer authentication
+├── wba_signer.py        # RFC 9421 WBA signing and directory serving
+├── wba_verifier.py      # DNSid WBA request and directory verification
 ├── _crypto.py           # JWK thumbprint (RFC 7638) and signature verification
 ├── _https_client.py     # HTTPS fetching with redirect enforcement and TLS cert capture
 ├── _default_resolver.py # Default DNS resolver (DoH or system via dnspython)

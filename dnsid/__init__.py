@@ -215,6 +215,7 @@ from .wba_signer import (
     WebBotAuthSigningOptions,
     serve_http_message_signatures_directory,
 )
+from .wba_verifier import WBAHttpVerifier, WebBotAuthVerificationOptions
 from .web_bot_auth import (
     BotAuthConfig,
     BotIdentity,
@@ -355,6 +356,8 @@ __all__ = [
     "publish_allowed_version",
     # Web Bot Auth profile
     "WBAHttpSigner",
+    "WBAHttpVerifier",
+    "WebBotAuthVerificationOptions",
     "WBAVariant",
     "WBADirectoryResponse",
     "WebBotAuthConfig",

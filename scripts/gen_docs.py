@@ -252,6 +252,8 @@ PAGES: list[dict] = [
             "BotIdentity",
             "VerifiedBotRequest",
             "WBAHttpSigner",
+            "WBAHttpVerifier",
+            "WebBotAuthVerificationOptions",
             "WBAVariant",
             "WBADirectoryResponse",
             "WebBotAuthConfig",

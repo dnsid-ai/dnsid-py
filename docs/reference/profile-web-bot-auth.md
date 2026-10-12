@@ -13,7 +13,10 @@ description: "Web Bot Auth request signing, verification, and key-directory serv
 from dnsid import WebBotAuthProfile
 ```
 
-Web bot authentication helpers using DNSid-issued JWTs.
+JWT bot bearer authentication using DNSid-issued JWTs.
+
+The legacy class name is retained for compatibility. This is not RFC 9421
+Web Bot Auth; use WBAHttpSigner and WBAHttpVerifier for that profile.
 
 Implements the Agent Identity Assertion (AIA) pattern for HTTP bot auth:
 - Signs outbound requests with ``Authorization: Bearer <dnsid-jwt>``
@@ -152,7 +155,7 @@ Resolves the JWT issuer's DNSid identity and verifies the signature.
 from dnsid import BotAuthConfig
 ```
 
-Configuration for the Web Bot Auth profile.
+Configuration for JWT bot bearer authentication.
 
 **Attributes:**
 
@@ -247,6 +250,70 @@ checked by the verifier, not a property of the signature bytes.
 **Raises:**
 
 - `ArgumentError`: If the signing key is not Ed25519, or an additional component is not a known derived component or a lowercase HTTP field name.
+
+## `WBAHttpVerifier`
+
+```python
+from dnsid import WBAHttpVerifier
+```
+
+Verify DNSid WBA requests and their signed directories.
+
+Construction needs no local identity or signing key. The default transport
+validates Web PKI and pins connections to public DNS addresses. An injected
+transport is trusted infrastructure and MUST enforce the same constraints,
+including on redirects and every connection; it must honor remaining_seconds().
+
+Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
+limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
+depth 16, 16 signatures, and five same-host HTTPS redirects. The complete
+operation has a default 30-second cooperative deadline.
+
+### `WBAHttpVerifier` constructor
+
+```python
+WBAHttpVerifier(resolver: IdentityResolver, *, config: WebBotAuthConfig | None = None, transport: httpx.BaseTransport | None = None) -> None
+```
+
+Set the identity resolver, profile configuration, and discovery transport.
+
+### `verify_web_bot_auth_signed_request`
+
+```python
+WBAHttpVerifier.verify_web_bot_auth_signed_request(req: HttpRequest, opts: WebBotAuthVerificationOptions | None = None) -> VerifiedDomain
+```
+
+Return the signer only after request, directory, and DNSid checks succeed.
+
+**Arguments:**
+
+- `req` (`HttpRequest`): Buffered application request, including exact supplied content.
+- `opts` (`WebBotAuthVerificationOptions | None`): Trusted discovery, application peer, deadline, and replay policy. — default `None`
+
+**Returns:**
+
+- `VerifiedDomain` — Verified DNSid signer identity, not application authorization.
+
+**Raises:**
+
+- `VerificationError`: On invalid evidence, discovery, acceptance, or replay.
+
+## `WebBotAuthVerificationOptions`
+
+```python
+from dnsid import WebBotAuthVerificationOptions
+```
+
+Trusted per-invocation WBA policy.
+
+Without ``signer_domain``, discovery can identify the signer only when
+``allow_signature_agent_domain`` is explicitly enabled. Discovery and
+redirects must remain on that signer's host; delegation is not supported.
+
+``replay_policy(domain, keyid, nonce, retain_until)`` must atomically record
+an unused tuple through the supplied Unix timestamp and return True, or
+return False for reuse. Exceptions fail closed. Blocking callbacks and
+injected resolvers must honor the shared verification budget.
 
 ## `WBAVariant`
 

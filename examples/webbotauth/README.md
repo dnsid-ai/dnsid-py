@@ -1,4 +1,6 @@
-# Web Bot Auth Example
+# JWT Bot Bearer Authentication Example
+
+The legacy `WebBotAuthProfile` name does not refer to RFC 9421 Web Bot Auth.
 
 Demonstrates the signing side of `WebBotAuthProfile`: authenticating outbound
 bot/agent HTTP requests with DNSid-issued JWTs.
