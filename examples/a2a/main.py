@@ -52,7 +52,7 @@ async def main() -> None:
 
 async def send_hello(idm, agent, peer_fqdn: str) -> None:
     await async_retry_transient(
-        lambda: asyncio.to_thread(idm.verify_domain, peer_fqdn),
+        lambda: idm.async_verify_domain(peer_fqdn),
         max_attempts=20,
         base_delay=0.5,
         max_delay=5.0,

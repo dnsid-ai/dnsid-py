@@ -168,7 +168,7 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, object]:
     await asyncio.sleep(2.5)
     await poll(
         f"self-verify {idm.local_domain}",
-        lambda: asyncio.to_thread(idm.verify_domain, idm.local_domain),
+        lambda: idm.async_verify_domain(idm.local_domain),
     )
 
     return idm, agent, agent.stop

@@ -110,7 +110,7 @@ instead of `published identity record`.
 | Registration | `RegistryClient.register_agent()` registers with the registry |
 | Verification | The agent requests verification, polls the status document for the challenge nonce, signs the decoded nonce with its active key, and submits it via `RegistryClient.submit_challenge_signature()`; the registry transitions `VERIFICATION → VERIFIED` |
 | Publish | `IdentityManager.publish_to_registry()` validates and signs the registry's canonical content, then submits the signature |
-| Self-verify | `idm.verify_domain(own_domain)` confirms the published record is DNS-resolvable |
+| Self-verify | `await idm.async_verify_domain(own_domain)` confirms the published record is DNS-resolvable |
 | Send (Alice) | `agent.create_client()` returns an `A2AClient` that builds a signed A2A 1.0 `SendMessage` JSON-RPC request via `create_signed_http_client` (RFC 9421) |
-| Receive (Bob) | FastAPI middleware calls `HttpSignatureProfile.verify_signed_http_request()` on every inbound POST and stores the verified sender as a `VerifiedSenderUser` on the request; the a2a-sdk `DefaultRequestHandler` dispatches the JSON-RPC method to the `AgentExecutor` |
+| Receive (Bob) | FastAPI middleware calls `await HttpSignatureProfile.async_verify_signed_http_request()` on every inbound POST and stores the verified sender as a `VerifiedSenderUser` on the request; the a2a-sdk `DefaultRequestHandler` dispatches the JSON-RPC method to the `AgentExecutor` |
 | Echo (Bob) | `echo_executor` (an a2a-sdk `AgentExecutor`) reads the sender from `RequestContext`, builds a reply, and publishes it to the `EventQueue` |

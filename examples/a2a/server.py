@@ -150,8 +150,8 @@ class _DnsidSignatureMiddleware:
 
         dnsid_req = DnsidRequest(method=scope["method"], url=url, headers=headers_raw, body=body)
         try:
-            verified = await asyncio.to_thread(
-                self._http_sig.verify_signed_http_request, dnsid_req, _VERIFY_OPTS
+            verified = await self._http_sig.async_verify_signed_http_request(
+                dnsid_req, _VERIFY_OPTS
             )
             scope = {**scope, "_dnsid_sender": VerifiedSenderUser(verified.domain)}
             print(

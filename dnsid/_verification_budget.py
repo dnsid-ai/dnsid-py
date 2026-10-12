@@ -4,13 +4,14 @@ Injected blocking dependencies must honor ``remaining_seconds()`` and check
 cancellation between reads; Python cannot forcibly interrupt arbitrary callbacks.
 """
 
+import asyncio
 import contextvars
 import math
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from functools import wraps
 from typing import ParamSpec, TypeVar
@@ -152,6 +153,28 @@ def bounded_http_timeout(timeout: float | httpx.Timeout | None = None) -> httpx.
             for name, limit in value.as_dict().items()
         }
     )
+
+
+def async_verification_operation(
+    function: Callable[P, Awaitable[T]],
+) -> Callable[P, Awaitable[T]]:
+    """Apply the shared verification budget without blocking the event loop."""
+
+    @wraps(function)
+    async def bounded(*args: P.args, **kwargs: P.kwargs) -> T:
+        with verification_budget() if _budget.get() is None else nullcontext():
+            remaining_seconds()
+            current = _budget.get()
+            assert current is not None
+            try:
+                async with asyncio.timeout(current[0] - time.monotonic()):
+                    result = await function(*args, **kwargs)
+                    remaining_seconds()
+                    return result
+            except TimeoutError as exc:
+                raise BudgetExhausted() from exc
+
+    return bounded
 
 
 def verification_operation(function: Callable[P, T]) -> Callable[P, T]:
