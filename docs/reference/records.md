@@ -96,8 +96,8 @@ DnsIdTxtRecord.serialize() -> str
 
 Produce a DKIM-style tag=value string (RFC 6376 syntax).
 
-v is always first; all other tags follow. Empty known optional tags are omitted.
-Unknown extension tags (including empty-valued ones) are preserved.
+v is always first; all other tags follow. Unset SDK-created optional tags
+are omitted. Parsed empty optional tags and unknown extensions are preserved.
 
 ### `policy_flags`
 
