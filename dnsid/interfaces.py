@@ -74,6 +74,17 @@ class IdentityResolver(Protocol):
 # ---------------------------------------------------------------------------
 
 
+@runtime_checkable
+class AsyncIdentityResolver(Protocol):
+    """Async identity verification contract for application-layer profiles."""
+
+    async def async_verify_domain(
+        self, domain: str, peer_cert: TLSCertificate | None = None
+    ) -> VerifiedDomain:
+        """Verify identity evidence and enforce per-caller policy."""
+        ...
+
+
 class KeyProvider(ABC):
     """Standardized interface for Key Management Systems.
 

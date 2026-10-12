@@ -24,6 +24,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import hashlib
 import os
@@ -39,10 +40,10 @@ from ._utils import (
     normalize_fqdn,
     parse_key_id,
 )
-from ._verification_budget import verification_operation
+from ._verification_budget import async_verification_operation, verification_operation
 from .enums import VerificationCode
 from .exceptions import ArgumentError, DNSidError, VerificationError
-from .interfaces import IdentityResolver, KeyProvider
+from .interfaces import AsyncIdentityResolver, IdentityResolver, KeyProvider
 from .models import (
     HttpRequest,
     HttpSigningOptions,
@@ -131,7 +132,7 @@ class HttpSignatureProfile:
 
     def __init__(
         self,
-        resolver: IdentityResolver,
+        resolver: IdentityResolver | AsyncIdentityResolver,
         key_provider: KeyProvider | None,
         domain: str,
         config: HttpMessageSignatureConfig | None = None,
@@ -140,7 +141,8 @@ class HttpSignatureProfile:
         """Initialize the profile for a local DNSid identity.
 
         Args:
-            resolver: Any object satisfying the IdentityResolver protocol.
+            resolver: An IdentityResolver or AsyncIdentityResolver. Sync verification
+                requires IdentityResolver; async verification accepts either.
             key_provider: Key management implementation for the local identity.
             domain: FQDN of the local identity.  Used as the domain portion of
                 the ``{domain}#{kid}`` keyId in Signature-Input headers.
@@ -393,7 +395,9 @@ class HttpSignatureProfile:
                     headers=headers_dict,
                     body=raw if content_supplied else None,
                 )
-                signed = profile.create_signed_http_request(sdk_req, signing_opts)
+                signed = await asyncio.to_thread(
+                    profile.create_signed_http_request, sdk_req, signing_opts
+                )
                 new_request = httpx.Request(
                     method=signed.method,
                     url=signed.url,
@@ -455,9 +459,84 @@ class HttpSignatureProfile:
                 propagated from signer identity verification.  Carries a
                 VerificationCode.
         """
-        if opts is None:
-            opts = HttpVerificationOptions()
+        opts = opts or HttpVerificationOptions()
+        candidates, signatures = self._signature_candidates(req, opts)
+        verified_domain: VerifiedDomain | None = None
+        last_error: DNSidError | None = None
+        for sig_params in candidates:
+            try:
+                candidate = self._verify_signature_candidate(
+                    req, sig_params, signatures[sig_params.label], opts, peer_cert
+                )
+            except DNSidError as exc:
+                last_error = exc
+                continue
+            if verified_domain is not None:
+                raise VerificationError(
+                    VerificationCode.RECORD_INVALID,
+                    "multiple valid HTTP message signatures",
+                )
+            verified_domain = candidate
 
+        if verified_domain is not None:
+            return verified_domain
+        if last_error is not None:
+            raise last_error
+        raise VerificationError(
+            VerificationCode.SIGNATURE_INVALID,
+            "no valid HTTP message signature",
+        )
+
+    @async_verification_operation
+    async def async_verify_signed_http_request(
+        self, req: HttpRequest, opts: HttpVerificationOptions | None = None,
+        *, peer_cert: TLSCertificate | None = None,
+    ) -> VerifiedDomain:
+        """Verify inbound signatures using async identity resolution.
+
+        Local validation is shared with the synchronous verifier. Legacy
+        synchronous resolvers run in a worker; async resolvers are awaited.
+        """
+        opts = opts or HttpVerificationOptions()
+        candidates, signatures = self._signature_candidates(req, opts)
+        verified_domain: VerifiedDomain | None = None
+        last_error: DNSidError | None = None
+        for sig_params in candidates:
+            try:
+                domain, kid = self._verify_candidate_input(req, sig_params, opts)
+                if isinstance(self._resolver, AsyncIdentityResolver):
+                    resolved = await self._resolver.async_verify_domain(domain, peer_cert=peer_cert)
+                else:
+                    resolved = await asyncio.to_thread(
+                        self._resolver.verify_domain, domain, **(
+                            {"peer_cert": peer_cert} if peer_cert is not None else {}
+                        )
+                    )
+                candidate = self._verify_candidate_signature(
+                    req, sig_params, signatures[sig_params.label], kid, resolved
+                )
+            except DNSidError as exc:
+                last_error = exc
+                continue
+            if verified_domain is not None:
+                raise VerificationError(
+                    VerificationCode.RECORD_INVALID,
+                    "multiple valid HTTP message signatures",
+                )
+            verified_domain = candidate
+
+        if verified_domain is not None:
+            return verified_domain
+        if last_error is not None:
+            raise last_error
+        raise VerificationError(
+            VerificationCode.SIGNATURE_INVALID,
+            "no valid HTTP message signature",
+        )
+
+    def _signature_candidates(
+        self, req: HttpRequest, opts: HttpVerificationOptions
+    ) -> tuple[list[SignatureParams], dict[str, bytes]]:
         sig_input_header = req.get_header("signature-input")
         sig_header = req.get_header("signature")
 
@@ -510,31 +589,7 @@ class HttpSignatureProfile:
                 f"{qualifier}, found {len(candidates)}",
             )
 
-        verified_domain: VerifiedDomain | None = None
-        last_error: DNSidError | None = None
-        for sig_params in candidates:
-            try:
-                candidate = self._verify_signature_candidate(
-                    req, sig_params, signatures[sig_params.label], opts, peer_cert
-                )
-            except DNSidError as exc:
-                last_error = exc
-                continue
-            if verified_domain is not None:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID,
-                    "multiple valid HTTP message signatures",
-                )
-            verified_domain = candidate
-
-        if verified_domain is not None:
-            return verified_domain
-        if last_error is not None:
-            raise last_error
-        raise VerificationError(
-            VerificationCode.SIGNATURE_INVALID,
-            "no valid HTTP message signature",
-        )
+        return candidates, signatures
 
     def _verify_signature_candidate(
         self,
@@ -544,6 +599,19 @@ class HttpSignatureProfile:
         opts: HttpVerificationOptions,
         peer_cert: TLSCertificate | None,
     ) -> VerifiedDomain:
+        domain, kid = self._verify_candidate_input(req, sig_params, opts)
+        if not isinstance(self._resolver, IdentityResolver):
+            raise ArgumentError("synchronous verification requires an IdentityResolver")
+        verified_domain = (
+            self._resolver.verify_domain(domain, peer_cert=peer_cert)
+            if peer_cert is not None
+            else self._resolver.verify_domain(domain)
+        )
+        return self._verify_candidate_signature(req, sig_params, raw_sig, kid, verified_domain)
+
+    def _verify_candidate_input(
+        self, req: HttpRequest, sig_params: SignatureParams, opts: HttpVerificationOptions
+    ) -> tuple[str, str]:
         for required in opts.required_components:
             if required not in sig_params.components:
                 raise VerificationError(
@@ -589,12 +657,12 @@ class HttpSignatureProfile:
 
         _check_content_digest(req, sig_params)
 
-        verified_domain = (
-            self._resolver.verify_domain(domain, peer_cert=peer_cert)
-            if peer_cert is not None
-            else self._resolver.verify_domain(domain)
-        )
+        return domain, kid
 
+    def _verify_candidate_signature(
+        self, req: HttpRequest, sig_params: SignatureParams, raw_sig: bytes,
+        kid: str, verified_domain: VerifiedDomain,
+    ) -> VerifiedDomain:
         signing_key = verified_domain.jwks.key_by_id(kid)
         if signing_key is None:
             raise VerificationError(

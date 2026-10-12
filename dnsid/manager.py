@@ -16,6 +16,8 @@ Not responsibilities (handled by separate profile classes):
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import datetime
 import logging
 import threading
@@ -25,6 +27,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from ._verification_budget import (
+    async_verification_operation,
     remaining_seconds,
     run_concurrently,
     verification_operation,
@@ -1384,6 +1387,56 @@ class IdentityManager:
         """
         return self._verify(domain, peer_cert, acceptance=True)
 
+    @async_verification_operation
+    async def async_verify_domain(
+        self, domain: str, peer_cert: TLSCertificate | None = None
+    ) -> VerifiedDomain:
+        """Verify without blocking the event loop; enforce the same policy as verify_domain.
+
+        Fresh cache hits and coalesced waits need no worker thread. Blocking
+        DNS, HTTPS and log adapters run only for the shared evidence leader.
+        Cancellation of a waiter does not cancel shared verification.
+        """
+        domain = normalize_fqdn(domain)
+        with self._coordination_lock:
+            future = self._verification_futures.get(domain) or self._status_futures.get(domain)
+        leader = False
+        if future is None:
+            cached = self._cache.get(domain)
+            if cached is not None and (
+                _now() - cached.last_status_check_at
+                < self._config.verification.status_check_interval
+            ):
+                return self._accept_verification(domain, cached, peer_cert, acceptance=True)
+            pending = self._status_futures if cached is not None else self._verification_futures
+            work = (
+                (lambda: self._refresh_status(domain, cached))
+                if cached is not None
+                else (lambda: self._verify_domain_uncached(domain))
+            )
+            with self._coordination_lock:
+                future = self._verification_futures.get(domain) or self._status_futures.get(domain)
+                if future is None:
+                    future = Future()
+                    pending[domain] = future
+                    leader = True
+            if leader:
+                context = contextvars.copy_context()
+
+                def complete() -> None:
+                    try:
+                        self._complete_verification(domain, pending, future, work)
+                    except BaseException:
+                        # The shared future carries the error to every waiter.
+                        pass
+
+                # shortcut: synchronous adapters; remove worker after async adapter migration.
+                asyncio.get_running_loop().run_in_executor(None, context.run, complete)
+        result = await asyncio.shield(asyncio.wrap_future(future))
+        if not leader and result.dns_ttl == 0:
+            result = await asyncio.to_thread(self._verify_domain_uncached, domain)
+        return self._accept_verification(domain, result, peer_cert, acceptance=True)
+
     @verification_operation
     def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
         """Internal protocol-only verification for registry publication confirmation."""
@@ -1399,6 +1452,12 @@ class IdentityManager:
         """
         domain = normalize_fqdn(domain)
         result = self._reusable_verification(domain)
+        return self._accept_verification(domain, result, peer_cert, acceptance=acceptance)
+
+    def _accept_verification(
+        self, domain: str, result: VerifiedDomain, peer_cert: TLSCertificate | None,
+        *, acceptance: bool
+    ) -> VerifiedDomain:
         # mTLS binds the current peer, not reusable identity evidence.
         _enforce_mtls_policy(result.record, domain, peer_cert)
         if acceptance:
@@ -1475,7 +1534,14 @@ class IdentityManager:
             result = wait_for_verification(future)
             return self._verify_domain_uncached(domain) if result.dns_ttl == 0 else result
 
+        return self._complete_verification(domain, pending, future, work)
+
+    def _complete_verification(
+        self, domain: str, pending: dict[str, Future[VerifiedDomain]],
+        future: Future[VerifiedDomain], work: Callable[[], VerifiedDomain],
+    ) -> VerifiedDomain:
         try:
+            remaining_seconds()
             result = work()
             remaining_seconds()
         except BaseException as exc:

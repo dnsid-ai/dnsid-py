@@ -79,7 +79,17 @@ method or trust root; configure a matching reader (see the
 
 **Import surface.** Everything is importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. The transparency-log integration is the exception: import it from `dnsid.c2sp_tlog`.
 
-**Synchronous by design.** Verification and most public operations are synchronous. Async support includes `RegistryClient.async_wait_for_status()` (which polls synchronously), signed `httpx.AsyncClient` transport plumbing, and `async_retry_transient`. Call blocking SDK operations from async code via `asyncio.to_thread` or an executor.
+**Async verification.** Use `await manager.async_verify_domain(domain)` and
+`await http_signer.async_verify_signed_http_request(request)` in middleware.
+Fresh identity-cache hits and coalesced waits use no worker threads; policy and
+signature checks still run on every request. Cold verification and status
+refreshes use workers for the existing synchronous DNS, HTTPS, and log adapters.
+Cancelling a waiter does not cancel shared evidence work. Do not close the
+manager until that work finishes. Synchronous APIs remain available.
+
+Signed `httpx.AsyncClient` requests offload synchronous signing (including KMS).
+Other blocking SDK operations still need `asyncio.to_thread` or an executor.
+See [the migration checklist](ASYNC_MIGRATION.md) for remaining native async work.
 
 ## Documentation
 
