@@ -647,9 +647,16 @@ convergence hooks. It persists exact signed bytes before submission and validate
 acceptance before activation. See [recovery requirements](COMPATIBILITY.md#configuration-and-initial-issuance).
 
 To move an established signer, use explicit `rotate_operational_key()` with a
-`target_key_provider` and stable old/target provider references. Recovery reuses those
-references and exact signed bytes. Activation requires verified current publication
-and rotation continuity; application signing stays paused until durable reconciliation.
+`target_key_provider` and stable old/target provider references. To change the signing
+algorithm, explicitly pass `target_algorithm="ES256"` (or `"EdDSA"`) and configure the
+target provider for that algorithm. The generated key must match before preparation.
+Recovery reuses the saved references and exact signed bytes, and validates both
+providers before submission or activation. Reopen their saved state; do not create
+replacement stores. If the manager already uses the target, pass the saved source
+as `previous_key_provider` to recovery methods. A removed source key is valid only
+with saved acceptance and the exact target already active; a distinct source must
+have no active signing key. Activation requires verified current publication and
+rotation continuity; application signing stays paused until durable reconciliation.
 Changing deployment configuration alone neither rotates nor imports a private key.
 
 ## Configuration reference
