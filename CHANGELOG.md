@@ -1,4 +1,15 @@
 
+## [0.25.0] - 2026-10-12
+
+### Documentation
+
+- docs: add trust policy setup example ([#54](https://github.com/dnsid-ai/dnsid-py/pull/54))
+
+### Features
+
+- feat: server-compatible SDK registration groundwork ([#52](https://github.com/dnsid-ai/dnsid-py/pull/52))
+
+
 ## [0.24.0] - 2026-10-07
 
 ### Chores
