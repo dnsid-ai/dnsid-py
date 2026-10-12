@@ -8,6 +8,7 @@ import pytest
 
 from dnsid import AgentRegistrationInput, RegistryClient, RegistryRequestError
 from dnsid.exceptions import ArgumentError, ValidationError, VerificationError
+from tests._registry_http import patch_registry_http
 from tests.test_registry_client import (
     _DOMAIN,
     _FAKE_API_KEY,
@@ -151,7 +152,7 @@ def test_server_errors_preserve_request_and_key_without_fallback(status, code):
         environment="production",
         zone_id="zone-1",
     )
-    with patch("httpx.post", return_value=_FakeResponse(status, {"error": code})) as post:
+    with patch_registry_http("httpx.post", return_value=_FakeResponse(status, {"error": code})) as post:
         with pytest.raises(RegistryRequestError) as caught:
             _make_client().register_agent(input, "create-1")
     assert post.call_count == 1
@@ -174,7 +175,7 @@ def test_keyed_retry_retains_complete_request():
 
 
 def test_creation_timeout_does_not_retry_without_key():
-    with patch("httpx.post", side_effect=httpx.ReadTimeout("timeout")) as post:
+    with patch_registry_http("httpx.post", side_effect=httpx.ReadTimeout("timeout")) as post:
         with pytest.raises(VerificationError) as caught:
             _make_client().register_agent(AgentRegistrationInput(domain=_DOMAIN))
     assert post.call_count == 1
@@ -187,8 +188,8 @@ def test_creation_timeout_does_not_retry_without_key():
 def test_creation_uses_authenticated_detail_and_preserves_snapshot_on_failure(managed):
     detail = {"id": "agent-123", "domain": _DOMAIN, "status": "READY", "managed": managed}
     with (
-        patch("httpx.post", return_value=_FakeResponse(201, _REGISTER_RESPONSE)),
-        patch("httpx.get", return_value=_FakeResponse(200, detail)) as get,
+        patch_registry_http("httpx.post", return_value=_FakeResponse(201, _REGISTER_RESPONSE)),
+        patch_registry_http("httpx.get", return_value=_FakeResponse(200, detail)) as get,
     ):
         if managed == "unknown":
             with pytest.raises(ValidationError) as caught:
@@ -205,8 +206,8 @@ def test_creation_uses_authenticated_detail_and_preserves_snapshot_on_failure(ma
 def test_failed_detail_retains_id_domain_config_and_issuer():
     response = {**_REGISTER_RESPONSE, "oidc_issuer_url": "https://issuer.example.com"}
     with (
-        patch("httpx.post", return_value=_FakeResponse(201, response)),
-        patch("httpx.get", return_value=_FakeResponse(403, {"error": "FORBIDDEN"})) as get,
+        patch_registry_http("httpx.post", return_value=_FakeResponse(201, response)),
+        patch_registry_http("httpx.get", return_value=_FakeResponse(403, {"error": "FORBIDDEN"})) as get,
         pytest.raises(RegistryRequestError) as caught,
     ):
         _make_client().register_agent(AgentRegistrationInput(domain=_DOMAIN), "create-1")
@@ -217,7 +218,7 @@ def test_failed_detail_retains_id_domain_config_and_issuer():
 
 
 def test_unexpected_creation_status_preserves_facts_and_http_status():
-    with patch("httpx.post", return_value=_FakeResponse(202, _REGISTER_RESPONSE)) as post:
+    with patch_registry_http("httpx.post", return_value=_FakeResponse(202, _REGISTER_RESPONSE)) as post:
         with pytest.raises(VerificationError) as caught:
             _make_client().register_agent(AgentRegistrationInput(domain=_DOMAIN), "create-1")
     assert post.call_count == 1
@@ -237,8 +238,8 @@ def test_creation_snapshot_is_not_replaced_by_detail_defaults():
         "oidc_issuer_url": "https://later.example.com",
     }
     with (
-        patch("httpx.post", return_value=_FakeResponse(201, response)),
-        patch("httpx.get", return_value=_FakeResponse(200, detail)),
+        patch_registry_http("httpx.post", return_value=_FakeResponse(201, response)),
+        patch_registry_http("httpx.get", return_value=_FakeResponse(200, detail)),
     ):
         result = _make_client().register_agent(AgentRegistrationInput(domain=_DOMAIN))
     assert result.publication_config.max_key_age == ""
@@ -248,7 +249,7 @@ def test_creation_snapshot_is_not_replaced_by_detail_defaults():
 @pytest.mark.parametrize("operation", ["get_agent_detail", "get_registration"])
 def test_management_reads_require_credentials(operation):
     client = RegistryClient("https://registry.example.com")
-    with patch("httpx.get") as get, pytest.raises(ArgumentError, match="credentials"):
+    with patch_registry_http("httpx.get") as get, pytest.raises(ArgumentError, match="credentials"):
         getattr(client, operation)(_DOMAIN)
     get.assert_not_called()
 

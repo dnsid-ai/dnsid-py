@@ -373,7 +373,7 @@ class TestJwkLookup:
         with pytest.raises(ArgumentError, match="key not found"):
             provider.jwk("no-such-key")
 
-    def test_jwk_raises_for_pending_kid(self) -> None:
+    def test_jwk_returns_pending_kid_without_publishing_it(self) -> None:
         facade = FakeKmsFacade()
         facade.add_p256_key("active")
         facade.add_p256_key("pending")
@@ -385,8 +385,8 @@ class TestJwkLookup:
                 algorithm="ECDSA_SHA_256",
             ),
         )
-        with pytest.raises(ArgumentError, match="key not found"):
-            provider.jwk("pending")
+        assert provider.jwk("pending").kid == "pending"
+        assert provider.list_key_ids() == ["active"]
 
 
 # ---------------------------------------------------------------------------

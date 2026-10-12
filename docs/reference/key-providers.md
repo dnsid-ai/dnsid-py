@@ -217,11 +217,13 @@ Persists the updated store when the provider is file-backed.
 ### `supersede`
 
 ```python
-LocalKeyProvider.supersede(kid: str) -> None
+LocalKeyProvider.supersede(kid: str, *, allow_active: bool = False) -> None
 ```
 
-Rotate a retained key out of live use entirely.
+Remove a retained key, or an active key after verified cross-provider rotation.
 
+``allow_active`` is reserved for an accepted, publicly verified rotation.
+Removing the active key leaves this provider unable to sign.
 Persists the updated store when the provider is file-backed.
 
 **Raises:**
@@ -310,7 +312,7 @@ Return the public JWK for *kid*.
 
 **Raises:**
 
-- `ArgumentError`: If *kid* is neither the active key nor a retained key.
+- `ArgumentError`: If *kid* is not an active, retained, or pending key.
 
 ### `list_key_ids`
 
@@ -339,6 +341,17 @@ converted from DER to the JOSE IEEE P1363 format.
 **Raises:**
 
 - `ArgumentError`: If the payload exceeds the RAW limit for Ed25519, or the KMS response is inconsistent (missing signature, algorithm mismatch, or unexpected signing key).
+
+### `sign_key`
+
+```python
+AwsKmsKeyProvider.sign_key(kid: str, payload: bytes) -> bytes
+```
+
+Sign with an active or pending KMS key for rotation authorization.
+
+Applies the same payload limits and response validation as ``sign``.
+Retained keys cannot sign.
 
 ### `generate_key`
 
@@ -371,11 +384,12 @@ Promote *kid* from pending to active; current active moves to retained.
 ### `supersede`
 
 ```python
-AwsKmsKeyProvider.supersede(kid: str) -> None
+AwsKmsKeyProvider.supersede(kid: str, *, allow_active: bool = False) -> None
 ```
 
-Rotate a retained key out of live use.
+Remove a retained key, or the active key after verified cross-provider rotation.
 
+``allow_active`` is reserved for an accepted, publicly verified rotation.
 Schedules KMS key deletion first when
 ``schedule_key_deletion_on_supersede`` is enabled.
 

@@ -687,6 +687,9 @@ class IdentityManager:
         idempotency_key: str,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        target_key_provider: KeyProvider | None = None,
+        previous_provider_reference: str = "",
+        target_provider_reference: str = "",
     ) -> KeyRotationResult:
         """Rotate the managed operational key with mandatory recovery hooks.
 
@@ -698,6 +701,9 @@ class IdentityManager:
         activation/supersession, and durable activation state.
 
         Args:
+            target_key_provider: Explicit target; defaults to the current provider.
+            previous_provider_reference: Stable old-provider reference for cross-provider recovery.
+            target_provider_reference: Stable target reference, saved before submission.
             registry_client: Client implementing the registry rotation API.
             idempotency_key: Caller-chosen key making preparation and
                 submission retry-safe; reuse it for every retry of this
@@ -737,8 +743,24 @@ class IdentityManager:
         previous_key = key_provider.signing_key()
         if not previous_key.kid:
             raise ArgumentError("active operational key missing kid")
-        new_kid = key_provider.generate_key()
-        new_key = key_provider.jwk(new_kid)
+        target = target_key_provider or key_provider
+        if target is not key_provider:
+            import inspect
+
+            if (
+                not previous_provider_reference
+                or not target_provider_reference
+                or previous_provider_reference == target_provider_reference
+            ):
+                raise ArgumentError(
+                    "cross-provider rotation requires both stable provider references"
+                )
+            if "allow_active" not in inspect.signature(key_provider.supersede).parameters:
+                raise ArgumentError("previous provider cannot retire its active key")
+        elif previous_provider_reference != target_provider_reference:
+            raise ArgumentError("same-provider rotation requires matching provider references")
+        new_kid = target.generate_key()
+        new_key = target.jwk(new_kid)
         new_key.signature_alg()  # validates required alg/key binding
         previous_thumbprint = previous_key.thumbprint()
         new_thumbprint = new_key.thumbprint()
@@ -776,9 +798,7 @@ class IdentityManager:
         prepared = sign_prepared_event(
             prepared, C2spSignerRole.PREVIOUS_OPERATIONAL, key_provider, context
         )
-        prepared = sign_prepared_event(
-            prepared, C2spSignerRole.NEW_OPERATIONAL, key_provider, context
-        )
+        prepared = sign_prepared_event(prepared, C2spSignerRole.NEW_OPERATIONAL, target, context)
         final_bytes = entry_bytes(prepared, context)
         import hashlib
 
@@ -794,6 +814,8 @@ class IdentityManager:
             entry_hash=hashlib.sha256(final_bytes).hexdigest(),
             idempotency_key=idempotency_key,
             application_signing_paused=True,
+            previous_provider_reference=previous_provider_reference,
+            new_provider_reference=target_provider_reference,
         )
         try:
             self._persist_rotation(persist_rotation, result)
@@ -822,6 +844,7 @@ class IdentityManager:
             result,
             persist_rotation,
             set_application_signing_paused,
+            target,
         )
 
     def resume_key_rotation(
@@ -831,6 +854,9 @@ class IdentityManager:
         *,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        target_key_provider: KeyProvider | None = None,
+        previous_provider_reference: str = "",
+        target_provider_reference: str = "",
     ) -> KeyRotationResult:
         """Resume an exact persisted managed key rotation safely.
 
@@ -849,8 +875,30 @@ class IdentityManager:
         self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         rotation = self._clone_rotation(result)
         self._validate_persisted_rotation(rotation)
+        target = self._rotation_target(
+            rotation,
+            target_key_provider,
+            previous_provider_reference,
+            target_provider_reference,
+        )
 
         if rotation.activated:
+            try:
+                active = target.signing_key()
+                if (
+                    active.kid != rotation.new_kid
+                    or active.thumbprint() != rotation.new_thumbprint
+                ):
+                    raise ValidationError("active target key does not match persisted rotation")
+                ku_url = self._rotation_publication(rotation)
+            except Exception as exc:
+                raise ManagedKeyRotationActivationError(
+                    "failed to restore the activated managed key rotation",
+                    self._clone_rotation(rotation),
+                    cause=exc,
+                ) from exc
+            self._local_identity.ku_url = ku_url
+            self._key_provider = target
             if not rotation.application_signing_paused:
                 return rotation
             try:
@@ -895,13 +943,14 @@ class IdentityManager:
 
         if rotation.submission is not None and rotation.submission.accepted:
             return self._finish_accepted_rotation(
-                rotation, persist_rotation, set_application_signing_paused
+                rotation, persist_rotation, set_application_signing_paused, target
             )
         return self._submit_rotation(
             registry_client,
             rotation,
             persist_rotation,
             set_application_signing_paused,
+            target,
         )
 
     def activate_rotated_key(
@@ -911,12 +960,21 @@ class IdentityManager:
         *,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        target_key_provider: KeyProvider | None = None,
+        previous_provider_reference: str = "",
+        target_provider_reference: str = "",
     ) -> KeyRotationResult:
         """Reconcile an accepted rotation using the mandatory durability hooks."""
         self._require_local_identity("activate_rotated_key")
         self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         rotation = self._clone_rotation(result)
         self._validate_persisted_rotation(rotation)
+        target = self._rotation_target(
+            rotation,
+            target_key_provider,
+            previous_provider_reference,
+            target_provider_reference,
+        )
         if submission is not None:
             self._validate_rotation_submission(rotation, submission)
             rotation = replace(rotation, submission=self._clone_submission(submission))
@@ -953,7 +1011,7 @@ class IdentityManager:
                 cause=exc,
             ) from exc
         return self._finish_accepted_rotation(
-            rotation, persist_rotation, set_application_signing_paused
+            rotation, persist_rotation, set_application_signing_paused, target
         )
 
     def _submit_rotation(
@@ -962,6 +1020,7 @@ class IdentityManager:
         rotation: KeyRotationResult,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        target: KeyProvider,
     ) -> KeyRotationResult:
         from .exceptions import ManagedKeyRotationSubmissionError
 
@@ -1037,7 +1096,7 @@ class IdentityManager:
         if not submission.accepted:
             return candidate
         return self._finish_accepted_rotation(
-            candidate, persist_rotation, set_application_signing_paused
+            candidate, persist_rotation, set_application_signing_paused, target
         )
 
     def _finish_accepted_rotation(
@@ -1045,11 +1104,13 @@ class IdentityManager:
         rotation: KeyRotationResult,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        target: KeyProvider,
     ) -> KeyRotationResult:
         from .exceptions import ManagedKeyRotationActivationError
 
         try:
-            self._reconcile_rotation_keys(rotation)
+            ku_url = self._rotation_publication(rotation)
+            self._reconcile_rotation_keys(rotation, target)
         except Exception as exc:
             raise ManagedKeyRotationActivationError(
                 "accepted managed key rotation could not reconcile local keys",
@@ -1065,6 +1126,8 @@ class IdentityManager:
                 self._clone_rotation(rotation),
                 cause=exc,
             ) from exc
+        self._key_provider = target
+        self._local_identity.ku_url = ku_url
         try:
             set_application_signing_paused(False)
         except Exception as exc:
@@ -1084,28 +1147,58 @@ class IdentityManager:
             ) from exc
         return completed
 
-    def _reconcile_rotation_keys(self, rotation: KeyRotationResult) -> None:
-        from .exceptions import ValidationError
+    def _rotation_target(
+        self,
+        rotation: KeyRotationResult,
+        target: KeyProvider | None,
+        previous_reference: str,
+        target_reference: str,
+    ) -> KeyProvider:
+        if (previous_reference, target_reference) != (
+            rotation.previous_provider_reference,
+            rotation.new_provider_reference,
+        ):
+            raise ValidationError("rotation provider references changed")
+        if previous_reference != target_reference and target is None:
+            raise ArgumentError("reopen the target provider from its saved reference")
+        previous = self._require_operational_key_provider("managed key rotation")
+        target = target or previous
+        if previous_reference != target_reference and target is previous and not rotation.activated:
+            raise ArgumentError("reopen both saved providers before cross-provider reconciliation")
+        if target.jwk(rotation.new_kid).thumbprint() != rotation.new_thumbprint:
+            raise ValidationError("target key does not match persisted rotation")
+        return target
 
-        provider = self._require_operational_key_provider("managed key rotation")
-        active = provider.signing_key()
-        if not active.kid:
-            raise ValidationError("managed key-rotation provider has no active kid")
-        active_thumbprint = active.thumbprint()
-        if active.kid == rotation.previous_kid:
-            if active_thumbprint != rotation.previous_thumbprint:
+    def _rotation_publication(self, rotation: KeyRotationResult) -> str:
+        self.evict_domain(rotation.domain)
+        observed = self._verify_publication_evidence(rotation.domain)
+        if (
+            observed.record.gi != self._local_identity.governance_id
+            or observed.record.lr != rotation.log_reference
+            or observed.jwks.current_operational_signing_key(observed.record.v).thumbprint()
+            != rotation.new_thumbprint
+        ):
+            raise ValidationError("published identity does not bind the accepted rotation")
+        return observed.record.ku
+
+    def _reconcile_rotation_keys(self, rotation: KeyRotationResult, target: KeyProvider) -> None:
+        previous = self._require_operational_key_provider("managed key rotation")
+        if target.jwk(rotation.new_kid).thumbprint() != rotation.new_thumbprint:
+            raise ValidationError("target key does not match persisted rotation")
+        active = target.signing_key()
+        if target is previous and active.kid not in {rotation.previous_kid, rotation.new_kid}:
+            raise ValidationError("unexpected active key during rotation recovery")
+        if active.kid != rotation.new_kid:
+            if target is previous and active.thumbprint() != rotation.previous_thumbprint:
                 raise ValidationError("active key does not match persisted previous key")
-            pending = provider.jwk(rotation.new_kid)
-            if pending.thumbprint() != rotation.new_thumbprint:
-                raise ValidationError("pending key does not match persisted rotation")
-            provider.activate(rotation.new_kid)
-        elif active.kid != rotation.new_kid:
-            raise ValidationError(f"unexpected active key {active.kid!r} during rotation recovery")
-        elif active_thumbprint != rotation.new_thumbprint:
-            raise ValidationError("active key does not match persisted new key")
-
-        if rotation.previous_kid in provider.list_key_ids():
-            provider.supersede(rotation.previous_kid)
+            target.activate(rotation.new_kid)
+        if rotation.previous_kid in previous.list_key_ids():
+            if previous.jwk(rotation.previous_kid).thumbprint() != rotation.previous_thumbprint:
+                raise ValidationError("previous provider key changed")
+            if previous is target:
+                previous.supersede(rotation.previous_kid)
+            else:
+                previous.supersede(rotation.previous_kid, allow_active=True)
 
     def _validate_persisted_rotation(self, rotation: KeyRotationResult) -> None:
         import hashlib

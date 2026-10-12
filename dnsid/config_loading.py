@@ -4,7 +4,8 @@ Loaders parse; constructors default. Each loader returns a :class:`LoadedConfig`
 holding only the fields present in its source: empty or whitespace-only values
 are absent, nothing is defaulted or derived, and no second source is consulted.
 :func:`merge_loaded_config` combines partial results field-wise (later wins; lists replace;
-``log_trust`` is atomic). :func:`construct_identity_manager` fills the dependencies the caller
+``log_trust`` and operational ``key_source`` are atomic).
+:func:`construct_identity_manager` fills the dependencies the caller
 did not supply from ``log_trust`` and ``key_source``, then calls the ordinary
 :class:`~dnsid.IdentityManager` constructor, which applies every default and
 validation.
@@ -71,10 +72,11 @@ class LogTrust:
 
 @dataclass
 class KeySource:
-    """Where local key material lives. Variants are not exclusive.
+    """Select an operational provider using non-secret deployment settings.
 
-    ``cli_directory`` supplies the operational key when present, otherwise
-    ``key_store_path``; ``entity_key_path`` supplies the entity key whenever set.
+    CLI/key-store selections cannot combine with cloud providers or ``key_ref``.
+    ``cli_directory``
+    wins over ``key_store_path``; ``entity_key_path`` is independent.
     """
 
     cli_directory: str | None = None
@@ -83,6 +85,13 @@ class KeySource:
     """Accountable-entity private JWK file."""
     key_store_path: str | None = None
     """:meth:`LocalKeyProvider.load` key-store file; used only without ``cli_directory``."""
+
+    provider: str | None = None
+    """Known provider name: file, aws-kms, google-kms, or azure-key-vault."""
+    key_ref: str | None = None
+    """Stable existing operational key reference."""
+    settings: dict[str, Any] | None = None
+    """Non-secret provider settings; authentication uses ambient credentials."""
 
 
 @dataclass
@@ -181,17 +190,16 @@ def load_environment(env: Mapping[str, str] | None = None) -> LoadedConfig:
 
 
 def load_file(path: Path | str) -> LoadedConfig:
-    """Read a JSON deployment file: ``{"dnsid"?, "logTrust"?, "registry"?}``.
+    """Read camelCase deployment sections, including non-secret ``keySource`` settings.
 
-    Members are camelCase, the JSON encoding of :class:`LoadedConfig` minus
-    ``keySource``. Registry credentials are never part of loaded configuration.
+    Registry credentials and private keys are never part of loaded configuration.
     Unknown members, mistyped values, and duplicate members are rejected with
     ArgumentError; ``dnsid``
     contents are otherwise validated by the IdentityManager constructor.
     """
     source = str(path)
     root = _json_object(Path(path).read_bytes(), source)
-    _reject_unknown(root, source, ("dnsid", "logTrust", "registry"))
+    _reject_unknown(root, source, ("dnsid", "logTrust", "registry", "keySource"))
     loaded = LoadedConfig()
 
     if "dnsid" in root:
@@ -219,6 +227,35 @@ def load_file(path: Path | str) -> LoadedConfig:
         _reject_unknown(registry, f"{source}: registry", ("registryUrl",))
         loaded.registry = RegistryConfig(
             registry_url=_typed(registry, "registryUrl", str, f"{source}: registry") or ""
+        )
+    if "keySource" in root:
+        raw = _object(root["keySource"], f"{source}: keySource")
+        _reject_unknown(
+            raw,
+            source,
+            (
+                "provider",
+                "keyRef",
+                "settings",
+                "cliDirectory",
+                "entityKeyPath",
+                "keyStorePath",
+            ),
+        )
+        loaded.key_source = KeySource(
+            **_snake_keys(
+                {
+                    name: (_typed(raw, name, str, source) or "").strip() or None
+                    for name in (
+                        "provider",
+                        "keyRef",
+                        "cliDirectory",
+                        "entityKeyPath",
+                        "keyStorePath",
+                    )
+                }
+            ),
+            settings=_object(raw["settings"], source) if "settings" in raw else None,
         )
     return loaded
 
@@ -373,14 +410,24 @@ def merge_loaded_config(base: LoadedConfig, overlay: LoadedConfig) -> LoadedConf
 
     Presence, not truthiness: ``trusted_entities=[]`` replaces a loaded list.
     Lists replace, never concatenate. ``log_trust`` is replaced as a whole when
-    the overlay sets any variant. See the module docstring for the default
-    values that cannot express presence.
+    the overlay sets any variant. Operational ``key_source`` fields replace as
+    a group; ``entity_key_path`` merges independently. See the module docstring
+    for the default values that cannot express presence.
     """
+    source = overlay.key_source
+    operational_source = source if any(
+        getattr(source, f.name) is not None
+        for f in fields(source) if f.name != "entity_key_path"
+    ) else base.key_source
     return LoadedConfig(
         dnsid=_merge_fields(base.dnsid, overlay.dnsid),
         log_trust=replace(overlay.log_trust if _has_trust(overlay.log_trust) else base.log_trust),
         registry=_merge_fields(base.registry, overlay.registry),
-        key_source=_merge_fields(base.key_source, overlay.key_source),
+        key_source=replace(
+            operational_source,
+            entity_key_path=source.entity_key_path
+            if source.entity_key_path is not None else base.key_source.entity_key_path,
+        ),
     )
 
 
@@ -472,10 +519,99 @@ def _log_registry_from_trust(trust: LogTrust, transport: TransportConfig) -> Log
     )
 
 
+_CLOUD_PACKAGES = {
+    "aws-kms": ("boto3", "dnsid[aws]"),
+    "google-kms": ("dnsid_google_kms", "dnsid-google-kms"),
+    "azure-key-vault": ("dnsid_azure_key_vault", "dnsid-azure-key-vault"),
+}
+
+
+def _validate_key_source(source: KeySource) -> Any:
+    """Resolve only the selected factory, before discovery or key generation."""
+    import importlib
+
+    if any(
+        value is not None and (not isinstance(value, str) or not value.strip())
+        for value in (
+            source.provider,
+            source.key_ref,
+            source.cli_directory,
+            source.key_store_path,
+        )
+    ) or (source.settings is not None and not isinstance(source.settings, dict)):
+        raise ArgumentError("invalid key_source selection")
+    provider = source.provider or "file"
+    if provider not in {"file", *_CLOUD_PACKAGES}:
+        raise ArgumentError("unknown key_source.provider")
+    if (source.cli_directory or source.key_store_path) and (provider != "file" or source.key_ref):
+        raise ArgumentError("CLI/key_store_path cannot combine with provider key selection")
+    if provider == "file":
+        if source.settings:
+            raise ArgumentError("file provider has no settings")
+        return None
+    if not source.key_ref:
+        raise ArgumentError(f"{provider} requires key_ref")
+    module, remedy = _CLOUD_PACKAGES[provider]
+    try:
+        factory = importlib.import_module(module)
+    except ImportError:
+        raise ArgumentError(f"{provider} unavailable; install {remedy}") from None
+    if provider == "aws-kms":
+        settings = source.settings or {}
+        if set(settings) - {"region", "profile", "algorithm"} or any(
+            not isinstance(value, str) or not value for value in settings.values()
+        ):
+            raise ArgumentError("aws-kms settings require non-secret region/profile/algorithm")
+        if settings.get("algorithm", "EdDSA") not in {"EdDSA", "ES256"}:
+            raise ArgumentError("aws-kms algorithm must be EdDSA or ES256")
+    else:
+        if not callable(getattr(factory, "key_provider_from_config", None)) or not callable(
+            getattr(factory, "validate_config", None)
+        ):
+            raise ArgumentError(f"{provider} factory unavailable; install {remedy}")
+        factory.validate_config(source)
+    return factory
+
+
 def _operational_key_provider(source: KeySource, domain: str) -> KeyProvider | None:
-    """``cli_directory`` wins over ``key_store_path``; neither leaves the constructor to reject."""
+    """Open an existing file/cloud key; construction never generates a key."""
     from .local_key_provider import LocalKeyProvider
 
+    factory = _validate_key_source(source)
+    if source.provider == "aws-kms":
+        from .aws_kms_key_provider import AwsKmsConfig, AwsKmsKeyProvider, BotoKmsFacade
+
+        settings = source.settings or {}
+        session = factory.Session(profile_name=settings.get("profile"))
+        return AwsKmsKeyProvider.load(
+            BotoKmsFacade(session.client("kms", region_name=settings.get("region"))),
+            AwsKmsConfig(
+                active_key_id=source.key_ref or "",
+                algorithm="ECDSA_SHA_256"
+                if settings.get("algorithm") == "ES256"
+                else "ED25519_SHA_512",
+            ),
+        )
+    if factory is not None:
+        from .interfaces import KeyProvider
+
+        provider = factory.key_provider_from_config(source)
+        if not isinstance(provider, KeyProvider):
+            raise ArgumentError(
+                f"{source.provider} factory returned no KeyProvider; no file fallback"
+            )
+        return provider
+    if source.key_ref or source.cli_directory or source.key_store_path:
+        import warnings
+
+        warnings.warn(
+            "Local file keys are unsuitable for production; configure keySource.provider "
+            "with a cloud provider and keyRef.",
+            UserWarning,
+            stacklevel=3,
+        )
+    if source.key_ref:
+        return LocalKeyProvider.load(source.key_ref)
     if source.cli_directory:
         base = Path(source.cli_directory)
         if (base / "private.jwk").exists() or (base / "private.pem").exists():
@@ -544,7 +680,10 @@ def registry_client_from_environment(env: Mapping[str, str] | None = None) -> Re
 
     loaded = load_environment(env)
     source = os.environ if env is None else env
-    return RegistryClient(loaded.registry.registry_url or None, api_key=source.get("DNSID_API_KEY"))
+    return RegistryClient(
+        loaded.registry.registry_url or None, api_key=source.get("DNSID_API_KEY"),
+        transport_config=loaded.dnsid.transport,
+    )
 
 
 # ---------------------------------------------------------------------------

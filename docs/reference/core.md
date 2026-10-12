@@ -313,7 +313,7 @@ published record's version against the configured publish profile.
 ### `rotate_operational_key`
 
 ```python
-IdentityManager.rotate_operational_key(registry_client: AbstractRegistryClient, *, idempotency_key: str, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
+IdentityManager.rotate_operational_key(registry_client: AbstractRegistryClient, *, idempotency_key: str, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '') -> KeyRotationResult
 ```
 
 Rotate the managed operational key with mandatory recovery hooks.
@@ -327,6 +327,9 @@ activation/supersession, and durable activation state.
 
 **Arguments:**
 
+- `target_key_provider` (`KeyProvider | None`): Explicit target; defaults to the current provider. — default `None`
+- `previous_provider_reference` (`str`): Stable old-provider reference for cross-provider recovery. — default `''`
+- `target_provider_reference` (`str`): Stable target reference, saved before submission. — default `''`
 - `registry_client` (`AbstractRegistryClient`): Client implementing the registry rotation API.
 - `idempotency_key` (`str`): Caller-chosen key making preparation and submission retry-safe; reuse it for every retry of this rotation.
 - `persist_rotation` (`KeyRotationPersistenceHook`): Mandatory durable persistence hook. It receives an isolated copy of every recoverable state transition.
@@ -346,7 +349,7 @@ activation/supersession, and durable activation state.
 ### `resume_key_rotation`
 
 ```python
-IdentityManager.resume_key_rotation(registry_client: AbstractRegistryClient, result: KeyRotationResult, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
+IdentityManager.resume_key_rotation(registry_client: AbstractRegistryClient, result: KeyRotationResult, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '') -> KeyRotationResult
 ```
 
 Resume an exact persisted managed key rotation safely.
@@ -360,7 +363,7 @@ signing pause and persists completion.
 ### `activate_rotated_key`
 
 ```python
-IdentityManager.activate_rotated_key(result: KeyRotationResult, submission: SubmissionResult | None = None, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook) -> KeyRotationResult
+IdentityManager.activate_rotated_key(result: KeyRotationResult, submission: SubmissionResult | None = None, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '') -> KeyRotationResult
 ```
 
 Reconcile an accepted rotation using the mandatory durability hooks.

@@ -110,7 +110,7 @@ class _KeyStore:
 
     def __init__(
         self,
-        active: _StoredKey,
+        active: _StoredKey | None,
         retained: list[_StoredKey] | None = None,
         pending: list[_StoredKey] | None = None,
     ) -> None:
@@ -120,7 +120,7 @@ class _KeyStore:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "active": self.active.to_dict(),
+            "active": self.active.to_dict() if self.active is not None else None,
             "retained": [k.to_dict() for k in self.retained],
             "pending": [k.to_dict() for k in self.pending],
         }
@@ -128,7 +128,7 @@ class _KeyStore:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> _KeyStore:
         return cls(
-            active=_StoredKey.from_dict(data["active"]),
+            active=_StoredKey.from_dict(data["active"]) if data["active"] is not None else None,
             retained=[_StoredKey.from_dict(k) for k in data.get("retained", [])],
             pending=[_StoredKey.from_dict(k) for k in data.get("pending", [])],
         )
@@ -203,9 +203,7 @@ def _stored_key_from_private(
             x=b64url_encode(public_bytes),
             d=b64url_encode(secret_bytes),
         )
-    if isinstance(private, ec.EllipticCurvePrivateKey) and isinstance(
-        private.curve, ec.SECP256R1
-    ):
+    if isinstance(private, ec.EllipticCurvePrivateKey) and isinstance(private.curve, ec.SECP256R1):
         public_numbers = private.public_key().public_numbers()
         secret_value = private.private_numbers().private_value
         return _StoredKey(
@@ -243,9 +241,7 @@ def _validate_and_normalize_private_jwk(data: dict[str, object], jwk_path: Path)
                 ed25519.Ed25519PrivateKey.from_private_bytes(private_bytes)
             )
         else:
-            private = ec.derive_private_key(
-                int.from_bytes(private_bytes, "big"), ec.SECP256R1()
-            )
+            private = ec.derive_private_key(int.from_bytes(private_bytes, "big"), ec.SECP256R1())
         normalized = _stored_key_from_private(private, "")
     except Exception as exc:
         key_name = "Ed25519" if kty_crv == ("OKP", "Ed25519") else "P-256"
@@ -257,9 +253,7 @@ def _validate_and_normalize_private_jwk(data: dict[str, object], jwk_path: Path)
     public = normalized.public_jwk()._raw
     kid_val = data.get("kid")
     normalized.kid = (
-        str(kid_val)
-        if isinstance(kid_val, str) and kid_val
-        else compute_thumbprint(public)
+        str(kid_val) if isinstance(kid_val, str) and kid_val else compute_thumbprint(public)
     )
     return normalized
 
@@ -497,6 +491,8 @@ class LocalKeyProvider(KeyProvider):
 
     def signing_key(self) -> JWK:
         """Return the public JWK of the current active signing key."""
+        if self._store.active is None:
+            raise ArgumentError("provider has no active signing key")
         return self._store.active.public_jwk()
 
     def jwk(self, kid: str) -> JWK:
@@ -505,7 +501,7 @@ class LocalKeyProvider(KeyProvider):
         Raises:
             ArgumentError: If *kid* is not found.
         """
-        if self._store.active.kid == kid:
+        if self._store.active is not None and self._store.active.kid == kid:
             return self._store.active.public_jwk()
         for k in self._store.retained:
             if k.kid == kid:
@@ -517,10 +513,14 @@ class LocalKeyProvider(KeyProvider):
 
     def list_key_ids(self) -> list[str]:
         """Return the active key ID followed by all retained key IDs."""
-        return [self._store.active.kid] + [k.kid for k in self._store.retained]
+        return ([self._store.active.kid] if self._store.active is not None else []) + [
+            k.kid for k in self._store.retained
+        ]
 
     def sign(self, payload: bytes) -> bytes:
         """Sign *payload* with the current active key in JOSE wire format."""
+        if self._store.active is None:
+            raise ArgumentError("provider has no active signing key")
         return _sign_stored_key(self._store.active, payload)
 
     def sign_key(self, kid: str, payload: bytes) -> bytes:
@@ -529,7 +529,7 @@ class LocalKeyProvider(KeyProvider):
         Raises:
             ArgumentError: If *kid* is neither the active key nor a pending key.
         """
-        if self._store.active.kid == kid:
+        if self._store.active is not None and self._store.active.kid == kid:
             return _sign_stored_key(self._store.active, payload)
         for k in self._store.pending:
             if k.kid == kid:
@@ -547,6 +547,8 @@ class LocalKeyProvider(KeyProvider):
             The kid of the newly generated key.
         """
         with self._mutate() as store:
+            if store.active is None:
+                raise ArgumentError("provider has no active algorithm; select another provider")
             key = _generate_stored_key(store.active.alg)
             store.pending.append(key)
         return key.kid
@@ -564,20 +566,28 @@ class LocalKeyProvider(KeyProvider):
             if idx == -1:
                 raise ArgumentError(f"no pending key with kid {kid!r}")
             incoming = store.pending.pop(idx)
-            store.retained.append(store.active)
+            if store.active is not None:
+                store.retained.append(store.active)
             store.active = incoming
 
-    def supersede(self, kid: str) -> None:
-        """Rotate a retained key out of live use entirely.
+    def supersede(self, kid: str, *, allow_active: bool = False) -> None:
+        """Remove a retained key, or an active key after verified cross-provider rotation.
 
+        ``allow_active`` is reserved for an accepted, publicly verified rotation.
+        Removing the active key leaves this provider unable to sign.
         Persists the updated store when the provider is file-backed.
 
         Raises:
             ArgumentError: If *kid* is the active key or not a retained key.
         """
         with self._mutate() as store:
-            if store.active.kid == kid:
-                raise ArgumentError("cannot supersede the active key; activate a replacement first")
+            if store.active is not None and store.active.kid == kid:
+                if not allow_active:
+                    raise ArgumentError(
+                        "cannot supersede the active key; activate a replacement first"
+                    )
+                store.active = None
+                return
             idx = next((i for i, k in enumerate(store.retained) if k.kid == kid), -1)
             if idx == -1:
                 raise ArgumentError(f"no retained key with kid {kid!r}")

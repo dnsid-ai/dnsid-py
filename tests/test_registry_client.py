@@ -30,6 +30,7 @@ from dnsid.models import (
     RegistryAgentStatus,
 )
 from dnsid.registry_client import RegistryClient
+from tests._registry_http import patch_registry_http
 
 _VALID_CANONICAL = (
     "ek=https://example.com/.well-known/jwks.json;"
@@ -499,7 +500,7 @@ class TestPrepareIssuance:
             captured.update(url=url, headers=headers, timeout=timeout)
             return response
 
-        with patch("httpx.post", fake_post):
+        with patch_registry_http("httpx.post", fake_post):
             result = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
 
         assert isinstance(result, PreparedRegistryEvent)
@@ -518,7 +519,7 @@ class TestPrepareIssuance:
 
     def test_domain_is_path_escaped(self):
         response = self._response()
-        with patch("httpx.post", return_value=response) as post:
+        with patch_registry_http("httpx.post", return_value=response) as post:
             _make_client().prepare_issuance("agent+dev.example.com", "issuance-1")
         assert "/agent/agent%2Bdev.example.com/tlog/issuance/prepare" in post.call_args.args[0]
 
@@ -527,7 +528,7 @@ class TestPrepareIssuance:
         ["", " leading", "trailing ", "x" * 201, "é" * 101],
     )
     def test_rejects_product_invalid_idempotency_keys_before_transport(self, key):
-        with patch("httpx.post") as post:
+        with patch_registry_http("httpx.post") as post:
             with pytest.raises(ArgumentError, match="1 to 200 bytes"):
                 _make_client().prepare_issuance(_DOMAIN, key)
         post.assert_not_called()
@@ -555,7 +556,7 @@ class TestPreparedEventTransport:
             _make_client().submit_prepared_event(_DOMAIN, b"entry", " trailing")
 
     def test_missing_log_reference_is_rejected_without_parsing_body(self):
-        with patch("httpx.post", return_value=self._response(b"not-json", None)):
+        with patch_registry_http("httpx.post", return_value=self._response(b"not-json", None)):
             with pytest.raises(VerificationError, match="DNSID-Log-Reference"):
                 _make_client().prepare_issuance(_DOMAIN, "issuance-1")
 
@@ -563,7 +564,7 @@ class TestPreparedEventTransport:
         response = self._response(b"secret response body")
         response.status_code = 500
         response.is_success = False
-        with patch("httpx.post", return_value=response):
+        with patch_registry_http("httpx.post", return_value=response):
             with pytest.raises(VerificationError) as exc_info:
                 _make_client().prepare_issuance(_DOMAIN, "issuance-1")
         assert "secret response body" not in str(exc_info.value)
@@ -573,7 +574,7 @@ class TestPreparedEventTransport:
 class TestGetAgentStatusDnsPublished:
     def _status_for(self, body: dict):
         resp = _http_response(200, json_body=body)
-        with patch("httpx.get", return_value=resp):
+        with patch_registry_http("httpx.get", return_value=resp):
             return _make_client().get_agent_status(_DOMAIN)
 
     def test_ready_with_dns_published_false_is_ready_for_publication(self):
@@ -630,7 +631,7 @@ class TestGetRegistration:
                 "lastTransitionAt": "2026-01-01T00:00:00Z",
             },
         }
-        with patch("httpx.get", return_value=_http_response(200, json_body=body)):
+        with patch_registry_http("httpx.get", return_value=_http_response(200, json_body=body)):
             result = _make_client().get_registration(_DOMAIN)
         assert result is not None
         assert result.publication_authority == "registry"
@@ -656,7 +657,7 @@ class TestGetRegistration:
             "serverStatus": "READY",
             "publication_config": publication_config,
         }
-        with patch("httpx.get", return_value=_http_response(200, json_body=body)):
+        with patch_registry_http("httpx.get", return_value=_http_response(200, json_body=body)):
             result = _make_client().get_registration(_DOMAIN)
 
         assert result is not None
@@ -672,13 +673,13 @@ class TestGetRegistration:
             "serverStatus": "READY",
             "publication_config": {"publish_profile": "dnsid-draft-01"},
         }
-        with patch("httpx.get", return_value=_http_response(200, json_body=body)):
+        with patch_registry_http("httpx.get", return_value=_http_response(200, json_body=body)):
             with pytest.raises(ValidationError, match="publication_config"):
                 _make_client().get_registration(_DOMAIN)
 
     def test_rejects_missing_authority_instead_of_guessing(self):
         body = {"domain": _DOMAIN, "status": "READY", "dns_published": True}
-        with patch("httpx.get", return_value=_http_response(200, json_body=body)):
+        with patch_registry_http("httpx.get", return_value=_http_response(200, json_body=body)):
             with pytest.raises(ValidationError, match="publication authority"):
                 _make_client().get_registration(_DOMAIN)
 
@@ -689,7 +690,7 @@ class TestGetRegistration:
             "serverStatus": "READY",
             "oidc_issuer_url": 123,
         }
-        with patch("httpx.get", return_value=_http_response(200, json_body=body)):
+        with patch_registry_http("httpx.get", return_value=_http_response(200, json_body=body)):
             with pytest.raises(VerificationError, match="oidc_issuer_url"):
                 _make_client().get_registration(_DOMAIN)
 
@@ -709,7 +710,7 @@ class TestRegistryAgentStatusPublicationConfig:
             "managed": "self",
             "publication_config": publication_config,
         }
-        with patch("httpx.get", return_value=_http_response(200, json_body=body)):
+        with patch_registry_http("httpx.get", return_value=_http_response(200, json_body=body)):
             result = _make_client().get_agent_status(_DOMAIN)
 
         assert result is not None
@@ -889,7 +890,7 @@ class TestExactRegistrationStatuses:
         ],
     )
     def test_rejects_unexpected_success_status(self, status, call, expected):
-        with patch("httpx.post", return_value=_http_response(status, json_body={})):
+        with patch_registry_http("httpx.post", return_value=_http_response(status, json_body={})):
             with pytest.raises(VerificationError, match=f"expected HTTP {expected}"):
                 call(_make_client())
 
@@ -941,7 +942,7 @@ def _http_response(status_code: int = 202, json_body: dict | None = None) -> Mag
 
 class TestSubmitChallengeSignature:
     def _submit(self, resp: MagicMock, signature: bytes | str = "c2lnbmF0dXJl"):
-        with patch("httpx.post", return_value=resp) as mock_post:
+        with patch_registry_http("httpx.post", return_value=resp) as mock_post:
             result = _make_client().submit_challenge_signature(_DOMAIN, "bm9uY2U", signature)
         return result, mock_post
 
@@ -1132,7 +1133,7 @@ class TestRegistryClientDefaultBaseUrl:
         import httpx
 
         client = RegistryClient(api_key=_FAKE_API_KEY)
-        with patch("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
+        with patch_registry_http("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
             with pytest.raises(
                 Exception,
                 match=r"no registry at 127.0.0.1:7755; run `dnsid local up` or set DNSID_REGISTRY_URL",
@@ -1144,7 +1145,7 @@ class TestRegistryClientDefaultBaseUrl:
         import httpx
 
         client = RegistryClient("https://registry.example.com")
-        with patch("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
+        with patch_registry_http("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
             with pytest.raises(Exception, match="Connection refused"):
                 client.get_agent_status(_DOMAIN)
 
@@ -1227,7 +1228,7 @@ class TestAuthentication:
             return _FakeResponse(201, _REGISTER_RESPONSE)
 
         with (
-            patch("httpx.post", fake_post),
+            patch_registry_http("httpx.post", fake_post),
             patch.object(client, "get_agent_detail", return_value=_registration()),
         ):
             client.register_agent(
@@ -1244,7 +1245,7 @@ class TestAuthentication:
             captured["headers"] = headers
             return _FakeResponse(200, {})
 
-        with patch("httpx.request", fake_request):
+        with patch_registry_http("httpx.request", fake_request):
             client.unregister_agent(_DOMAIN)
 
         assert captured["headers"]["Authorization"] == f"Bearer {_FAKE_API_KEY}"
@@ -1259,7 +1260,7 @@ class TestAuthentication:
     def test_mutation_without_credentials_makes_no_request(self, call):
         client = RegistryClient("https://registry.example.com")
         # Patch every HTTP verb a mutation path could reach (post/request/get).
-        with patch("httpx.post") as mock_post, patch("httpx.request") as mock_request:
+        with patch_registry_http("httpx.post") as mock_post, patch_registry_http("httpx.request") as mock_request:
             with pytest.raises(ArgumentError):
                 call(client)
         mock_post.assert_not_called()
@@ -1274,7 +1275,7 @@ class TestAuthentication:
             captured["headers"] = headers
             return _FakeResponse(200, {"status": "ACTIVE"})
 
-        with patch("httpx.get", fake_get):
+        with patch_registry_http("httpx.get", fake_get):
             assert getattr(client, reader)(_DOMAIN) is not None
 
         assert "Authorization" not in captured["headers"]
@@ -1288,7 +1289,7 @@ class TestAuthentication:
             captured["headers"] = headers
             return _FakeResponse(200, {"status": "ACTIVE"})
 
-        with patch("httpx.get", fake_get):
+        with patch_registry_http("httpx.get", fake_get):
             getattr(client, reader)(_DOMAIN)
 
         assert captured["headers"]["Authorization"] == f"Bearer {_FAKE_API_KEY}"
@@ -1304,7 +1305,7 @@ class TestAuthentication:
             reached.append(kwargs.get("headers", {}))
             raise httpx.ConnectError("refused")
 
-        with patch("httpx.request", fake), patch("httpx.post", fake), patch("httpx.get", fake):
+        with patch_registry_http("httpx.request", fake), patch_registry_http("httpx.post", fake), patch_registry_http("httpx.get", fake):
             with pytest.raises(Exception, match="no registry at 127.0.0.1:7755"):
                 call(client)
         assert reached and "Authorization" not in reached[0]
@@ -1318,7 +1319,7 @@ class TestAuthentication:
     def test_whitespace_only_credential_treated_as_missing(self):
         client = RegistryClient("https://registry.example.com", api_key="   ")
         assert "authenticated=False" in repr(client)
-        with patch("httpx.post") as mock_post:
+        with patch_registry_http("httpx.post") as mock_post:
             with pytest.raises(ArgumentError, match="requires registry credentials"):
                 client.register_agent(
                     AgentRegistrationInput(domain=_DOMAIN, environment="production")
@@ -1343,7 +1344,7 @@ class TestAuthentication:
             resp.text = f"bad request: Authorization: Bearer {_FAKE_API_KEY}"
             return resp
 
-        with patch("httpx.post", fake_post):
+        with patch_registry_http("httpx.post", fake_post):
             with pytest.raises(VerificationError) as excinfo:
                 client.register_agent(
                     AgentRegistrationInput(domain=_DOMAIN, environment="production")
@@ -1364,7 +1365,7 @@ class TestAuthentication:
         def boom(url, json=None, headers=None, timeout=None):
             raise httpx.LocalProtocolError(f"Illegal header value b'Bearer {_FAKE_API_KEY}'")
 
-        with patch("httpx.post", boom):
+        with patch_registry_http("httpx.post", boom):
             with pytest.raises(VerificationError) as excinfo:
                 client.register_agent(
                     AgentRegistrationInput(domain=_DOMAIN, environment="production")
@@ -1390,7 +1391,7 @@ class TestAuthentication:
                 f"Failed to connect with headers Authorization: Bearer {_FAKE_API_KEY}"
             )
 
-        with patch("httpx.post", boom):
+        with patch_registry_http("httpx.post", boom):
             with pytest.raises(VerificationError) as excinfo:
                 client.register_agent(
                     AgentRegistrationInput(domain=_DOMAIN, environment="production")
@@ -1413,7 +1414,7 @@ class TestAuthentication:
                 f"Connection refused; sent Authorization: Bearer {_FAKE_API_KEY}"
             )
 
-        with patch("httpx.get", boom):
+        with patch_registry_http("httpx.get", boom):
             with pytest.raises(VerificationError) as excinfo:
                 client.get_status(_DOMAIN)
         assert _FAKE_API_KEY not in str(excinfo.value)
@@ -1432,7 +1433,7 @@ class TestAuthentication:
                 f"Connection refused; sent Authorization: Bearer {_FAKE_API_KEY}"
             )
 
-        with patch("httpx.get", boom):
+        with patch_registry_http("httpx.get", boom):
             with pytest.raises(VerificationError) as excinfo:
                 client.get_agent_status(_DOMAIN)
         assert _FAKE_API_KEY not in str(excinfo.value)
@@ -1451,7 +1452,7 @@ class TestAuthentication:
                 f"Connection refused; sent Authorization: Bearer {_FAKE_API_KEY}"
             )
 
-        with patch("httpx.request", boom):
+        with patch_registry_http("httpx.request", boom):
             with pytest.raises(VerificationError) as excinfo:
                 client.unregister_agent(_DOMAIN)
         assert _FAKE_API_KEY not in str(excinfo.value)
@@ -1474,7 +1475,7 @@ class TestAuthentication:
         def boom(url, json=None, headers=None, timeout=None):
             raise httpx.ConnectError(f"Connection refused; Authorization: Bearer {_FAKE_API_KEY}")
 
-        with patch("httpx.post", boom):
+        with patch_registry_http("httpx.post", boom):
             err: VerificationError | None = None
             try:
                 # Simulate calling from within an active except handler
@@ -1503,7 +1504,7 @@ class TestRegistrationCarriesAgentId:
             return _FakeResponse(201, created)
 
         with (
-            patch("httpx.post", fake_post),
+            patch_registry_http("httpx.post", fake_post),
             patch.object(client, "get_agent_detail", return_value=_registration()),
         ):
             reg = client.register_agent(
