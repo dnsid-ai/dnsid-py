@@ -873,6 +873,11 @@ class TestPreparedEventModel:
             ctx,
         )
         data = entry_bytes(complete)
+        from dnsid.c2sp_tlog import c2sp_event_id
+
+        assert prepared.event_id == entity_signed.event_id == reparsed.event_id == complete.event_id
+        assert complete.event_id == c2sp_event_id(data)
+        assert "event_id" not in complete.envelope
         parsed_event = parse_c2sp_event_entry(data)
         assert isinstance(parsed_event, IssuanceEvent)
         assert parsed_event.domain == self.DOMAIN

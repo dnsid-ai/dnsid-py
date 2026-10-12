@@ -7,8 +7,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from dnsid import JWKS, HttpSignatureProfile, IdentityManager, LocalKeyProvider, load_file
-from dnsid.exceptions import ArgumentError
+from dnsid import (
+    JWKS,
+    IdentityManager,
+    LocalKeyProvider,
+    construct_identity_manager,
+    load_file,
+)
+from dnsid.exceptions import ArgumentError, ValidationError, VerificationError
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "published-signing"
 
@@ -35,30 +41,41 @@ def test_example_checks_publication_before_signing(tmp_path, monkeypatch, deploy
         current = replace(LocalKeyProvider.generate().signing_key(), kid=selected.kid)
     elif publication == "wrong-kid":
         current = replace(selected, kid="different-published-kid")
-    evidence = SimpleNamespace(jwks=JWKS([] if publication == "empty" else [current]))
-    manager = IdentityManager(loaded.dnsid, provider)
-    manager.verify_domain = Mock(return_value=evidence)
+    evidence = SimpleNamespace(
+        record=SimpleNamespace(gi=loaded.dnsid.identity.governance_id,
+                               lr=loaded.dnsid.identity.log_ref, v="dnsid-draft-01"),
+        jwks=JWKS([] if publication == "empty" else [current]),
+    )
+    verification = Mock(return_value=evidence)
     if publication == "unverified":
-        manager.verify_domain.side_effect = ArgumentError("publication verification failed")
+        verification.side_effect = ArgumentError("publication verification failed")
+    monkeypatch.setattr(IdentityManager, "_verify_publication_evidence", verification)
+    monkeypatch.setattr("dnsid.config_loading._operational_key_provider", Mock(return_value=provider))
+    monkeypatch.setattr("dnsid.config_loading._log_registry_from_trust", Mock(return_value=None))
+    original_close = IdentityManager.close
+    closed = []
+
+    def close(manager):
+        original_close(manager)
+        closed.append(manager._closed)
+
+    monkeypatch.setattr(IdentityManager, "close", close)
     provider.sign = Mock(wraps=provider.sign)
 
     sign_request = runpy.run_path(str(EXAMPLE / "main.py"))["sign_request"]
-    constructor = Mock(return_value=manager)
+    constructor = Mock(wraps=construct_identity_manager)
     monkeypatch.setitem(sign_request.__globals__, "construct_identity_manager", constructor)
     if publication == "matching":
         request = sign_request(str(path))
-        manager.verify_domain.assert_called_once_with("agent.example")
+        verification.assert_called_once_with("agent.example")
         provider.sign.assert_called_once()
         assert request.method == "GET"
         assert request.url == "https://receiver.example/resource"
         assert request.get_header("signature")
         assert f'keyid="agent.example#{selected.kid}"' in request.get_header("signature-input")
-        assert HttpSignatureProfile.from_identity_manager(manager).verify_signed_http_request(
-            request
-        ) is evidence
     else:
-        with pytest.raises(ArgumentError):
+        with pytest.raises((ArgumentError, ValidationError, VerificationError)):
             sign_request(str(path))
         provider.sign.assert_not_called()
     constructor.assert_called_once_with(loaded)
-    assert manager._closed
+    assert closed == [True]

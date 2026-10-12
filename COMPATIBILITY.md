@@ -141,8 +141,42 @@ SDK cannot guarantee prompt return from arbitrary caller code.
 
 Standalone bundle migration rejection remains an API limitation rather than a
 design deviation: configured readers recursively verify predecessor histories.
-Durable initial-issuance coordinator recovery remains deployment-owned and is
-not established by these verification tests.
+The remaining managed-trust transport deviation is recorded in
+`SDK_CONFORMANCE.known_deviations`: configuration construction does not forward
+effective transport settings to the managed log-trust factory.
+
+## Configuration and Initial Issuance
+
+Configuration-selected operational and entity signers must match verified local
+publication (kid, algorithm, and RFC 7638 thumbprint) before construction returns.
+Provider availability/settings are checked before policy fetch or discovery.
+Injected providers still take precedence and remain their workflow's responsibility.
+Initial setup without existing ACTIVE publication must use explicitly injected
+providers, not configuration-selected signers.
+
+`RegistryClient.get_organization_onboarding(expected_org_id=..., expected_gi=...)`
+compares saved account bindings and adds locally derived `bindings_ready` to the
+returned dictionary. Missing/pending proof or delegation keeps this value false;
+registry authorization and unavailable-service errors are preserved.
+
+`PreparedC2spTlogEvent.event_id` is locally derived from canonical signed bytes.
+It is not a signed envelope member and does not change when signatures are added.
+Missing DoH TTL now means zero: fresh verification succeeds, but is not cached.
+OIDC token responses, including error bodies, are size-limited during streaming.
+
+`IssuanceOperation` and `resume_issuance` coordinate the registry's split ISSUANCE
+flow. Persist the initial intent before publication. Resume validates the saved
+identity/key/log bindings and signatures, saves exact signed bytes before sending,
+and binds acceptance to their hash and indexed log reference before activation.
+Pending outcomes retry those same bytes; rejected outcomes never activate.
+Accepted recovery skips preparation/submission and retries ACTIVE convergence.
+
+Applications must supply atomic durable persistence with one writer per identity,
+external publication verification, and idempotent ACTIVE convergence hooks.
+A completed operation never activates again. If activation succeeds but saving
+completion fails, the same accepted operation repeats the idempotent hook on
+resume. These application integration requirements are recorded in conformance
+metadata; SDK tests do not establish deployment correctness.
 
 ## Consistency Reference
 

@@ -631,10 +631,20 @@ Deployment files can select an existing operational key with `keySource.provider
 `keySource.keyRef`, and non-secret `keySource.settings`. Known cloud factories load
 only the selected optional package; missing packages fail without file fallback.
 Constructors never generate keys. Local file selection warns against production use.
+Configuration-selected signers must match verified local publication before return;
+initial unpublished setup requires explicitly injected providers.
 
 `RegistryClient.get_organization_onboarding()` explicitly reads existing account
 proof/delegation status; it does not create an identity or promise permanent replay.
-Pending proofs are not verified bindings, and this response supplies no entity JWKS URL.
+Pass `expected_org_id` and `expected_gi` to compare saved account bindings. The
+returned `bindings_ready` is true only for matching, verified governance proof
+and verified entity delegation. Pending proofs remain pending; no entity JWKS URL
+is inferred from this response.
+
+For split initial issuance, persist an `IssuanceOperation` and use `resume_issuance`
+with durable persistence, external publication verification, and idempotent ACTIVE
+convergence hooks. It persists exact signed bytes before submission and validates
+acceptance before activation. See [recovery requirements](COMPATIBILITY.md#configuration-and-initial-issuance).
 
 To move an established signer, use explicit `rotate_operational_key()` with a
 `target_key_provider` and stable old/target provider references. Recovery reuses those

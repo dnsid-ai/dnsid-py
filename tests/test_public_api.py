@@ -83,6 +83,9 @@ def test_c2sp_spec_revision_metadata_exported():
 
 
 def test_sdk_conformance_metadata_exported_and_immutable():
+    assert len(dnsid.SDK_CONFORMANCE.known_deviations) == 2
+    assert "transport settings" in dnsid.SDK_CONFORMANCE.known_deviations[0]
+    assert "application hooks" in dnsid.SDK_CONFORMANCE.known_deviations[1]
     assert dnsid.SDK_CONFORMANCE == dnsid.SDKConformance(
         publish_profile="dnsid-draft-01",
         verification_profiles={
@@ -91,7 +94,7 @@ def test_sdk_conformance_metadata_exported_and_immutable():
         },
         specification_status="internet-draft",
         log_bindings=dnsid.SDK_CONFORMANCE.log_bindings,
-        known_deviations=(),
+        known_deviations=dnsid.SDK_CONFORMANCE.known_deviations,
     )
     assert dnsid.SDK_CONFORMANCE.log_bindings["c2sp-tlog"] == (
         "profile=1;"
