@@ -434,6 +434,18 @@ including identity-cache hits.
 
 - `VerificationError`: If any verification step fails — DNS resolution, DNSSEC, identity record parsing or validation, signature checks, key-set fetches, lifecycle-log checks, key age, policy flags, or status. Carries a VerificationCode identifying the failing step.
 
+### `async_verify_domain`
+
+```python
+IdentityManager.async async_verify_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify without blocking the event loop; enforce the same policy as verify_domain.
+
+Fresh cache hits and coalesced waits need no worker thread. Blocking
+DNS, HTTPS and log adapters run only for the shared evidence leader.
+Cancellation of a waiter does not cancel shared verification.
+
 ### `refresh_domain`
 
 ```python

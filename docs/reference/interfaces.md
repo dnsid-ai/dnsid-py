@@ -65,6 +65,24 @@ Acquire fresh evidence with the same peer, acceptance, and freshness checks.
 Revalidate injected resource caches; never fall back to cached identity
 evidence after failure. Cached DNS answers retain their remaining TTL.
 
+## `AsyncIdentityResolver`
+
+```python
+from dnsid import AsyncIdentityResolver
+```
+
+*Bases:* `Protocol`
+
+Async identity verification contract for application-layer profiles.
+
+### `async_verify_domain`
+
+```python
+AsyncIdentityResolver.async async_verify_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify identity evidence and enforce per-caller policy.
+
 ## `KeyProvider`
 
 ```python

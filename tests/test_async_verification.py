@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import threading
 from collections import Counter
+from concurrent.futures import Future
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,6 +16,29 @@ from dnsid.http_signatures import HttpSignatureProfile
 from dnsid.models import TLSCertificate
 from tests.test_http_signing import TestVerifySignedHttpRequest as _SignatureFixture
 from tests.test_verification_coalescing import _manager_fixture
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_shared_future_is_removed_before_notifying_waiters(ec_pair, fails):
+    manager, _, _, domain, _, _, _ = _manager_fixture(ec_pair)
+    future = Future()
+    pending = manager._verification_futures
+    pending[domain] = future
+    observed = []
+    future.add_done_callback(lambda _: observed.append(domain in pending))
+
+    def work():
+        if fails:
+            raise RuntimeError("verification failed")
+        return object()
+
+    with manager:
+        if fails:
+            with pytest.raises(RuntimeError, match="verification failed"):
+                manager._complete_verification(domain, pending, future, work)
+        else:
+            manager._complete_verification(domain, pending, future, work)
+    assert observed == [False]
 
 
 async def _started(event):

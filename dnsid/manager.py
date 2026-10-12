@@ -1664,19 +1664,20 @@ class IdentityManager:
             result = work()
             remaining_seconds()
         except BaseException as exc:
-            if (isinstance(exc, VerificationError)
-                    and exc.code == VerificationCode.STATUS_NOT_ACTIVE):
-                with self._coordination_lock:
+            with self._coordination_lock:
+                if (isinstance(exc, VerificationError)
+                        and exc.code == VerificationCode.STATUS_NOT_ACTIVE):
                     self._cache.evict(domain)
-            future.set_exception(exc)
+                if pending.get(domain) is future:
+                    del pending[domain]
+                future.set_exception(exc)
             raise
         else:
-            future.set_result(result)
-            return result
-        finally:
             with self._coordination_lock:
                 if pending.get(domain) is future:
                     del pending[domain]
+                future.set_result(result)
+            return result
 
     def _refresh_identity(self, domain: str) -> VerifiedDomain:
         # Finish older lookups before refreshing so they cannot restore old evidence.
