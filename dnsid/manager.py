@@ -1545,15 +1545,17 @@ class IdentityManager:
             result = work()
             remaining_seconds()
         except BaseException as exc:
-            future.set_exception(exc)
-            raise
-        else:
-            future.set_result(result)
-            return result
-        finally:
             with self._coordination_lock:
                 if pending.get(domain) is future:
                     del pending[domain]
+                future.set_exception(exc)
+            raise
+        else:
+            with self._coordination_lock:
+                if pending.get(domain) is future:
+                    del pending[domain]
+                future.set_result(result)
+            return result
 
     def _refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
         import copy

@@ -44,6 +44,24 @@ Verify the DNSid identity record for *domain*.
 
 - `VerificationError`: If any verification step fails.
 
+## `AsyncIdentityResolver`
+
+```python
+from dnsid import AsyncIdentityResolver
+```
+
+*Bases:* `Protocol`
+
+Async identity verification contract for application-layer profiles.
+
+### `async_verify_domain`
+
+```python
+AsyncIdentityResolver.async async_verify_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify identity evidence and enforce per-caller policy.
+
 ## `KeyProvider`
 
 ```python

@@ -350,6 +350,7 @@ PAGES: list[dict] = [
         ),
         "names": [
             "IdentityResolver",
+            "AsyncIdentityResolver",
             "KeyProvider",
             "Log",
             "LogReader",

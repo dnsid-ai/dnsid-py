@@ -22,14 +22,14 @@ required for DNSid conformance.
 ### `HttpSignatureProfile` constructor
 
 ```python
-HttpSignatureProfile(resolver: IdentityResolver, key_provider: KeyProvider | None, domain: str, config: HttpMessageSignatureConfig | None = None, transport_config: TransportConfig | None = None) -> None
+HttpSignatureProfile(resolver: IdentityResolver | AsyncIdentityResolver, key_provider: KeyProvider | None, domain: str, config: HttpMessageSignatureConfig | None = None, transport_config: TransportConfig | None = None) -> None
 ```
 
 Initialize the profile for a local DNSid identity.
 
 **Arguments:**
 
-- `resolver` (`IdentityResolver`): Any object satisfying the IdentityResolver protocol.
+- `resolver` (`IdentityResolver | AsyncIdentityResolver`): An IdentityResolver or AsyncIdentityResolver. Sync verification requires IdentityResolver; async verification accepts either.
 - `key_provider` (`KeyProvider | None`): Key management implementation for the local identity.
 - `domain` (`str`): FQDN of the local identity. Used as the domain portion of the ``{domain}#{kid}`` keyId in Signature-Input headers.
 - `config` (`HttpMessageSignatureConfig | None`): Optional freshness overrides. Defaults to 300 s max age / 5 s skew. — default `None`
@@ -137,6 +137,17 @@ freshness, Content-Digest integrity, and the signature itself.
 **Raises:**
 
 - `VerificationError`: If the Signature/Signature-Input headers are missing or malformed, the signature is stale or expired, the Content-Digest does not match the body, the key or algorithm cannot be validated, or the signature is invalid; also propagated from signer identity verification. Carries a VerificationCode.
+
+### `async_verify_signed_http_request`
+
+```python
+HttpSignatureProfile.async async_verify_signed_http_request(req: HttpRequest, opts: HttpVerificationOptions | None = None, *, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify inbound signatures using async identity resolution.
+
+Local validation is shared with the synchronous verifier. Legacy
+synchronous resolvers run in a worker; async resolvers are awaited.
 
 ## `HttpMessageSignatureConfig`
 
