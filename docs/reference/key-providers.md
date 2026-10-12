@@ -273,7 +273,7 @@ IDs and warms the JWK cache.
 
 **Raises:**
 
-- `ArgumentError`: If any configured key ID is empty or contains '#'.
+- `ArgumentError`: If an algorithm/key spec is unsupported or mismatched, or any configured key ID is empty or contains '#'.
 
 ### `load`
 

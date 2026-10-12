@@ -313,7 +313,7 @@ published record's version against the configured publish profile.
 ### `rotate_operational_key`
 
 ```python
-IdentityManager.rotate_operational_key(registry_client: AbstractRegistryClient, *, idempotency_key: str, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '') -> KeyRotationResult
+IdentityManager.rotate_operational_key(registry_client: AbstractRegistryClient, *, idempotency_key: str, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '', target_algorithm: str | None = None) -> KeyRotationResult
 ```
 
 Rotate the managed operational key with mandatory recovery hooks.
@@ -328,6 +328,7 @@ activation/supersession, and durable activation state.
 **Arguments:**
 
 - `target_key_provider` (`KeyProvider | None`): Explicit target; defaults to the current provider. — default `None`
+- `target_algorithm` (`str | None`): Selected JOSE algorithm; defaults to the previous key's algorithm. Changing it requires an explicit value and a target provider configured to generate that algorithm. — default `None`
 - `previous_provider_reference` (`str`): Stable old-provider reference for cross-provider recovery. — default `''`
 - `target_provider_reference` (`str`): Stable target reference, saved before submission. — default `''`
 - `registry_client` (`AbstractRegistryClient`): Client implementing the registry rotation API.
@@ -349,7 +350,7 @@ activation/supersession, and durable activation state.
 ### `resume_key_rotation`
 
 ```python
-IdentityManager.resume_key_rotation(registry_client: AbstractRegistryClient, result: KeyRotationResult, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '') -> KeyRotationResult
+IdentityManager.resume_key_rotation(registry_client: AbstractRegistryClient, result: KeyRotationResult, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '', previous_key_provider: KeyProvider | None = None) -> KeyRotationResult
 ```
 
 Resume an exact persisted managed key rotation safely.
@@ -357,16 +358,23 @@ Resume an exact persisted managed key rotation safely.
 Validates the persisted bytes, hash, identity, log, and key bindings
 before any network or key mutation. Pending state reuses the exact
 bytes and idempotency key. Accepted state performs only idempotent
-local reconciliation; activated-but-paused state only releases the
-signing pause and persists completion.
+local reconciliation; activated-but-paused state restores the signer
+before releasing the signing pause and persisting completion. For
+cross-provider recovery, construct the manager with the reopened saved
+source provider and pass the reopened saved target provider. If the
+manager already uses the target, supply the reopened saved source as
+``previous_key_provider``. Newly created provider state is not recovery.
 
 ### `activate_rotated_key`
 
 ```python
-IdentityManager.activate_rotated_key(result: KeyRotationResult, submission: SubmissionResult | None = None, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '') -> KeyRotationResult
+IdentityManager.activate_rotated_key(result: KeyRotationResult, submission: SubmissionResult | None = None, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '', previous_key_provider: KeyProvider | None = None) -> KeyRotationResult
 ```
 
 Reconcile an accepted rotation using the mandatory durability hooks.
+
+Supply ``previous_key_provider`` if the manager no longer uses the
+saved source provider; reopen both providers from their saved state.
 
 ### `verify_domain`
 
