@@ -63,7 +63,9 @@ def test_only_selected_provider_loads_and_injection_wins(monkeypatch, provider, 
     manager.close()
 
 
-def test_configured_factory_opens_existing_key_and_file_selection_warns(tmp_path, monkeypatch):
+def test_configured_factory_opens_existing_key_and_file_selection_warns(
+    tmp_path, monkeypatch, local_publication
+):
     key = LocalKeyProvider.generate()
     factory = SimpleNamespace(
         validate_config=Mock(), key_provider_from_config=Mock(return_value=key)
@@ -149,7 +151,7 @@ def test_onboarding_auth_budget_and_error_categories(monkeypatch):
 
     monkeypatch.setattr(client, "_http_request", get)
     with verification_budget(1):
-        assert client.get_organization_onboarding() == body
+        assert client.get_organization_onboarding() == {**body, "bindings_ready": False}
     assert calls[0][:2] == ("GET", "https://registry.test/api/v1/org/onboarding")
     assert calls[0][2]["headers"] == {"Authorization": "Bearer owner-token"}
     for status in (403, 503):
@@ -229,7 +231,9 @@ def test_rotation_requires_verified_current_publication_before_activation():
 @pytest.mark.parametrize(
     "algorithm,wire", [("EdDSA", "ED25519_SHA_512"), ("ES256", "ECDSA_SHA_256")]
 )
-def test_aws_factory_uses_stable_existing_reference_and_algorithm(monkeypatch, algorithm, wire):
+def test_aws_factory_uses_stable_existing_reference_and_algorithm(
+    monkeypatch, algorithm, wire, local_publication
+):
     from dnsid.aws_kms_key_provider import AwsKmsKeyProvider
 
     key = LocalKeyProvider.generate(algorithm)

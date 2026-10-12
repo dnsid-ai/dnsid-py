@@ -130,6 +130,7 @@ from .interfaces import (
 )
 from .jose import JoseConfig, JoseProfile
 from .local_key_provider import LocalKeyProvider
+from .managed_issuance import IssuanceOperation, resume_issuance
 from .manager import (
     ApplicationSigningPauseHook,
     IdentityManager,
@@ -291,6 +292,8 @@ __all__ = [
     "PreparedRegistryEvent",
     "KeyRotationPreparationRequest",
     "KeyRotationResult",
+    "IssuanceOperation",
+    "resume_issuance",
     "KeyRotationPersistenceHook",
     "ApplicationSigningPauseHook",
     "SubmissionResult",

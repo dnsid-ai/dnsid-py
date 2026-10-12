@@ -308,11 +308,13 @@ mirror the TypeScript ``RegistryAgentStatus`` interface.
 ### `get_organization_onboarding`
 
 ```python
-RegistryClient.get_organization_onboarding() -> dict[str, Any]
+RegistryClient.get_organization_onboarding(*, expected_org_id: str | None = None, expected_gi: str | None = None) -> dict[str, Any]
 ```
 
 Read account/GI proofs and delegation using authenticated effective transport.
 
+Compare saved/configured IDs when supplied; derive ``bindings_ready``
+only from matching verified GI proof and verified entity delegation.
 Pending proofs are not ready bindings. This read supplies no entity JWKS
 URL and makes no claim about named creation or permanent replay support.
 
@@ -610,6 +612,36 @@ once first persisted. When *activated* is False, call
 the exact same bytes under the same idempotency key. Application signing
 remains paused until accepted submission, local activation/supersession,
 and durable state reconciliation all complete.
+
+## `IssuanceOperation`
+
+```python
+from dnsid import IssuanceOperation
+```
+
+Persisted intent and exact bytes for one issuance, never a replacement attempt.
+
+Save the initial intent before publishing DNS, ek, ku, and non-active su.
+Resume with the saved operation after any failure. Storage must commit
+atomically before returning and serialize writers for this identity.
+
+## `resume_issuance`
+
+```python
+from dnsid import resume_issuance
+```
+
+```python
+resume_issuance(operation: IssuanceOperation, registry: RegistryClient, key_provider: KeyProvider, *, persist: Callable[[IssuanceOperation], None], verify_publication: Callable[[IssuanceOperation], None], activate: Callable[[IssuanceOperation], None]) -> IssuanceOperation
+```
+
+Prepare once, persist exact signed bytes, submit/resume, then activate.
+
+``verify_publication`` must verify externally served DNS, ek, ku and su
+against the intent without requiring ACTIVE or an already logged issuance.
+``activate`` must idempotently converge su to ACTIVE for this accepted
+issuance. Neither hook may create another issuance. On exceptions, reload
+the last committed operation; acceptance is saved before activation.
 
 ## `SubmissionResult`
 
