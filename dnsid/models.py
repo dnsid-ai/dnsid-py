@@ -681,6 +681,10 @@ class DnsIdTxtRecord:
     cu: str = ""
     identity_fqdn: str = ""
     unknown_tags: dict[str, str] = field(default_factory=dict)
+    # Parsed optional tag presence is signed content, even when the field is empty.
+    _parsed_optional_tags: set[str] = field(
+        default_factory=set, init=False, repr=False, compare=False
+    )
 
     # ------------------------------------------------------------------
     # Parsing
@@ -736,7 +740,8 @@ class DnsIdTxtRecord:
             seen.add(tag)
 
             if tag in _KNOWN_TAGS:
-                # Empty optional tags are a no-op (field stays unset).
+                if tag not in required:
+                    record._parsed_optional_tags.add(tag)
                 if value or tag in required:
                     setattr(record, tag, value)
             else:
@@ -805,6 +810,8 @@ class DnsIdTxtRecord:
 
         for tag, value in parsed_pairs:
             if tag in _KNOWN_TAGS:
+                if tag not in _REQUIRED_UNSIGNED:
+                    record._parsed_optional_tags.add(tag)
                 if value or tag in _REQUIRED_UNSIGNED:
                     setattr(record, tag, value)
             else:
@@ -879,11 +886,11 @@ class DnsIdTxtRecord:
     # ------------------------------------------------------------------
 
     def _all_tags(self) -> list[str]:
-        """Return all set tag=value pairs (known + unknown), excluding empty known optionals."""
+        """Return set and parsed tag=value pairs, including parsed empty optionals."""
         items: list[str] = []
         for tag in ("v", "gi", "ek", "ku", "lr", "su", "sg", "fl", "ka", "cu"):
             value: str = getattr(self, tag)
-            if value:
+            if value or tag in self._parsed_optional_tags:
                 items.append(f"{tag}={value}")
         for tag, value in self.unknown_tags.items():
             items.append(f"{tag}={value}")
@@ -906,15 +913,15 @@ class DnsIdTxtRecord:
         tags: list[str] = []
         for tag in ("v", "gi", "ek", "ku", "lr", "su", "fl", "ka", "cu"):
             value: str = getattr(self, tag)
-            if value:
+            if value or tag in self._parsed_optional_tags:
                 tags.append(f"{tag}={value}")
         return ";".join(sorted(tags))
 
     def serialize(self) -> str:
         """Produce a DKIM-style tag=value string (RFC 6376 syntax).
 
-        v is always first; all other tags follow. Empty known optional tags are omitted.
-        Unknown extension tags (including empty-valued ones) are preserved.
+        v is always first; all other tags follow. Unset SDK-created optional tags
+        are omitted. Parsed empty optional tags and unknown extensions are preserved.
         """
         all_tags = self._all_tags()
         non_v = [t for t in all_tags if not t.startswith("v=")]

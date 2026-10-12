@@ -238,6 +238,67 @@ class TestSerialize:
         assert r2.ka == r.ka
 
 
+class TestParsedTagPreservation:
+    @pytest.mark.parametrize("version", ["dnsid-draft-01", "DNSid1"])
+    @pytest.mark.parametrize("optional", ["fl=", "ka=", "cu=", "fl=;ka=;cu="])
+    def test_empty_parsed_tags_canonicalize_and_round_trip(self, version, optional):
+        raw = _VALID_RECORD.replace("dnsid-draft-01", version) + f";{optional};xt="
+        expected = ";".join(sorted(pair for pair in raw.split(";") if not pair.startswith("sg=")))
+        r = DnsIdTxtRecord.parse(raw)
+        assert (r.fl, r.ka, r.cu) == ("", "", "")
+        r.identity_fqdn = "agent.example.com"
+        r.validate()
+        assert r.canonical() == expected
+        assert r.known_tags_canonical() == expected.removesuffix(";xt=")
+
+        serialized = r.serialize()
+        assert serialized.startswith(f"v={version};")
+        assert sorted(serialized.split(";")) == sorted(raw.split(";"))
+        reparsed = DnsIdTxtRecord.parse(serialized)
+        assert reparsed.canonical() == expected
+        assert reparsed.serialize() == serialized
+
+    @pytest.mark.parametrize("version", ["dnsid-draft-01", "DNSid1"])
+    def test_unsigned_canonical_preserves_empty_tags(self, version):
+        pairs = _VALID_RECORD.replace("dnsid-draft-01", version).split(";")
+        unsigned = ";".join(
+            sorted(
+                [pair for pair in pairs if not pair.startswith("sg=")]
+                + ["fl=", "ka=", "cu=", "xt="]
+            )
+        )
+        r = DnsIdTxtRecord.parse_unsigned_canonical(
+            unsigned, identity_fqdn="agent.example.com"
+        )
+        assert r.canonical() == unsigned
+        r.sg = "dGVzdA"
+        assert DnsIdTxtRecord.parse(r.serialize()).canonical() == unsigned
+
+    @pytest.mark.parametrize("tag", ["v", "gi", "ek", "ku", "lr", "su"])
+    def test_unsigned_canonical_still_rejects_empty_required_tags(self, tag):
+        pairs = dict(pair.split("=", 1) for pair in _VALID_RECORD.split(";"))
+        del pairs["sg"]
+        pairs[tag] = ""
+        unsigned = ";".join(sorted(f"{name}={value}" for name, value in pairs.items()))
+        with pytest.raises(ParseError):
+            DnsIdTxtRecord.parse_unsigned_canonical(unsigned)
+
+    def test_sdk_created_record_omits_unset_optional_tags(self):
+        r = DnsIdTxtRecord(**dict(pair.split("=", 1) for pair in _VALID_RECORD.split(";")))
+        assert r.serialize() == _VALID_RECORD
+        for output in (r.canonical(), r.known_tags_canonical(), r.serialize()):
+            assert not {"fl=", "ka=", "cu="}.intersection(output.split(";"))
+
+    def test_parsed_tag_uses_current_field_value(self):
+        r = DnsIdTxtRecord.parse(_VALID_RECORD + ";fl=")
+        r.fl = "mtls"
+        assert "fl=mtls" in r.canonical().split(";")
+        assert "fl=mtls" in r.serialize().split(";")
+        r.fl = ""
+        assert "fl=" in r.canonical().split(";")
+        assert "fl=" in r.serialize().split(";")
+
+
 class TestValidate:
     def _make(self, **kwargs) -> DnsIdTxtRecord:
         defaults = dict(
