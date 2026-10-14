@@ -461,12 +461,13 @@ class HttpSignatureProfile:
         """
         opts = opts or HttpVerificationOptions()
         candidates, signatures = self._signature_candidates(req, opts)
+        digest_matches: dict[str, bool] = {}
         verified_domain: VerifiedDomain | None = None
         last_error: DNSidError | None = None
         for sig_params in candidates:
             try:
                 candidate = self._verify_signature_candidate(
-                    req, sig_params, signatures[sig_params.label], opts, peer_cert
+                    req, sig_params, signatures[sig_params.label], opts, peer_cert, digest_matches
                 )
             except DNSidError as exc:
                 last_error = exc
@@ -499,11 +500,12 @@ class HttpSignatureProfile:
         """
         opts = opts or HttpVerificationOptions()
         candidates, signatures = self._signature_candidates(req, opts)
+        digest_matches: dict[str, bool] = {}
         verified_domain: VerifiedDomain | None = None
         last_error: DNSidError | None = None
         for sig_params in candidates:
             try:
-                domain, kid = self._verify_candidate_input(req, sig_params, opts)
+                domain, kid = self._verify_candidate_input(req, sig_params, opts, digest_matches)
                 if isinstance(self._resolver, AsyncIdentityResolver):
                     resolved = await self._resolver.async_verify_domain(domain, peer_cert=peer_cert)
                 else:
@@ -598,8 +600,9 @@ class HttpSignatureProfile:
         raw_sig: bytes,
         opts: HttpVerificationOptions,
         peer_cert: TLSCertificate | None,
+        digest_matches: dict[str, bool],
     ) -> VerifiedDomain:
-        domain, kid = self._verify_candidate_input(req, sig_params, opts)
+        domain, kid = self._verify_candidate_input(req, sig_params, opts, digest_matches)
         if not isinstance(self._resolver, IdentityResolver):
             raise ArgumentError("synchronous verification requires an IdentityResolver")
         verified_domain = (
@@ -610,7 +613,8 @@ class HttpSignatureProfile:
         return self._verify_candidate_signature(req, sig_params, raw_sig, kid, verified_domain)
 
     def _verify_candidate_input(
-        self, req: HttpRequest, sig_params: SignatureParams, opts: HttpVerificationOptions
+        self, req: HttpRequest, sig_params: SignatureParams, opts: HttpVerificationOptions,
+        digest_matches: dict[str, bool],
     ) -> tuple[str, str]:
         for required in opts.required_components:
             if required not in sig_params.components:
@@ -655,7 +659,7 @@ class HttpSignatureProfile:
                 "HTTP message signature lifetime exceeds maximum allowed age",
             )
 
-        _check_content_digest(req, sig_params)
+        _check_content_digest(req, sig_params, digest_matches)
 
         return domain, kid
 
@@ -928,7 +932,10 @@ def _parse_content_digest(header_value: str) -> tuple[str, bytes]:
     return "sha256", selected[0]
 
 
-def _check_content_digest(message: HttpRequest, params: SignatureParams) -> None:
+def _check_content_digest(
+    message: HttpRequest, params: SignatureParams,
+    digest_matches: dict[str, bool] | None = None,
+) -> None:
     if message.body is not None and "content-digest" not in params.components:
         raise VerificationError(
             VerificationCode.RECORD_INVALID,
@@ -944,8 +951,15 @@ def _check_content_digest(message: HttpRequest, params: SignatureParams) -> None
             raise VerificationError(
                 VerificationCode.RECORD_INVALID, "covered Content-Digest header is absent",
             )
-        algorithm, expected = _parse_content_digest(message.get_header("content-digest"))
-        if not _constant_time_equal(expected, hashlib.new(algorithm, message.body).digest()):
+        header = message.get_header("content-digest")
+        if digest_matches is None:
+            digest_matches = {}
+        if header not in digest_matches:
+            algorithm, expected = _parse_content_digest(header)
+            digest_matches[header] = _constant_time_equal(
+                expected, hashlib.new(algorithm, message.body).digest()
+            )
+        if not digest_matches[header]:
             raise VerificationError(
                 VerificationCode.SIGNATURE_INVALID, "Content-Digest does not match content",
             )
