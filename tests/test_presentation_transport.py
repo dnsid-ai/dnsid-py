@@ -1,5 +1,7 @@
 """Credential conflicts and replay-stream cleanup at HTTP transport boundaries."""
 
+import gc
+import weakref
 from unittest.mock import MagicMock
 
 import httpx
@@ -117,6 +119,68 @@ async def test_async_signing_replays_stream_and_retains_cleanup(ec_provider, mon
         request = httpx.Request("POST", "https://target.example/", stream=Stream(),
                                 headers=[("x-values", "one"), ("X-Values", "two")])
         await client.send(request)
+    close.assert_called_once()
+
+
+def test_repeated_sync_sends_release_old_replay_buffers(ec_provider):
+    body = b"x" * (256 * 1024)
+    stream = MagicMock(spec=httpx.SyncByteStream)
+    stream.__iter__.side_effect = lambda: iter([body])
+    references = []
+
+    def handle(request):
+        assert request.content == body
+        return httpx.Response(200)
+
+    profile = _build_profile(ec_provider)
+    with httpx.Client(transport=httpx.MockTransport(handle)) as base:
+        with profile.create_signed_http_client(base) as first, \
+                profile.create_signed_http_client(base) as second:
+            request = httpx.Request("POST", "https://target.example/", stream=stream)
+            for index in range(20):
+                assert (first if index % 2 else second).send(request).status_code == 200
+                references.append(weakref.ref(request.stream))
+                gc.collect()
+                assert all(reference() is None for reference in references[:-1])
+                assert references[-1]() is request.stream
+                stream.close.assert_not_called()
+            request.stream.close()
+    stream.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repeated_async_sends_release_old_replay_buffers(ec_provider, monkeypatch):
+    body = b"x" * (256 * 1024)
+    close = MagicMock()
+    references = []
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield body
+
+        async def aclose(self):
+            close()
+
+    async def handle(request):
+        assert request.content == body
+        return httpx.Response(200)
+
+    monkeypatch.setattr("dnsid.manager._make_async_sdk_transport",
+                        lambda config: httpx.MockTransport(handle))
+    profile = _build_profile(ec_provider)
+    async with profile.create_signed_async_http_client() as first, \
+            profile.create_signed_async_http_client() as second:
+        request = httpx.Request("POST", "https://target.example/", stream=Stream())
+        for index in range(20):
+            response = await (first if index % 2 else second).send(request)
+            assert response.status_code == 200
+            del response
+            references.append(weakref.ref(request.stream))
+            gc.collect()
+            assert all(reference() is None for reference in references[:-1])
+            assert references[-1]() is request.stream
+            close.assert_not_called()
+        await request.stream.aclose()
     close.assert_called_once()
 
 

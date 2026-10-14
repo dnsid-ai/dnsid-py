@@ -16,7 +16,11 @@ from dnsid.exceptions import ArgumentError, VerificationError
 from dnsid.http_signatures import _build_signature_base
 from dnsid.local_key_provider import LocalKeyProvider
 from dnsid.models import SignatureParams
-from dnsid.wba_signer import WebBotAuthConfig
+from dnsid.wba_signer import (
+    WBAVariant,
+    WebBotAuthConfig,
+    serve_http_message_signatures_directory,
+)
 from tests.test_wba_verifier import DOMAIN
 from tests.test_wba_verifier import setup as setup
 
@@ -75,6 +79,56 @@ def test_invalid_signer_discovery_uri_is_argument_error(setup, uri):
     provider, _, _, _, _, _, _ = setup
     with pytest.raises(ArgumentError):
         WBAHttpSigner(provider, DOMAIN, signature_agent=uri)
+
+
+def test_verifier_snapshots_configuration_before_caller_mutation(setup):
+    provider, resolver, original, req, opts, _, fetched = setup
+    config = WebBotAuthConfig(clock_skew=0)
+    verifier = WBAHttpVerifier(resolver, config=config, transport=original._transport)
+    verifier.verify_web_bot_auth_signed_request(req, opts)
+    config.clock_skew = float("nan")
+    verifier.verify_web_bot_auth_signed_request(req, opts)
+    WBAHttpSigner(provider, DOMAIN).sign(req, WBAVariant.EXPIRED)
+    with pytest.raises(VerificationError, match="timestamps"):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert len(fetched) == 2
+    assert resolver.verify_domain.call_count == 2
+
+
+def test_signer_snapshots_configuration_before_caller_mutation(setup):
+    provider, _, verifier, req, opts, _, _ = setup
+    config = WebBotAuthConfig(signature_ttl=60, signature_agent_type="directory")
+    signer = WBAHttpSigner(provider, DOMAIN, config=config)
+    config.clock_skew = float("nan")
+    config.signature_ttl = 301
+    config.signature_agent_type = "invalid"
+    config.include_signature_agent = False
+    signer.sign(req)
+    params = SignatureParams.parse(req.get_header("signature-input"))
+    assert params.expires - params.created == 60
+    assert ";type=directory" in req.get_header("signature-agent")
+    verifier.verify_web_bot_auth_signed_request(req, opts)
+
+
+@pytest.mark.parametrize("entry_point", ["verifier", "signer", "directory"])
+@pytest.mark.parametrize("field,value", [("clock_skew", float("nan")), ("signature_ttl", 301),
+                                         ("directory_signature_ttl", True)])
+def test_mutated_invalid_configuration_rejects_before_work(setup, entry_point, field, value):
+    provider, resolver, original, req, _, _, fetched = setup
+    config = WebBotAuthConfig()
+    setattr(config, field, value)
+    provider = MagicMock(wraps=provider)
+    with pytest.raises(ArgumentError):
+        if entry_point == "verifier":
+            WBAHttpVerifier(resolver, config=config, transport=original._transport)
+        elif entry_point == "signer":
+            WBAHttpSigner(provider, DOMAIN, config=config)
+        else:
+            serve_http_message_signatures_directory(req, provider, config=config)
+    assert fetched == []
+    resolver.verify_domain.assert_not_called()
+    provider.signing_key.assert_not_called()
+    provider.sign.assert_not_called()
 
 
 def test_zero_skew_and_integral_numeric_ttl(setup):

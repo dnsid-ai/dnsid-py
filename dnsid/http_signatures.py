@@ -27,13 +27,11 @@ from __future__ import annotations
 import datetime
 import hashlib
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from ._verification_budget import verification_operation
-
-if TYPE_CHECKING:
-    import httpx
+import httpx
 
 from ._utils import (
     b64_std_encode,
@@ -41,6 +39,7 @@ from ._utils import (
     normalize_fqdn,
     parse_key_id,
 )
+from ._verification_budget import verification_operation
 from .enums import VerificationCode
 from .exceptions import ArgumentError, DNSidError, VerificationError
 from .interfaces import IdentityResolver, KeyProvider
@@ -59,6 +58,24 @@ from .models import (
 )
 
 _CONTENT_SUPPLIED_EXTENSION = "dnsid.content_supplied"
+
+
+class _SyncReplayStream(httpx.ByteStream):
+    def __init__(self, content: bytes, original_close: Callable[[], None]) -> None:
+        super().__init__(content)
+        self.original_close = original_close
+
+    def close(self) -> None:
+        self.original_close()
+
+
+class _AsyncReplayStream(httpx.ByteStream):
+    def __init__(self, content: bytes, original_close: Callable[[], Awaitable[None]]) -> None:
+        super().__init__(content)
+        self.original_close = original_close
+
+    async def aclose(self) -> None:
+        await self.original_close()
 
 
 @dataclass
@@ -261,7 +278,10 @@ class HttpSignatureProfile:
             def handle_request(self, request: httpx.Request) -> httpx.Response:
                 original_stream = request.stream
                 assert isinstance(original_stream, httpx.SyncByteStream)
-                original_close = original_stream.close
+                original_close = (
+                    original_stream.original_close
+                    if isinstance(original_stream, _SyncReplayStream) else original_stream.close
+                )
                 body = bytearray()
                 try:
                     for chunk in original_stream:
@@ -272,11 +292,7 @@ class HttpSignatureProfile:
                     original_close()
                     raise
 
-                class _ReplayStream(httpx.ByteStream):
-                    def close(self) -> None:
-                        original_close()
-
-                replay = _ReplayStream(bytes(body))
+                replay = _SyncReplayStream(bytes(body), original_close)
                 request.stream = replay
                 request.read()
                 request.stream = replay
@@ -344,7 +360,10 @@ class HttpSignatureProfile:
             async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
                 original_stream = request.stream
                 assert isinstance(original_stream, httpx.AsyncByteStream)
-                original_close = original_stream.aclose
+                original_close = (
+                    original_stream.original_close
+                    if isinstance(original_stream, _AsyncReplayStream) else original_stream.aclose
+                )
                 body = bytearray()
                 try:
                     async for chunk in original_stream:
@@ -355,11 +374,7 @@ class HttpSignatureProfile:
                     await original_close()
                     raise
 
-                class _ReplayStream(httpx.ByteStream):
-                    async def aclose(self) -> None:
-                        await original_close()
-
-                replay = _ReplayStream(bytes(body))
+                replay = _AsyncReplayStream(bytes(body), original_close)
                 request.stream = replay
                 raw = await request.aread()
                 request.stream = replay

@@ -12,7 +12,7 @@ import math
 import re
 import ssl
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, NoReturn, cast
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -206,9 +206,9 @@ class WBAHttpVerifier:
         self, resolver: IdentityResolver, *, config: WebBotAuthConfig | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        """Set the identity resolver, profile configuration, and discovery transport."""
+        """Set the resolver and transport; copy and validate the configuration."""
         self._resolver = resolver
-        self._config = config or WebBotAuthConfig()
+        self._config = replace(config) if config is not None else WebBotAuthConfig()
         self._transport = transport
 
     def verify_web_bot_auth_signed_request(

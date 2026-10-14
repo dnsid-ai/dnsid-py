@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from ._utils import b64_std_encode, b64url_encode, jose_alg_to_http_sig_alg, normalize_fqdn
@@ -143,7 +143,8 @@ class WBAHttpSigner:
                 requires Ed25519; other key types raise ArgumentError at
                 signing time.
             domain: The DNSid FQDN, used to derive the default directory URL.
-            config: Optional :class:`WebBotAuthConfig`.
+            config: Optional :class:`WebBotAuthConfig`, copied and validated
+                at construction.
             signature_agent: Back-compat override for the directory URL placed
                 in Signature-Agent.
             label: Signature label and Signature-Agent dictionary member name
@@ -157,7 +158,7 @@ class WBAHttpSigner:
         """
         self._key_provider = key_provider
         self._domain = normalize_fqdn(domain)
-        self._config = config or WebBotAuthConfig()
+        self._config = replace(config) if config is not None else WebBotAuthConfig()
         # Back-compat kwargs: signature_agent overrides the directory URL,
         # expires_in_seconds overrides the signature TTL.
         directory_url = (
@@ -391,7 +392,7 @@ def serve_http_message_signatures_directory(
     import hashlib
     import json
 
-    cfg = config or WebBotAuthConfig()
+    cfg = replace(config) if config is not None else WebBotAuthConfig()
     signing_key = key_provider.signing_key()
     signing_alg = signing_key.signature_alg()
     if signing_alg != "EdDSA":

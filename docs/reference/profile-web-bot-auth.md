@@ -217,7 +217,7 @@ Initialize the signer for a local DNSid identity.
 
 - `key_provider` (`KeyProvider`): Provides the Ed25519 signing key. WBA signing requires Ed25519; other key types raise ArgumentError at signing time.
 - `domain` (`str`): The DNSid FQDN, used to derive the default directory URL.
-- `config` (`WebBotAuthConfig | None`): Optional `WebBotAuthConfig`. — default `None`
+- `config` (`WebBotAuthConfig | None`): Optional `WebBotAuthConfig`, copied and validated at construction. — default `None`
 - `signature_agent` (`str | None`): Back-compat override for the directory URL placed in Signature-Agent. — default `None`
 - `label` (`str`): Signature label and Signature-Agent dictionary member name (profile default: ``sig1``). — default `DEFAULT_LABEL`
 - `expires_in_seconds` (`int | float | None`): Back-compat override for the request signature TTL. — default `None`
@@ -282,7 +282,7 @@ operation has a default 30-second cooperative deadline.
 WBAHttpVerifier(resolver: IdentityResolver, *, config: WebBotAuthConfig | None = None, transport: httpx.BaseTransport | None = None) -> None
 ```
 
-Set the identity resolver, profile configuration, and discovery transport.
+Set the resolver and transport; copy and validate the configuration.
 
 ### `verify_web_bot_auth_signed_request`
 
