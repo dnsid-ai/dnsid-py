@@ -21,8 +21,9 @@ import contextvars
 import datetime
 import logging
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 
     from .interfaces import AbstractRegistryClient
 
-from ._https_client import _create_https_client
+from ._https_client import _create_https_client, async_fetch_agent_status
 from ._utils import (
     _parse_ka_duration,
     b64url_decode_strict,
@@ -86,8 +87,13 @@ from .models import (
     VerifiedDomain,
 )
 from .registry import LogRegistry
+from .safe_transport import (
+    _async_resolve_addresses,
+    _AsyncHttpcoreTransport,
+    make_ssrf_safe_async_transport,
+    validate_private_address_hosts,
+)
 from .safe_transport import make_ssrf_safe_transport as _make_sdk_transport
-from .safe_transport import validate_private_address_hosts
 
 _ZERO_TIME = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 _log = logging.getLogger(__name__)
@@ -220,6 +226,7 @@ class IdentityManager:
         self._verification_futures: dict[str, Future[VerifiedDomain]] = {}
         self._refresh_futures: dict[str, Future[VerifiedDomain]] = {}
         self._status_futures: dict[str, Future[VerifiedDomain]] = {}
+        self._async_status_tasks: set[asyncio.Task[None]] = set()
 
         # Derive the local log binding when a registry is available.  The
         # binding always provides canonicalization; it doubles as the local
@@ -1480,9 +1487,9 @@ class IdentityManager:
     ) -> VerifiedDomain:
         """Verify without blocking the event loop; enforce the same policy as verify_domain.
 
-        Fresh cache hits and coalesced waits need no worker thread. Blocking
-        DNS, HTTPS and log adapters run only for the shared evidence leader.
-        Cancellation of a waiter does not cancel shared verification.
+        Fresh cache hits, shared waits and default stale-status refreshes need
+        no worker thread. Cold verification and injected synchronous fetchers
+        run in workers. Cancellation does not cancel shared verification.
         """
         domain = normalize_fqdn(domain)
         with self._coordination_lock:
@@ -1508,23 +1515,31 @@ class IdentityManager:
                     pending[domain] = future
                     leader = True
             if leader:
-                context = contextvars.copy_context()
-
-                def complete() -> None:
-                    try:
-                        self._complete_verification(domain, pending, future, work)
-                    except BaseException:
-                        # The shared future carries the error to every waiter.
-                        pass
-
-                # shortcut: synchronous adapters; remove worker after async adapter migration.
+                native = (
+                    self._complete_async_status_refresh(domain, pending, future, cached)
+                    if cached is not None and self._https_fetcher is None else None
+                )
                 try:
-                    asyncio.get_running_loop().run_in_executor(None, context.run, complete)
+                    if native is not None:
+                        task = asyncio.create_task(native)
+                        self._async_status_tasks.add(task)
+                        task.add_done_callback(self._async_status_tasks.discard)
+                    else:
+                        context = contextvars.copy_context()
+
+                        def complete() -> None:
+                            try:
+                                self._complete_verification(domain, pending, future, work)
+                            except BaseException:
+                                # The shared future carries the error to every waiter.
+                                pass
+
+                        # shortcut: sync evidence adapters; remove after native async migration.
+                        asyncio.get_running_loop().run_in_executor(None, context.run, complete)
                 except BaseException as exc:
-                    with self._coordination_lock:
-                        if pending.get(domain) is future:
-                            del pending[domain]
-                        future.set_exception(exc)
+                    if native is not None:
+                        native.close()
+                    self._finish_verification(domain, pending, future, exc)
                     raise
         waiter = asyncio.wrap_future(future)
         # Observe late failures even when every caller cancels its wait.
@@ -1674,19 +1689,10 @@ class IdentityManager:
             result = work()
             remaining_seconds()
         except BaseException as exc:
-            with self._coordination_lock:
-                if (isinstance(exc, VerificationError)
-                        and exc.code == VerificationCode.STATUS_NOT_ACTIVE):
-                    self._cache.evict(domain)
-                if pending.get(domain) is future:
-                    del pending[domain]
-                future.set_exception(exc)
+            self._finish_verification(domain, pending, future, exc)
             raise
         else:
-            with self._coordination_lock:
-                if pending.get(domain) is future:
-                    del pending[domain]
-                future.set_result(result)
+            self._finish_verification(domain, pending, future, result)
             return result
 
     def _refresh_identity(self, domain: str) -> VerifiedDomain:
@@ -1701,9 +1707,52 @@ class IdentityManager:
         remaining_seconds()
         return self._verify_domain_uncached(domain, revalidate=True)
 
-    def _refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
-        import copy
+    def _finish_verification(
+        self, domain: str, pending: dict[str, Future[VerifiedDomain]],
+        future: Future[VerifiedDomain], outcome: VerifiedDomain | BaseException,
+    ) -> None:
+        with self._coordination_lock:
+            if (isinstance(outcome, VerificationError)
+                    and outcome.code == VerificationCode.STATUS_NOT_ACTIVE):
+                self._cache.evict(domain)
+            if pending.get(domain) is future:
+                del pending[domain]
+            if isinstance(outcome, BaseException):
+                future.set_exception(outcome)
+            else:
+                future.set_result(outcome)
 
+    async def _complete_async_status_refresh(
+        self, domain: str, pending: dict[str, Future[VerifiedDomain]],
+        future: Future[VerifiedDomain], cached: VerifiedDomain,
+    ) -> None:
+        try:
+            result = await self._async_refresh_status(domain, cached)
+        except BaseException as exc:
+            self._finish_verification(domain, pending, future, exc)
+        else:
+            self._finish_verification(domain, pending, future, result)
+
+    @async_verification_operation
+    async def _async_refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
+        latest = self._cache.get(domain)
+        if latest is None:
+            return await asyncio.to_thread(
+                self._coalesce, domain, self._verification_futures,
+                lambda: self._verify_domain_uncached(domain),
+            )
+        if latest.last_status_check_at > cached.last_status_check_at:
+            return latest
+        with _status_fetch_boundary():
+            # shortcut: own one client per shared refresh until async manager lifecycle exists.
+            status = await async_fetch_agent_status(
+                latest.record.su,
+                transport=make_ssrf_safe_async_transport(self._transport_config),
+            )
+            status.validate()
+        return self._cache_refreshed_status(domain, latest, status)
+
+    def _refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
         # A refresh may have completed between the caller's cache read and its
         # leadership claim. Reuse that result even when the configured interval
         # is zero, because this call overlapped the completed refresh.
@@ -1717,8 +1766,13 @@ class IdentityManager:
         if latest.last_status_check_at > cached.last_status_check_at:
             return latest
 
-        refreshed = copy.copy(latest)
-        status = self._fetch_status(refreshed.record.su)
+        return self._cache_refreshed_status(domain, latest, self._fetch_status(latest.record.su))
+
+    def _cache_refreshed_status(
+        self, domain: str, cached: VerifiedDomain, status: Any,
+    ) -> VerifiedDomain:
+        import copy
+
         if status.state != "ACTIVE":
             self._cache.evict(domain)
             raise VerificationError(
@@ -1726,6 +1780,7 @@ class IdentityManager:
                 f"identity is not ACTIVE: {status.state}",
                 agent_state=status.state,
             )
+        refreshed = copy.copy(cached)
         refreshed.registry_status = status
         refreshed.last_status_check_at = _now()
         self._require_fresh_evidence(refreshed)
@@ -1736,7 +1791,7 @@ class IdentityManager:
                     VerificationCode.STATUS_UNAVAILABLE,
                     "identity invalidated during status refresh", transient=True,
                 )
-            if current != latest:
+            if current != cached:
                 return current
             self._cache.put(domain, refreshed)
         return refreshed
@@ -2060,7 +2115,7 @@ class IdentityManager:
         is additionally remapped even without the flag, so an injected fetcher
         that omits it cannot leak a raw network error past this taxonomy.
         """
-        try:
+        with _status_fetch_boundary():
             if self._https_fetcher is not None:
                 from ._https_client import _parse_agent_status_from_dict
 
@@ -2071,23 +2126,7 @@ class IdentityManager:
                     su, transport=self._transport_config, client=self._http_client,
                     revalidate=revalidate,
                 )
-        except VerificationError as exc:
-            if exc.transient or exc.code == VerificationCode.DNS_RESOLUTION:
-                raise VerificationError(
-                    VerificationCode.STATUS_UNAVAILABLE,
-                    f"status endpoint unavailable: {exc}",
-                    transient=True,
-                    cause=exc,
-                ) from exc
-            raise
-        try:
             status.validate()
-        except ValidationError as exc:
-            raise VerificationError(
-                VerificationCode.RECORD_INVALID,
-                "invalid agent status document",
-                cause=exc,
-            ) from exc
         return status
 
     def close(self) -> None:
@@ -2185,6 +2224,27 @@ def sign_event_with_provider(
         event.signing_kid = key_provider.signing_key().kid
         event.sig = b64url_encode(key_provider.sign(canonical))
     return event
+
+
+@contextmanager
+def _status_fetch_boundary() -> Iterator[None]:
+    try:
+        yield
+    except VerificationError as exc:
+        if exc.transient or exc.code == VerificationCode.DNS_RESOLUTION:
+            raise VerificationError(
+                VerificationCode.STATUS_UNAVAILABLE,
+                f"status endpoint unavailable: {exc}",
+                transient=True,
+                cause=exc,
+            ) from exc
+        raise
+    except ValidationError as exc:
+        raise VerificationError(
+            VerificationCode.RECORD_INVALID,
+            "invalid agent status document",
+            cause=exc,
+        ) from exc
 
 
 def _required_log_signatures(event: LogEvent) -> list[LogSignerRole]:
@@ -2481,25 +2541,6 @@ def _make_async_sdk_transport(config: TransportConfig | None) -> httpx.AsyncBase
     return _AsyncHttpcoreTransport(pool)
 
 
-def _resolve_a(host: str, dns_host: str, dns_port: int) -> str:
-    import ipaddress
-
-    try:
-        ipaddress.ip_address(host)
-        return host
-    except ValueError:
-        pass
-    try:
-        import dns.resolver
-
-        r = dns.resolver.Resolver(configure=False)
-        r.nameservers = [dns_host]
-        r.port = dns_port
-        return str(r.resolve(host, "A")[0])
-    except Exception:
-        return host
-
-
 def _AsyncDnsRoutingBackend(dns_host: str, dns_port: int) -> httpcore.AsyncNetworkBackend:
     import httpcore
     from httpcore._backends.base import SOCKET_OPTION
@@ -2519,9 +2560,9 @@ def _AsyncDnsRoutingBackend(dns_host: str, dns_port: int) -> httpcore.AsyncNetwo
             local_address: str | None = None,
             socket_options: Iterable[SOCKET_OPTION] | None = None,
         ) -> httpcore.AsyncNetworkStream:
-            resolved = _resolve_a(host, _h, _p)
+            addresses = await _async_resolve_addresses(host, _h, _p)
             return await self._delegate.connect_tcp(
-                resolved, port, timeout, local_address, socket_options
+                addresses[0], port, timeout, local_address, socket_options
             )
 
         async def connect_unix_socket(
@@ -2536,45 +2577,6 @@ def _AsyncDnsRoutingBackend(dns_host: str, dns_port: int) -> httpcore.AsyncNetwo
             await self._delegate.sleep(seconds)
 
     return _Backend()
-
-
-def _AsyncHttpcoreTransport(pool: httpcore.AsyncConnectionPool) -> httpx.AsyncBaseTransport:
-    from collections.abc import AsyncIterable
-
-    import httpcore
-    import httpx
-    from httpx._transports.default import AsyncResponseStream, map_httpcore_exceptions
-
-    class _Transport(httpx.AsyncBaseTransport):
-        _pool = pool
-
-        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-            req = httpcore.Request(
-                method=request.method,
-                url=httpcore.URL(
-                    scheme=request.url.raw_scheme,
-                    host=request.url.raw_host,
-                    port=request.url.port,
-                    target=request.url.raw_path,
-                ),
-                headers=request.headers.raw,
-                content=request.stream,
-                extensions=request.extensions,
-            )
-            with map_httpcore_exceptions():
-                resp = await self._pool.handle_async_request(req)
-            async_stream: AsyncIterable[bytes] = resp.stream  # type: ignore[assignment]
-            return httpx.Response(
-                status_code=resp.status,
-                headers=resp.headers,
-                stream=AsyncResponseStream(async_stream),
-                extensions=resp.extensions,
-            )
-
-        async def aclose(self) -> None:
-            await self._pool.aclose()
-
-    return _Transport()
 
 
 def _build_unsigned_txt_record(config: IdentityConfig) -> DnsIdTxtRecord:

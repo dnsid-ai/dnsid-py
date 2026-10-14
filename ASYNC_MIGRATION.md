@@ -2,8 +2,9 @@
 
 Branch: `migration/async-verification`.
 
-This is a staged migration. The HTTP verification hot path supports async
-callers. Native async evidence fetching is not yet implemented.
+This is a staged migration. The HTTP verification hot path and default stale-status
+refreshes support async callers without worker threads. Cold identity evidence
+fetching still uses workers.
 
 ## Completed
 
@@ -17,18 +18,20 @@ callers. Native async evidence fetching is not yet implemented.
 - [x] Migrate A2A middleware, peer verification and startup self-verification.
 - [x] Offload synchronous signing in the signed async HTTP client, including KMS calls.
 - [x] Add regression tests and update README usage.
-- [x] Run tests (1,506 passed), Ruff, mypy and diff checks.
+- [x] Run regression tests, Ruff, mypy and diff checks.
+- [x] Add native async A/AAAA resolution and SSRF-safe HTTP transport.
+- [x] Use native async status reads for shared stale-status refreshes.
+- [x] Preserve injected synchronous HTTPS fetchers through the worker fallback.
+- [x] Use native async custom DNS routing in signed async HTTP clients.
 
 ## Remaining, in dependency order
 
 - [ ] Define async DNS, HTTPS and log adapter contracts while retaining sync injection.
       Files: `dnsid/interfaces.py`, `dnsid/manager.py`.
-- [ ] Implement native async TXT lookup and SSRF-safe HTTP reads.
-      Files: `dnsid/_default_resolver.py`, `dnsid/_https_client.py`,
-      `dnsid/safe_transport.py`. Preserve DNSSEC state, address pinning,
-      redirect rules, response byte limits, TLS identity and verification deadlines.
-- [ ] Use native async custom DNS routing in `dnsid/manager.py`.
-      The existing async HTTP transport still calls synchronous `_resolve_a()`.
+- [ ] Implement native async TXT lookup and key-set reads.
+      Files: `dnsid/_default_resolver.py`, `dnsid/_https_client.py`.
+      Reuse the async safe transport; preserve DNSSEC state, redirect boundaries,
+      response byte limits, TLS identity and verification deadlines.
 - [ ] Implement async C2SP resource fetching and log verification.
       Files: `dnsid/c2sp_tlog/resource_fetcher.py`, `reader.py`,
       `stream_bundle.py`. Preserve checkpoint atomicity and rollback protection;
@@ -50,10 +53,12 @@ callers. Native async evidence fetching is not yet implemented.
 
 ## Current limits
 
-Cold verification and stale-status refreshes run synchronous evidence adapters
-in a shared worker. Cancellation stops the caller's wait, not that worker.
-Do not close the manager until active evidence work has finished. Injected
-identity caches must be nonblocking to keep cache hits off workers.
+Cold verification and injected synchronous HTTPS fetchers still use shared workers.
+Default stale-status refreshes use native async DNS and HTTPS. Each shared refresh
+owns and closes one async HTTP client; connections are not pooled across refreshes.
+Cancellation stops the caller's wait, not shared evidence work. Do not close the
+manager until that work finishes. Injected identity caches must be nonblocking.
 
 Other profile and registry APIs remain synchronous. No dependencies were added.
-Live network/KMS integration, the A2A server and load benchmarks were not run.
+Local UDP DNS and TLS are covered by automated tests. External network/KMS
+integration, the A2A server and load benchmarks were not run.
