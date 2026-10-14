@@ -434,9 +434,9 @@ IdentityManager.async async_verify_domain(domain: str, peer_cert: TLSCertificate
 
 Verify without blocking the event loop; enforce the same policy as verify_domain.
 
-Fresh cache hits and coalesced waits need no worker thread. Blocking
-DNS, HTTPS and log adapters run only for the shared evidence leader.
-Cancellation of a waiter does not cancel shared verification.
+Fresh cache hits, shared waits and default stale-status refreshes need
+no worker thread. Cold verification and injected synchronous fetchers
+run in workers. Cancellation does not cancel shared verification.
 
 ### `verify_log_evidence`
 

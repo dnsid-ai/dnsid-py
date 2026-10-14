@@ -10,11 +10,15 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from ._verification_budget import remaining_seconds, verification_operation
+from ._verification_budget import (
+    async_verification_operation,
+    remaining_seconds,
+    verification_operation,
+)
 from .enums import VerificationCode
 from .exceptions import VerificationError
 from .models import JWKS, AgentStatus, TLSCertificate
-from .safe_transport import SSRF_BLOCK_MARKER
+from .safe_transport import SSRF_BLOCK_MARKER, make_ssrf_safe_async_transport
 
 _MAX_REDIRECTS = 5
 _TIMEOUT = 10.0
@@ -164,34 +168,10 @@ def fetch_agent_status(
                     )
             except VerificationError:
                 raise
-            except httpx.ConnectError as exc:
-                if SSRF_BLOCK_MARKER in str(exc):
-                    raise VerificationError(
-                        VerificationCode.TLS_ERROR,
-                        f"status endpoint {url!r} rejected: resolves to a "
-                        "non-public address (SSRF guard)",
-                        transient=False,
-                    ) from exc
-                raise VerificationError(
-                    VerificationCode.TLS_ERROR,
-                    f"TLS/connection error fetching status at {url!r}: {exc}",
-                    transient=True,
-                ) from exc
             except httpx.TransportError as exc:
-                raise VerificationError(
-                    VerificationCode.DNS_RESOLUTION,
-                    f"Network error fetching status at {url!r}: {exc}",
-                    transient=True,
-                ) from exc
+                raise _status_transport_error(url, exc) from exc
 
-            try:
-                data: dict[str, Any] = json.loads(body)
-            except Exception as exc:
-                raise VerificationError(
-                    VerificationCode.STATUS_NOT_ACTIVE,
-                    f"Status endpoint returned non-JSON response for {url!r}",
-                ) from exc
-            return _parse_agent_status_from_dict(data)
+            return _parse_status_body(body, url)
     finally:
         if owned_client:
             client.close()
@@ -200,6 +180,97 @@ def fetch_agent_status(
         VerificationCode.TLS_ERROR,
         f"Too many redirects fetching status at {su!r}",
     )
+
+
+@async_verification_operation
+async def async_fetch_agent_status(
+    su: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> AgentStatus:
+    """Fetch bounded status asynchronously with the synchronous HTTPS rules.
+
+    A supplied client remains caller-owned. Otherwise this call owns its client
+    and closes every response and connection, including on cancellation.
+    """
+    _assert_https_redirect(su)
+    owned_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(
+            transport=transport if transport is not None else make_ssrf_safe_async_transport(),
+            follow_redirects=False, timeout=_TIMEOUT,
+        )
+    url = su
+    try:
+        for _ in range(_MAX_REDIRECTS + 1):
+            try:
+                async with client.stream(
+                    "GET", url, headers={"Accept": "application/json"},
+                    follow_redirects=False, timeout=remaining_seconds(10.0),
+                ) as response:
+                    if response.is_redirect:
+                        location = urljoin(url, response.headers.get("location", ""))
+                        _assert_https_redirect(location)
+                        url = location
+                        continue
+                    if response.status_code != 200:
+                        raise VerificationError(
+                            VerificationCode.STATUS_NOT_ACTIVE,
+                            f"Status endpoint returned HTTP {response.status_code} for {url!r}",
+                            transient=response.status_code >= 500,
+                        )
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        remaining_seconds()
+                        if len(body) + len(chunk) > _MAX_STATUS_BODY_BYTES:
+                            raise VerificationError(
+                                VerificationCode.STATUS_NOT_ACTIVE,
+                                f"Status response body too large for {url!r}",
+                            )
+                        body.extend(chunk)
+            except httpx.TransportError as exc:
+                raise _status_transport_error(url, exc) from exc
+            return _parse_status_body(body, url)
+    finally:
+        if owned_client:
+            await client.aclose()
+    raise VerificationError(
+        VerificationCode.TLS_ERROR,
+        f"Too many redirects fetching status at {su!r}",
+    )
+
+
+def _status_transport_error(url: str, exc: httpx.TransportError) -> VerificationError:
+    if isinstance(exc, httpx.ConnectError):
+        if SSRF_BLOCK_MARKER in str(exc):
+            return VerificationError(
+                VerificationCode.TLS_ERROR,
+                f"status endpoint {url!r} rejected: resolves to a "
+                "non-public address (SSRF guard)",
+                transient=False,
+            )
+        return VerificationError(
+            VerificationCode.TLS_ERROR,
+            f"TLS/connection error fetching status at {url!r}: {exc}",
+            transient=True,
+        )
+    return VerificationError(
+        VerificationCode.DNS_RESOLUTION,
+        f"Network error fetching status at {url!r}: {exc}",
+        transient=True,
+    )
+
+
+def _parse_status_body(body: bytes | bytearray, url: str) -> AgentStatus:
+    try:
+        data = json.loads(body)
+    except Exception as exc:
+        raise VerificationError(
+            VerificationCode.STATUS_NOT_ACTIVE,
+            f"Status endpoint returned non-JSON response for {url!r}",
+        ) from exc
+    return _parse_agent_status_from_dict(data)
 
 
 def _parse_agent_status_from_dict(data: object) -> AgentStatus:

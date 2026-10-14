@@ -81,9 +81,10 @@ method or trust root; configure a matching reader (see the
 
 **Async verification.** Use `await manager.async_verify_domain(domain)` and
 `await http_signer.async_verify_signed_http_request(request)` in middleware.
-Fresh identity-cache hits and coalesced waits use no worker threads; policy and
-signature checks still run on every request. Cold verification and status
-refreshes use workers for the existing synchronous DNS, HTTPS, and log adapters.
+Fresh identity-cache hits, coalesced waits, and default stale-status refreshes
+use no worker threads; policy and signature checks still run on every request.
+Status refreshes use native async DNS and SSRF-safe HTTPS. Cold verification
+and injected synchronous HTTPS fetchers still use workers.
 Cancelling a waiter does not cancel shared evidence work. Do not close the
 manager until that work finishes. Synchronous APIs remain available.
 

@@ -153,6 +153,11 @@ async def test_executor_rejection_can_retry(ec_pair, warm):
     ):
         if warm:
             await manager.async_verify_domain(domain)
+            manager._https_fetcher = MagicMock()
+            manager._https_fetcher.fetch_strict_json.return_value = (
+                {"state": "ACTIVE", "lastTransitionAt": datetime.datetime.now(datetime.UTC).isoformat()},
+                None,
+            )
         with patch.object(loop, "run_in_executor", side_effect=RuntimeError("executor rejected")):
             with pytest.raises(RuntimeError, match="executor rejected"):
                 await manager.async_verify_domain(domain)
@@ -207,6 +212,7 @@ async def test_stale_status_refreshes(ec_pair):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
     ):
         await manager.async_verify_domain(domain)
         await manager.async_verify_domain(domain)

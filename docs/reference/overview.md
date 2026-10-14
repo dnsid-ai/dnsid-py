@@ -34,8 +34,9 @@ The transparency-log integration is the exception: import it from
 
 Use `await manager.async_verify_domain(domain)` and
 `await http_signer.async_verify_signed_http_request(request)` in async code.
-Fresh cache hits and shared waits need no worker threads. Cold verification and
-status refreshes use workers for synchronous DNS, HTTPS, and log adapters.
+Fresh cache hits, shared waits, and default stale-status refreshes need no worker
+threads. Status refreshes use native async DNS and SSRF-safe HTTPS. Cold
+verification and injected synchronous HTTPS fetchers still use workers.
 Cancellation stops the caller's wait, not shared evidence work; keep the manager
 open until that work finishes. Injected identity caches must be nonblocking.
 
