@@ -471,6 +471,8 @@ class DNSResolver(ABC):
 
     Decouples VerifyDomain from the system resolver so deployments can substitute
     a DNSSEC-validating library, a trusted DoT/DoH upstream, or a test double.
+    Implementations MUST be safe for concurrent use. Shared verification runs
+    blocking adapters in workers for both synchronous and asynchronous callers.
     """
 
     @abstractmethod

@@ -41,13 +41,14 @@ from dnsid import async_retry_transient
 async def main() -> None:
     idm, agent, stop = await start_echo_agent()
 
-    peer_fqdn = sys.argv[1] if len(sys.argv) > 1 else None
-    if peer_fqdn:
-        await send_hello(idm, agent, peer_fqdn)
+    try:
+        peer_fqdn = sys.argv[1] if len(sys.argv) > 1 else None
+        if peer_fqdn:
+            await send_hello(idm, agent, peer_fqdn)
+        else:
+            await wait_for_shutdown()
+    finally:
         await stop()
-        return
-
-    await wait_for_shutdown(stop)
 
 
 async def send_hello(idm, agent, peer_fqdn: str) -> None:
@@ -71,13 +72,12 @@ async def send_hello(idm, agent, peer_fqdn: str) -> None:
     print(f'reply: "{reply}"')
 
 
-async def wait_for_shutdown(stop) -> None:
+async def wait_for_shutdown() -> None:
     loop = asyncio.get_running_loop()
     shutdown = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, shutdown.set)
     await shutdown.wait()
-    await stop()
 
 
 if __name__ == "__main__":

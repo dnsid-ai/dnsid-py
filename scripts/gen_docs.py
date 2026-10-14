@@ -94,12 +94,18 @@ Use `await manager.async_verify_domain(domain)` and
 Fresh cache hits, shared waits, and default stale-status refreshes need no worker
 threads. Status refreshes use native async DNS and SSRF-safe HTTPS. Cold
 verification and injected synchronous HTTPS fetchers still use workers.
-Cancellation stops the caller's wait, not shared evidence work; keep the manager
-open until that work finishes. Injected identity caches must be nonblocking.
+Shared evidence has an independent 30-second budget. Cancellation or a request
+deadline stops only that caller's wait. Use `async with manager` or
+`await manager.aclose()` at shutdown to drain owned work and close resources.
+Use `with verification_budget(5):` around a request to set its deadline; expiry
+raises `VerificationError` with `DEADLINE_EXCEEDED` and `transient=True`.
+Injected identity caches must be nonblocking.
 
 Signed `httpx.AsyncClient` requests offload synchronous signing, including KMS.
-Synchronous APIs remain available. Other blocking SDK operations, including the
-status reads in `RegistryClient.async_wait_for_status()`, still need workers.
+`create_signed_async_http_client(transport=...)` accepts an outbound transport;
+the returned client owns and closes it. Synchronous APIs remain available.
+Other blocking SDK operations, including the status reads in
+`RegistryClient.async_wait_for_status()`, still need workers.
 
 ## Application profiles
 

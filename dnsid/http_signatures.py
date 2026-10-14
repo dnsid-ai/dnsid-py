@@ -333,6 +333,7 @@ class HttpSignatureProfile:
         base_headers: dict[str, str] | None = None,
         opts: HttpSigningOptions | None = None,
         transport_config: TransportConfig | None = None,
+        *, transport: httpx.AsyncBaseTransport | None = None,
     ) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient that auto-signs every outbound request.
 
@@ -343,6 +344,11 @@ class HttpSignatureProfile:
                 configuration inherited by :meth:`from_identity_manager`.
                 Custom hostname resolution supports ``host:port`` DNS servers;
                 DoH URLs apply only to DNSid TXT lookups.
+            transport: Optional outbound transport, for example MockTransport or
+                a proxy-configured AsyncHTTPTransport. The returned client owns
+                and closes it, as with httpx.AsyncClient. An injected transport
+                handles its own DNS/TLS settings; transport_config is rejected
+                when supplied together with it.
 
         Returns:
             An httpx.AsyncClient that signs each request before sending it.
@@ -420,9 +426,13 @@ class HttpSignatureProfile:
                 request.extensions[_CONTENT_SUPPLIED_EXTENSION] = content_supplied
                 return request
 
-        inner = _make_async_sdk_transport(transport_config or self._transport_config)
-        transport = _AsyncSigningTransport(inner)
-        return _SignedAsyncClient(headers=base_headers or {}, transport=transport)
+        if transport is not None and transport_config is not None:
+            raise ArgumentError("transport and transport_config are mutually exclusive")
+        inner = transport if transport is not None else _make_async_sdk_transport(
+            transport_config or self._transport_config
+        )
+        signing_transport = _AsyncSigningTransport(inner)
+        return _SignedAsyncClient(headers=base_headers or {}, transport=signing_transport)
 
     # ------------------------------------------------------------------
     # Verification

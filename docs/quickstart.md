@@ -88,6 +88,44 @@ print(f"Cache expires: {verified.expiry()}")
 > must match the counterparty's verified `gi`. See the
 > [transparency-log reference](reference/transparency-log.md) for other setups.
 
+### Async verification
+
+Use the manager configured above for async verification. In a server, reuse it
+for the application lifetime and close it during shutdown, not after each request.
+This one-shot example closes it after verification:
+
+```python
+import asyncio
+
+from dnsid import VerificationError, verification_budget
+
+
+async def main():
+    async with manager:
+        try:
+            with verification_budget(5):
+                verified = await manager.async_verify_domain("payments-agent.example")
+            print(verified.domain)
+        except VerificationError as error:
+            print(f"{error.code.name}: {error.message}; retryable={error.transient}")
+
+
+asyncio.run(main())
+```
+
+Request-budget expiry reports `VerificationCode.DEADLINE_EXCEEDED` with
+`transient=True`. Cancelling or timing out a caller does not cancel shared
+identity evidence work, which has its own 30-second budget. `aclose()` waits for
+that work before releasing resources, so shutdown can outlast the request deadline.
+Injected blocking adapters must honor verification budgets. Cold evidence uses
+workers; default stale-status refreshes use native async DNS and HTTPS.
+
+For inbound HTTP signatures, await
+`http_signer.async_verify_signed_http_request(request)`. The A2A example shows
+bounded ASGI body reads, per-request verification, and 401/403/503 responses.
+See the [runnable async example](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/async-verification)
+and [A2A example](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a).
+
 ### 2. Sign — Create a JWT with a DNSid Identity
 
 Set `DNSID_LOG_REF` to this identity's persisted, registry-provided C2SP
@@ -185,6 +223,8 @@ try:
     verified = manager.verify_domain("some-agent.example")
 except VerificationError as e:
     match e.code:
+        case VerificationCode.DEADLINE_EXCEEDED:
+            print("Verification timed out; identity status is indeterminate")
         case VerificationCode.DNS_RESOLUTION:
             # DNS lookup failed — network issue or domain doesn't exist
             print("DNS error (transient, may retry)")
@@ -200,6 +240,8 @@ except VerificationError as e:
         case VerificationCode.TLS_ERROR:
             # TLS certificate issue fetching JWKS or status
             print("TLS error on HTTPS fetch")
+        case VerificationCode.STATUS_UNAVAILABLE:
+            print("Status endpoint unavailable; do not treat this as revocation")
         case VerificationCode.STATUS_NOT_ACTIVE:
             # Agent status endpoint returned non-ACTIVE state
             print(f"Agent not active: {e.agent_state}")

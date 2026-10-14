@@ -54,12 +54,12 @@ async def test_cold_calls_share_one_worker_and_hot_calls_need_none(ec_pair):
     manager, resolver, counters, domain, keys, status, _ = _manager_fixture(ec_pair)
     resolver.started = threading.Event()
     resolver.release = threading.Event()
-    loop = asyncio.get_running_loop()
     with (
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch.object(loop, "run_in_executor", wraps=loop.run_in_executor) as workers,
+        patch.object(manager._verification_executor, "submit",
+                     wraps=manager._verification_executor.submit) as workers,
     ):
         calls = [asyncio.create_task(manager.async_verify_domain(domain)) for _ in range(32)]
         try:
@@ -145,7 +145,6 @@ async def test_executor_rejection_can_retry(ec_pair, warm):
     manager, _, _, domain, keys, status, _ = _manager_fixture(
         ec_pair, interval=datetime.timedelta(0)
     )
-    loop = asyncio.get_running_loop()
     with (
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
@@ -158,7 +157,8 @@ async def test_executor_rejection_can_retry(ec_pair, warm):
                 {"state": "ACTIVE", "lastTransitionAt": datetime.datetime.now(datetime.UTC).isoformat()},
                 None,
             )
-        with patch.object(loop, "run_in_executor", side_effect=RuntimeError("executor rejected")):
+        with patch.object(manager._verification_executor, "submit",
+                          side_effect=RuntimeError("executor rejected")):
             with pytest.raises(RuntimeError, match="executor rejected"):
                 await manager.async_verify_domain(domain)
         assert not manager._verification_futures
@@ -354,7 +354,7 @@ async def test_zero_ttl_requires_each_call_to_fetch_dns(ec_pair):
 
 @pytest.mark.asyncio
 async def test_async_signing_does_not_block_loop(ec_provider):
-    from tests.test_signed_async_http_client import _build_profile, _mock_inner
+    from tests.test_signed_async_http_client import _build_profile, _transport
 
     profile = _build_profile(ec_provider)
     original = profile.create_signed_http_request
@@ -365,11 +365,8 @@ async def test_async_signing_does_not_block_loop(ec_provider):
         assert release.wait(2)
         return original(*args)
 
-    with (
-        patch.object(profile, "create_signed_http_request", side_effect=blocking_sign),
-        patch("dnsid.manager._make_async_sdk_transport", return_value=_mock_inner()[0]),
-    ):
-        async with profile.create_signed_async_http_client() as client:
+    with patch.object(profile, "create_signed_http_request", side_effect=blocking_sign):
+        async with profile.create_signed_async_http_client(transport=_transport()[0]) as client:
             request = asyncio.create_task(client.get("https://service.example.com/api"))
             try:
                 await _started(started)
