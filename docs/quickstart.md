@@ -186,13 +186,17 @@ try:
 except VerificationError as e:
     match e.code:
         case VerificationCode.DNS_RESOLUTION:
-            # DNS lookup failed — network issue or domain doesn't exist
+            # DNS lookup failed — network issue or timeout
             print("DNS error (transient, may retry)")
+        case VerificationCode.RECORD_NOT_FOUND:
+            # No _dnsid record at the name — may be absent while the
+            # operator republishes it; transient, do not cache as permanent
+            print("DNSid record not found (transient, may retry)")
         case VerificationCode.DNSSEC_FAILED:
             # DNSSEC validation failed — potential spoofing
             print("DNSSEC failure — do not trust this domain")
         case VerificationCode.RECORD_INVALID:
-            # TXT record malformed or missing required fields
+            # TXT record malformed, missing required fields, or duplicated
             print("Invalid DNSid record")
         case VerificationCode.SIGNATURE_INVALID:
             # Record signature doesn't match any JWKS key

@@ -464,7 +464,7 @@ class TestVerifyDomain:
             with pytest.raises(VerificationError) as exc_info:
                 manager.verify_domain("service.example.com")
         fetch_txt.assert_called_once_with("_dnsid.service.example.com")
-        assert exc_info.value.code == VerificationCode.RECORD_INVALID
+        assert exc_info.value.code == VerificationCode.RECORD_NOT_FOUND
 
     @pytest.mark.parametrize(
         ("mode", "state", "allowed"),
@@ -495,7 +495,7 @@ class TestVerifyDomain:
         with pytest.raises(VerificationError) as exc_info:
             manager.verify_domain("service.example.com")
 
-        expected = VerificationCode.RECORD_INVALID if allowed else VerificationCode.DNSSEC_FAILED
+        expected = VerificationCode.RECORD_NOT_FOUND if allowed else VerificationCode.DNSSEC_FAILED
         assert exc_info.value.code == expected
 
     def test_invalid_dnssec_mode_fails_at_construction(self, ec_provider):
@@ -510,6 +510,39 @@ class TestVerifyDomain:
             )
 
         resolver.fetch_txt.assert_not_called()
+
+    def test_zero_txt_records_is_record_not_found_and_transient(self, ec_provider):
+        """A missing record is RECORD_NOT_FOUND, transient — not a permanent RECORD_INVALID (#220)."""
+        resolver = MockDNSResolver()
+        resolver.fetch_txt = lambda name: ([], DNSSECState.UNKNOWN)
+        manager = _build_verifier(ec_provider, dns_resolver=resolver)
+
+        with pytest.raises(VerificationError) as exc_info:
+            manager.verify_domain("service.example.com")
+
+        assert exc_info.value.code == VerificationCode.RECORD_NOT_FOUND
+        assert exc_info.value.transient is True
+        assert "_dnsid.service.example.com" in str(exc_info.value)
+
+    def test_zero_txt_records_is_retried_as_transient(self, ec_provider):
+        """retry_transient retries RECORD_NOT_FOUND, so a recovering agent is re-checked."""
+        from dnsid.retry import retry_transient
+
+        resolver = MockDNSResolver()
+        resolver.fetch_txt = lambda name: ([], DNSSECState.UNKNOWN)
+        manager = _build_verifier(ec_provider, dns_resolver=resolver)
+        attempts = 0
+
+        def attempt():
+            nonlocal attempts
+            attempts += 1
+            return manager.verify_domain("service.example.com")
+
+        with pytest.raises(VerificationError) as exc_info:
+            retry_transient(attempt, max_attempts=3, base_delay=0, max_delay=0)
+
+        assert exc_info.value.code == VerificationCode.RECORD_NOT_FOUND
+        assert attempts == 3
 
     def test_multiple_txt_records_raises(self, ec_pair, ec_provider):
         target = "service.example.com"
@@ -534,7 +567,8 @@ class TestVerifyDomain:
 
         with pytest.raises(VerificationError) as exc_info:
             mgr.verify_domain(target)
-        assert exc_info.value.code == VerificationCode.RECORD_INVALID
+        assert exc_info.value.code == VerificationCode.RECORD_NOT_FOUND
+        assert exc_info.value.transient is True
 
     def test_wrong_signature_raises(self, ec_pair, ec_provider):
         target = "service.example.com"
