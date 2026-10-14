@@ -95,6 +95,18 @@ def test_verifier_snapshots_configuration_before_caller_mutation(setup):
     assert resolver.verify_domain.call_count == 2
 
 
+def test_invalid_configuration_rejects_before_creating_default_pool(setup, monkeypatch):
+    _, resolver, _, _, _, _, _ = setup
+    factory = MagicMock()
+    monkeypatch.setattr("dnsid.wba_verifier.make_ssrf_safe_transport", factory)
+    config = WebBotAuthConfig()
+    config.clock_skew = float("nan")
+    with pytest.raises(ArgumentError):
+        WBAHttpVerifier(resolver, config=config)
+    factory.assert_not_called()
+    resolver.verify_domain.assert_not_called()
+
+
 def test_signer_snapshots_configuration_before_caller_mutation(setup):
     provider, _, verifier, req, opts, _, _ = setup
     config = WebBotAuthConfig(signature_ttl=60, signature_agent_type="directory")

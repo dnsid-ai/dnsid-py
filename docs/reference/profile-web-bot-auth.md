@@ -267,8 +267,10 @@ Injected transports must preserve uncoded response bytes and fields, without
 transparent decompression. This verifier does not cache directories; injected
 transports must not reuse evidence without enforcing its original HTTP age
 and freshness deadline, even when Date/Age fields are absent.
-Injected transports remain caller-owned and must support concurrent use when
-the verifier is shared. The caller manages their initialization and closure.
+The default secure transport and its connection pool are reused until close().
+Call close() after all verification operations finish. Injected transports
+remain caller-owned and must support concurrent use when the verifier is
+shared. The caller manages their initialization and closure.
 
 Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
 limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
@@ -283,6 +285,17 @@ WBAHttpVerifier(resolver: IdentityResolver, *, config: WebBotAuthConfig | None =
 ```
 
 Set the resolver and transport; copy and validate the configuration.
+
+### `close`
+
+```python
+WBAHttpVerifier.close() -> None
+```
+
+Release the owned connection pool; never close an injected transport.
+
+Call only after in-flight verifications finish. Repeated calls are safe;
+verification after closure raises RuntimeError.
 
 ### `verify_web_bot_auth_signed_request`
 
@@ -305,6 +318,7 @@ Return the signer only after request, directory, and DNSid checks succeed.
 
 - `ArgumentError`: On malformed required-component policy or invalid deadline.
 - `VerificationError`: On invalid evidence, discovery, acceptance, or replay.
+- `RuntimeError`: If the verifier has been closed.
 
 ## `WebBotAuthVerificationOptions`
 

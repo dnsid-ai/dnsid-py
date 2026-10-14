@@ -195,17 +195,23 @@ from dnsid import (
 
 request = HttpRequest(method="GET", url="https://target.example/api")
 WBAHttpSigner(key_provider, "agent.example").sign(request)
-identity = WBAHttpVerifier(manager).verify_web_bot_auth_signed_request(
-    request,
-    WebBotAuthVerificationOptions(signer_domain="agent.example"),
-)
+verifier = WBAHttpVerifier(manager)
+try:
+    identity = verifier.verify_web_bot_auth_signed_request(
+        request,
+        WebBotAuthVerificationOptions(signer_domain="agent.example"),
+    )
+finally:
+    verifier.close()
 ```
 
 The verifier needs only an identity resolver, not local signing keys. It verifies
 both signatures, binds the directory key to the current DNSid `ku` signing key, and
 applies the resolver's entity acceptance on each invocation. Supply `peer_cert`
 in the options for the current application peer when `fl=mtls` applies; the
-directory endpoint's certificate is not a substitute.
+directory endpoint's certificate is not a substitute. Reuse the verifier across
+requests to reuse its secure connection pool, then call `close()` at shutdown
+once in-flight verifications finish. Injected transports remain caller-owned.
 
 Discovery uses public-address-only HTTPS and same-host redirects. The complete
 operation has a default 30-second deadline; `timeout` can lower it. Directory

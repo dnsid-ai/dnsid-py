@@ -260,8 +260,11 @@ def test_default_transport_rejects_private_resolution(setup, monkeypatch):
     _, resolver, _, req, opts, _, _ = setup
     monkeypatch.setattr("dnsid.safe_transport._resolve_addresses", lambda *args: ["10.0.0.1"])
     verifier = WBAHttpVerifier(resolver)
-    with pytest.raises(VerificationError, match="fetch failed"):
-        verifier.verify_web_bot_auth_signed_request(req, opts)
+    try:
+        with pytest.raises(VerificationError, match="fetch failed"):
+            verifier.verify_web_bot_auth_signed_request(req, opts)
+    finally:
+        verifier.close()
     resolver.verify_domain.assert_not_called()
 
 
@@ -465,7 +468,11 @@ def test_injected_transport_remains_open_on_reuse_concurrency_and_failure(setup,
     hook.side_effect = corrupt
     with pytest.raises(VerificationError):
         verifier.verify_web_bot_auth_signed_request(req, opts)
+    verifier.close()
+    verifier.close()
     close.assert_not_called()
+    with pytest.raises(RuntimeError, match="closed"):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
 
 
 @pytest.mark.parametrize("failure", [False, True])
@@ -486,4 +493,56 @@ def test_owned_transport_is_closed(setup, monkeypatch, failure):
             owned_verifier.verify_web_bot_auth_signed_request(req, opts)
     else:
         owned_verifier.verify_web_bot_auth_signed_request(req, opts)
+    close.assert_not_called()
+    owned_verifier.close()
+    owned_verifier.close()
+    close.assert_called_once_with()
+    with pytest.raises(RuntimeError, match="closed"):
+        owned_verifier.verify_web_bot_auth_signed_request(req, opts)
+
+
+def test_default_transport_is_reused_without_directory_caching(setup, monkeypatch):
+    _, resolver, verifier, req, opts, hook, fetched = setup
+    transport = verifier._transport
+    close = MagicMock()
+    monkeypatch.setattr(transport, "close", close)
+    factory = MagicMock(return_value=transport)
+    monkeypatch.setattr("dnsid.wba_verifier.make_ssrf_safe_transport", factory)
+    handle = transport.handle_request
+
+    def without_cookies(request):
+        assert "cookie" not in request.headers
+        return handle(request)
+
+    def set_cookie(response):
+        response.headers["set-cookie"] = "directory-session=one; Path=/; Secure"
+        return response
+
+    monkeypatch.setattr(transport, "handle_request", without_cookies)
+    hook.side_effect = set_cookie
+    owned = WBAHttpVerifier(resolver)
+    try:
+        for _ in range(2):
+            owned.verify_web_bot_auth_signed_request(req, opts)
+        factory.assert_called_once_with()
+        assert len(fetched) == 2
+        assert resolver.verify_domain.call_count == 2
+        close.assert_not_called()
+
+        def corrupt(response):
+            response.body += b" "
+            return response
+
+        hook.side_effect = corrupt
+        with pytest.raises(VerificationError):
+            owned.verify_web_bot_auth_signed_request(req, opts)
+        assert len(fetched) == 3
+        close.assert_not_called()
+        hook.side_effect = lambda response: response
+        owned.verify_web_bot_auth_signed_request(req, opts)
+        assert len(fetched) == 4
+        assert resolver.verify_domain.call_count == 3
+        factory.assert_called_once_with()
+    finally:
+        owned.close()
     close.assert_called_once_with()

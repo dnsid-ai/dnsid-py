@@ -192,8 +192,10 @@ class WBAHttpVerifier:
     transparent decompression. This verifier does not cache directories; injected
     transports must not reuse evidence without enforcing its original HTTP age
     and freshness deadline, even when Date/Age fields are absent.
-    Injected transports remain caller-owned and must support concurrent use when
-    the verifier is shared. The caller manages their initialization and closure.
+    The default secure transport and its connection pool are reused until close().
+    Call close() after all verification operations finish. Injected transports
+    remain caller-owned and must support concurrent use when the verifier is
+    shared. The caller manages their initialization and closure.
 
     Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
     limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
@@ -209,7 +211,20 @@ class WBAHttpVerifier:
         """Set the resolver and transport; copy and validate the configuration."""
         self._resolver = resolver
         self._config = replace(config) if config is not None else WebBotAuthConfig()
-        self._transport = transport
+        self._transport = transport if transport is not None else make_ssrf_safe_transport()
+        self._owns_transport = transport is None
+        self._closed = False
+
+    def close(self) -> None:
+        """Release the owned connection pool; never close an injected transport.
+
+        Call only after in-flight verifications finish. Repeated calls are safe;
+        verification after closure raises RuntimeError.
+        """
+        if not self._closed:
+            self._closed = True
+            if self._owns_transport:
+                self._transport.close()
 
     def verify_web_bot_auth_signed_request(
         self, req: HttpRequest, opts: WebBotAuthVerificationOptions | None = None,
@@ -226,7 +241,10 @@ class WBAHttpVerifier:
         Raises:
             ArgumentError: On malformed required-component policy or invalid deadline.
             VerificationError: On invalid evidence, discovery, acceptance, or replay.
+            RuntimeError: If the verifier has been closed.
         """
+        if self._closed:
+            raise RuntimeError("WBA verifier is closed")
         opts = opts or WebBotAuthVerificationOptions()
         with verification_budget(opts.timeout):
             try:
@@ -384,10 +402,7 @@ class WBAHttpVerifier:
         verified._require_fresh_evidence(_now(), fresh_dns_lookup=True)
 
     def _fetch(self, url: str, domain: str) -> tuple[HttpRequest, HttpRequest]:
-        transport = (
-            _BorrowedTransport(self._transport)
-            if self._transport is not None else make_ssrf_safe_transport()
-        )
+        transport = _BorrowedTransport(self._transport)
         try:
             with httpx.Client(transport=transport, trust_env=False) as client:
                 for _ in range(6):
