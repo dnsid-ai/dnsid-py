@@ -1,4 +1,15 @@
 
+## [0.26.0] - 2026-10-14
+
+### Bug Fixes
+
+- fix: preserve parsed empty optional TXT tags ([#57](https://github.com/dnsid-ai/dnsid-py/pull/57))
+
+### Features
+
+- feat: implement DNSid WBA request and directory verification ([#61](https://github.com/dnsid-ai/dnsid-py/pull/61))
+
+
 ## [0.25.0] - 2026-10-12
 
 ### Documentation
