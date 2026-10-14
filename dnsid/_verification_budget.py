@@ -14,7 +14,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from functools import wraps
-from typing import ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import httpx
 
@@ -23,6 +23,9 @@ from .exceptions import ArgumentError, VerificationError
 
 _budget: ContextVar[tuple[float, tuple[threading.Event, ...]] | None] = ContextVar(
     "dnsid_verification_budget", default=None
+)
+_background_work: ContextVar[Callable[[Future[Any]], None] | None] = ContextVar(
+    "dnsid_background_work", default=None
 )
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -38,7 +41,7 @@ class BudgetExhausted(VerificationError):
 
     def __init__(self) -> None:
         super().__init__(
-            VerificationCode.RECORD_INVALID,
+            VerificationCode.DEADLINE_EXCEEDED,
             "verification deadline exceeded or cancelled",
             transient=True,
         )
@@ -67,7 +70,12 @@ def remaining_seconds(maximum: float = 30.0) -> float:
 def verification_budget(
     timeout: float = 30.0, *, cancelled: threading.Event | None = None
 ) -> Iterator[None]:
-    """Set a finite overall timeout; nested budgets cannot extend their parent."""
+    """Limit this caller; nested budgets cannot extend their parent.
+
+    Exceeding the budget raises VerificationError with DEADLINE_EXCEEDED and
+    transient=True. Shared identity evidence has a separate 30-second budget;
+    ending this caller's wait does not end work needed by another caller.
+    """
     if (
         isinstance(timeout, bool)
         or not isinstance(timeout, int | float)
@@ -88,6 +96,24 @@ def verification_budget(
         remaining_seconds()
     finally:
         _budget.reset(token)
+
+
+def verification_work_context(
+    track_work: Callable[[Future[Any]], None], *, independent: bool = False,
+) -> contextvars.Context:
+    """Track worker branches and optionally detach the shared-work budget."""
+    context = contextvars.copy_context()
+    if independent:
+        context.run(_budget.set, (time.monotonic() + 30.0, ()))
+    context.run(_background_work.set, track_work)
+    return context
+
+
+async def async_wait_for_verification(future: Future[T]) -> T:
+    """Await shared work without cancelling it; observe failures after cancellation."""
+    waiter = asyncio.wrap_future(future)
+    waiter.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+    return await asyncio.shield(waiter)
 
 
 def wait_for_verification(future: Future[T]) -> T:
@@ -126,6 +152,9 @@ def run_concurrently(primary: Callable[[], T], secondary: Callable[[], U]) -> tu
     pool = ThreadPoolExecutor(max_workers=1)
     future: Future[U] = pool.submit(context.run, guarded_secondary)
     pool.shutdown(wait=False)
+    track_work = _background_work.get()
+    if track_work is not None:
+        track_work(future)
     try:
         with verification_budget(cancelled=cancel):
             primary_result = primary()

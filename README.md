@@ -85,11 +85,19 @@ Fresh identity-cache hits, coalesced waits, and default stale-status refreshes
 use no worker threads; policy and signature checks still run on every request.
 Status refreshes use native async DNS and SSRF-safe HTTPS. Cold verification
 and injected synchronous HTTPS fetchers still use workers.
-Cancelling a waiter does not cancel shared evidence work. Do not close the
-manager until that work finishes. Synchronous APIs remain available.
+Shared evidence has its own 30-second budget. Caller cancellation or deadlines
+stop only that caller's wait. Reuse one manager for the application lifetime;
+use `async with manager` or `await manager.aclose()` at shutdown to drain work
+and close owned resources. `verification_budget(5)` limits a request to five
+seconds; expiry raises `VerificationError` with `DEADLINE_EXCEEDED` and
+`transient=True`. Synchronous APIs remain available.
 
 Signed `httpx.AsyncClient` requests offload synchronous signing (including KMS).
+`create_signed_async_http_client(transport=...)` accepts a custom outbound
+transport, including `httpx.MockTransport`; the returned client owns and closes it.
 Other blocking SDK operations still need `asyncio.to_thread` or an executor.
+See the runnable [async verification example](examples/async-verification/) for
+configuration, request deadlines, error handling, and cleanup.
 See [the migration checklist](ASYNC_MIGRATION.md) for remaining native async work.
 
 ## Documentation
@@ -716,7 +724,8 @@ Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/
 | [examples/local-key-provider/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/local-key-provider) | File-backed local key provider demo | None — fully self-contained |
 | [examples/published-signing/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/published-signing) | Load deployment config, verify an existing identity, and sign with AWS KMS or file custody | Published identity and its existing operational key |
 | [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Local registry (Docker + DNSid CLI) |
-| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | Network access — defaults to a hosted sandbox identity and the managed production log |
+| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | Published identity and network access |
+| [examples/async-verification/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/async-verification) | Async verification with deadlines, error handling, and cleanup | Published identity and network access |
 | [examples/webbotauth/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/webbotauth) | Sign and verify bot HTTP requests with `WebBotAuthProfile` | None — fully self-contained |
 | [examples/oidc/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/oidc) | Mint and inspect a DNSid OIDC assertion with `OIDCProfile` | None offline; published identity + OIDC endpoint for opt-in exchange |
 

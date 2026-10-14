@@ -23,6 +23,11 @@ fetching still uses workers.
 - [x] Use native async status reads for shared stale-status refreshes.
 - [x] Preserve injected synchronous HTTPS fetchers through the worker fallback.
 - [x] Use native async custom DNS routing in signed async HTTP clients.
+- [x] Isolate shared evidence budgets from sync and async callers; expose DEADLINE_EXCEEDED.
+- [x] Add async manager cleanup that drains shared work and unfinished worker branches.
+- [x] Allow custom outbound transports in signed async clients, with explicit ownership.
+- [x] Add bounded A2A reads, retry-aware responses, KMS offload, and failure-path cleanup.
+- [x] Add a runnable async verification example and async quickstart.
 
 ## Remaining, in dependency order
 
@@ -56,9 +61,12 @@ fetching still uses workers.
 Cold verification and injected synchronous HTTPS fetchers still use shared workers.
 Default stale-status refreshes use native async DNS and HTTPS. Each shared refresh
 owns and closes one async HTTP client; connections are not pooled across refreshes.
-Cancellation stops the caller's wait, not shared evidence work. Do not close the
-manager until that work finishes. Injected identity caches must be nonblocking.
+Shared evidence has a separate 30-second budget. Caller deadlines or cancellation
+stop only that caller's wait. Use `async with manager` or `await manager.aclose()`
+to drain work before closing resources. Synchronous `close()` also drains work,
+but rejects blocking an event loop. Injected blocking adapters must honor budgets;
+identity caches must be nonblocking and all injected dependencies thread-safe.
 
-Other profile and registry APIs remain synchronous. No dependencies were added.
+Other profile and registry APIs remain synchronous. No runtime dependencies were added.
 Local UDP DNS and TLS are covered by automated tests. External network/KMS
 integration, the A2A server and load benchmarks were not run.

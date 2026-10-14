@@ -98,7 +98,7 @@ Wrap an httpx.Client so every outbound request is automatically signed.
 ### `create_signed_async_http_client`
 
 ```python
-HttpSignatureProfile.create_signed_async_http_client(base_headers: dict[str, str] | None = None, opts: HttpSigningOptions | None = None, transport_config: TransportConfig | None = None) -> httpx.AsyncClient
+HttpSignatureProfile.create_signed_async_http_client(base_headers: dict[str, str] | None = None, opts: HttpSigningOptions | None = None, transport_config: TransportConfig | None = None, *, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient
 ```
 
 Return an httpx.AsyncClient that auto-signs every outbound request.
@@ -108,6 +108,7 @@ Return an httpx.AsyncClient that auto-signs every outbound request.
 - `base_headers` (`dict[str, str] | None`): Default headers applied to every request. — default `None`
 - `opts` (`HttpSigningOptions | None`): Optional signing overrides applied to every request. — default `None`
 - `transport_config` (`TransportConfig | None`): Optional DNS and TLS settings. Defaults to the configuration inherited by `from_identity_manager`. Custom hostname resolution supports ``host:port`` DNS servers; DoH URLs apply only to DNSid TXT lookups. — default `None`
+- `transport` (`httpx.AsyncBaseTransport | None`): Optional outbound transport, for example MockTransport or a proxy-configured AsyncHTTPTransport. The returned client owns and closes it, as with httpx.AsyncClient. An injected transport handles its own DNS/TLS settings; transport_config is rejected when supplied together with it. — default `None`
 
 **Returns:**
 

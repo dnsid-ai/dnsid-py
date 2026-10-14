@@ -436,7 +436,9 @@ Verify without blocking the event loop; enforce the same policy as verify_domain
 
 Fresh cache hits, shared waits and default stale-status refreshes need
 no worker thread. Cold verification and injected synchronous fetchers
-run in workers. Cancellation does not cancel shared verification.
+run in workers. Shared work has its own 30-second budget; caller
+cancellation or deadlines stop only that caller's wait. Use ``aclose()``
+or ``async with`` to drain background work before closing resources.
 
 ### `verify_log_evidence`
 
@@ -487,10 +489,25 @@ Load the full verified event history for a domain from its lifecycle log.
 IdentityManager.close() -> None
 ```
 
-Close manager-owned HTTP resources.
+Drain owned verification work and close resources synchronously.
 
-Closing is idempotent. The manager must not be closed while verification
-calls are active. Injected HTTPSFetcher instances remain caller-owned.
+Raises RuntimeError rather than blocking an event loop when work is
+active; use ``await aclose()`` or ``async with`` there. Closing is
+idempotent. Injected dependencies remain caller-owned.
+
+### `aclose`
+
+```python
+IdentityManager.async aclose() -> None
+```
+
+Reject new verification calls, drain owned work, then close resources.
+
+Includes shared refreshes, workers and unfinished fan-out branches left
+after a caller cancels or fails. Existing calls keep their own deadlines.
+Injected blocking adapters must honor verification budgets. Cancellation
+of ``aclose()`` leaves the manager closing; await it again to finish.
+Injected dependencies remain caller-owned. Closing is idempotent.
 
 ### `create_dnsid_http_client`
 
@@ -533,6 +550,9 @@ from dnsid import IdentityManagerDependencies
 Optional dependencies for IdentityManager.
 
 All fields default to None; the manager uses built-in defaults when omitted.
+Verification dependencies must be safe for concurrent use and honor the
+remaining verification budget. Blocking adapters run in workers even for
+synchronous callers. Injected dependencies remain caller-owned.
 
 **Attributes:**
 
@@ -552,7 +572,11 @@ from dnsid import verification_budget
 verification_budget(timeout: float = 30.0, *, cancelled: threading.Event | None = None) -> Iterator[None]
 ```
 
-Set a finite overall timeout; nested budgets cannot extend their parent.
+Limit this caller; nested budgets cannot extend their parent.
+
+Exceeding the budget raises VerificationError with DEADLINE_EXCEEDED and
+transient=True. Shared identity evidence has a separate 30-second budget;
+ending this caller's wait does not end work needed by another caller.
 
 ## `remaining_seconds`
 

@@ -17,21 +17,22 @@ Not responsibilities (handled by separate profile classes):
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import datetime
 import logging
 import threading
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from ._verification_budget import (
     async_verification_operation,
+    async_wait_for_verification,
     remaining_seconds,
     run_concurrently,
     verification_operation,
+    verification_work_context,
     wait_for_verification,
 )
 
@@ -102,6 +103,9 @@ class IdentityManagerDependencies:
     """Optional dependencies for IdentityManager.
 
     All fields default to None; the manager uses built-in defaults when omitted.
+    Verification dependencies must be safe for concurrent use and honor the
+    remaining verification budget. Blocking adapters run in workers even for
+    synchronous callers. Injected dependencies remain caller-owned.
 
     Attributes:
         log_registry: Registry of log-method bindings.  Used to derive the
@@ -210,14 +214,19 @@ class IdentityManager:
             else None
         )
         self._closed = False
+        self._closing = False
+        self._verification_executor = ThreadPoolExecutor(thread_name_prefix="dnsid-verification")
 
         self._cache: IdentityCache = (
             _PrivateCache(deps.cache) if deps.cache is not None else _InMemoryCache()
         )
         self._coordination_lock = threading.Lock()
+        self._close_lock = threading.Lock()
         self._verification_futures: dict[str, Future[VerifiedDomain]] = {}
         self._status_futures: dict[str, Future[VerifiedDomain]] = {}
         self._async_status_tasks: set[asyncio.Task[None]] = set()
+        self._active_verifications: set[Future[None]] = set()
+        self._verification_workers: set[Future[Any]] = set()
 
         # Derive the local log binding when a registry is available.  The
         # binding always provides canonicalization; it doubles as the local
@@ -1402,9 +1411,16 @@ class IdentityManager:
 
         Fresh cache hits, shared waits and default stale-status refreshes need
         no worker thread. Cold verification and injected synchronous fetchers
-        run in workers. Cancellation does not cancel shared verification.
+        run in workers. Shared work has its own 30-second budget; caller
+        cancellation or deadlines stop only that caller's wait. Use ``aclose()``
+        or ``async with`` to drain background work before closing resources.
         """
-        domain = normalize_fqdn(domain)
+        with self._verification_call():
+            domain = normalize_fqdn(domain)
+            result = await self._async_reusable_verification(domain)
+            return self._accept_verification(domain, result, peer_cert, acceptance=True)
+
+    async def _async_reusable_verification(self, domain: str) -> VerifiedDomain:
         with self._coordination_lock:
             future = self._verification_futures.get(domain) or self._status_futures.get(domain)
         leader = False
@@ -1414,7 +1430,7 @@ class IdentityManager:
                 _now() - cached.last_status_check_at
                 < self._config.verification.status_check_interval
             ):
-                return self._accept_verification(domain, cached, peer_cert, acceptance=True)
+                return cached
             pending = self._status_futures if cached is not None else self._verification_futures
             work = (
                 (lambda: self._refresh_status(domain, cached))
@@ -1434,33 +1450,38 @@ class IdentityManager:
                 )
                 try:
                     if native is not None:
-                        task = asyncio.create_task(native)
+                        context = verification_work_context(
+                            self._track_verification_worker, independent=True
+                        )
+                        task = asyncio.create_task(native, context=context)
                         self._async_status_tasks.add(task)
-                        task.add_done_callback(self._async_status_tasks.discard)
+
+                        def finished(task: asyncio.Task[None]) -> None:
+                            self._async_status_tasks.discard(task)
+                            error = (
+                                asyncio.CancelledError() if task.cancelled() else task.exception()
+                            )
+                            if error is not None and not future.done():
+                                self._finish_verification(domain, pending, future, error)
+
+                        task.add_done_callback(finished)
                     else:
-                        context = contextvars.copy_context()
-
-                        def complete() -> None:
-                            try:
-                                self._complete_verification(domain, pending, future, work)
-                            except BaseException:
-                                # The shared future carries the error to every waiter.
-                                pass
-
                         # shortcut: sync evidence adapters; remove after native async migration.
-                        asyncio.get_running_loop().run_in_executor(None, context.run, complete)
+                        self._submit_verification(
+                            lambda: self._complete_verification(domain, pending, future, work),
+                            independent=True,
+                        )
                 except BaseException as exc:
                     if native is not None:
                         native.close()
                     self._finish_verification(domain, pending, future, exc)
                     raise
-        waiter = asyncio.wrap_future(future)
-        # Observe late failures even when every caller cancels its wait.
-        waiter.add_done_callback(lambda done: None if done.cancelled() else done.exception())
-        result = await asyncio.shield(waiter)
+        result = await async_wait_for_verification(future)
         if not leader and result.dns_ttl == 0:
-            result = await asyncio.to_thread(self._verify_domain_uncached, domain)
-        return self._accept_verification(domain, result, peer_cert, acceptance=True)
+            result = await async_wait_for_verification(
+                self._submit_verification(lambda: self._verify_domain_uncached(domain))
+            )
+        return result
 
     @verification_operation
     def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
@@ -1475,9 +1496,10 @@ class IdentityManager:
         Only registry publication confirmation passes ``acceptance=False``;
         there is no public bypass.
         """
-        domain = normalize_fqdn(domain)
-        result = self._reusable_verification(domain)
-        return self._accept_verification(domain, result, peer_cert, acceptance=acceptance)
+        with self._verification_call():
+            domain = normalize_fqdn(domain)
+            result = self._reusable_verification(domain)
+            return self._accept_verification(domain, result, peer_cert, acceptance=acceptance)
 
     def _accept_verification(
         self, domain: str, result: VerifiedDomain, peer_cert: TLSCertificate | None,
@@ -1524,7 +1546,7 @@ class IdentityManager:
             future = full_future if full_future is not None else status_future
             assert future is not None
             result = wait_for_verification(future)
-            return self._verify_domain_uncached(domain) if result.dns_ttl == 0 else result
+            return self._uncached_after_shared(domain, result)
 
         cached = self._cache.get(domain)
         if cached is not None:
@@ -1548,6 +1570,7 @@ class IdentityManager:
         domain: str,
         pending: dict[str, Future[VerifiedDomain]],
         work: Callable[[], VerifiedDomain],
+        *, inline: bool = False,
     ) -> VerifiedDomain:
         with self._coordination_lock:
             future = pending.get(domain)
@@ -1555,11 +1578,26 @@ class IdentityManager:
             if future is None:
                 future = Future()
                 pending[domain] = future
-        if not leader:
-            result = wait_for_verification(future)
-            return self._verify_domain_uncached(domain) if result.dns_ttl == 0 else result
+        if leader:
+            if inline:
+                return self._complete_verification(domain, pending, future, work)
+            try:
+                self._submit_verification(
+                    lambda: self._complete_verification(domain, pending, future, work),
+                    independent=True,
+                )
+            except BaseException as exc:
+                self._finish_verification(domain, pending, future, exc)
+                raise
+        result = wait_for_verification(future)
+        return result if leader else self._uncached_after_shared(domain, result)
 
-        return self._complete_verification(domain, pending, future, work)
+    def _uncached_after_shared(self, domain: str, result: VerifiedDomain) -> VerifiedDomain:
+        if result.dns_ttl == 0:
+            return wait_for_verification(
+                self._submit_verification(lambda: self._verify_domain_uncached(domain))
+            )
+        return result
 
     def _complete_verification(
         self, domain: str, pending: dict[str, Future[VerifiedDomain]],
@@ -1603,14 +1641,16 @@ class IdentityManager:
     async def _async_refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
         latest = self._cache.get(domain)
         if latest is None:
-            return await asyncio.to_thread(
-                self._coalesce, domain, self._verification_futures,
-                lambda: self._verify_domain_uncached(domain),
-            )
+            return await async_wait_for_verification(self._submit_verification(
+                lambda: self._coalesce(
+                    domain, self._verification_futures,
+                    lambda: self._verify_domain_uncached(domain), inline=True,
+                )
+            ))
         if latest.last_status_check_at > cached.last_status_check_at:
             return latest
         with _status_fetch_boundary():
-            # shortcut: own one client per shared refresh until async manager lifecycle exists.
+            # shortcut: per-refresh clients; pool when managers have a single-event-loop contract.
             status = await async_fetch_agent_status(
                 latest.record.su,
                 transport=make_ssrf_safe_async_transport(self._transport_config),
@@ -1627,7 +1667,7 @@ class IdentityManager:
             return self._coalesce(
                 domain,
                 self._verification_futures,
-                lambda: self._verify_domain_uncached(domain),
+                lambda: self._verify_domain_uncached(domain), inline=True,
             )
         if latest.last_status_check_at > cached.last_status_check_at:
             return latest
@@ -1653,6 +1693,7 @@ class IdentityManager:
         self._cache.put(domain, refreshed)
         return refreshed
 
+    @verification_operation
     def _verify_domain_uncached(self, domain: str) -> VerifiedDomain:
         from ._utils import b64url_decode_strict
 
@@ -1955,16 +1996,112 @@ class IdentityManager:
             status.validate()
         return status
 
-    def close(self) -> None:
-        """Close manager-owned HTTP resources.
+    @contextmanager
+    def _verification_call(self) -> Iterator[None]:
+        call: Future[None] = Future()
+        with self._coordination_lock:
+            if self._closing or self._closed:
+                raise RuntimeError("IdentityManager is closing or closed")
+            self._active_verifications.add(call)
+        try:
+            yield
+        finally:
+            with self._coordination_lock:
+                self._active_verifications.remove(call)
+            call.set_result(None)
 
-        Closing is idempotent. The manager must not be closed while verification
-        calls are active. Injected HTTPSFetcher instances remain caller-owned.
+    def _track_verification_worker(self, future: Future[Any]) -> None:
+        with self._coordination_lock:
+            self._verification_workers.add(future)
+
+        def finished(done: Future[Any]) -> None:
+            with self._coordination_lock:
+                self._verification_workers.discard(done)
+
+        future.add_done_callback(finished)
+
+    def _submit_verification(
+        self, work: Callable[[], VerifiedDomain], *, independent: bool = False,
+    ) -> Future[VerifiedDomain]:
+        context = verification_work_context(
+            self._track_verification_worker, independent=independent
+        )
+        future = self._verification_executor.submit(context.run, work)
+        # Independent leaders are already tracked by their shared evidence future.
+        if not independent:
+            self._track_verification_worker(future)
+        return future
+
+    def _pending_verification_work(self) -> set[Future[Any]]:
+        return {
+            future for future in (
+                self._active_verifications | self._verification_workers
+                | set(self._verification_futures.values()) | set(self._status_futures.values())
+            ) if not future.done()
+        }
+
+    def close(self) -> None:
+        """Drain owned verification work and close resources synchronously.
+
+        Raises RuntimeError rather than blocking an event loop when work is
+        active; use ``await aclose()`` or ``async with`` there. Closing is
+        idempotent. Injected dependencies remain caller-owned.
         """
-        if not self._closed:
+        with self._close_lock:
+            with self._coordination_lock:
+                if self._closed:
+                    return
+                pending = self._pending_verification_work()
+                if pending:
+                    try:
+                        asyncio.get_running_loop()
+                    except RuntimeError:
+                        pass
+                    else:
+                        raise RuntimeError("verification is active; await aclose() to drain it")
+                self._closing = True
+            while pending:
+                wait(pending)
+                with self._coordination_lock:
+                    pending = self._pending_verification_work()
+            self._verification_executor.shutdown(wait=True)
             if self._http_client is not None:
                 self._http_client.close()
-            self._closed = True
+            with self._coordination_lock:
+                self._closed = True
+
+    async def aclose(self) -> None:
+        """Reject new verification calls, drain owned work, then close resources.
+
+        Includes shared refreshes, workers and unfinished fan-out branches left
+        after a caller cancels or fails. Existing calls keep their own deadlines.
+        Injected blocking adapters must honor verification budgets. Cancellation
+        of ``aclose()`` leaves the manager closing; await it again to finish.
+        Injected dependencies remain caller-owned. Closing is idempotent.
+        """
+        with self._coordination_lock:
+            self._closing = True
+        while True:
+            with self._coordination_lock:
+                pending = self._pending_verification_work()
+            if not pending:
+                break
+            await asyncio.gather(
+                *(async_wait_for_verification(future) for future in pending),
+                return_exceptions=True,
+            )
+        self.close()
+
+    async def __aenter__(self) -> IdentityManager:
+        """Return this manager for async context-manager use."""
+        with self._coordination_lock:
+            if self._closing or self._closed:
+                raise RuntimeError("IdentityManager is closing or closed")
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        """Drain background verification and close owned resources on context exit."""
+        await self.aclose()
 
     def __enter__(self) -> IdentityManager:
         """Return this manager for synchronous context-manager use."""
@@ -2057,6 +2194,8 @@ def _status_fetch_boundary() -> Iterator[None]:
     try:
         yield
     except VerificationError as exc:
+        if exc.code == VerificationCode.DEADLINE_EXCEEDED:
+            raise
         if exc.transient or exc.code == VerificationCode.DNS_RESOLUTION:
             raise VerificationError(
                 VerificationCode.STATUS_UNAVAILABLE,
