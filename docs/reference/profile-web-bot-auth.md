@@ -263,10 +263,13 @@ Construction needs no local identity or signing key. The default transport
 validates Web PKI and pins connections to public DNS addresses. An injected
 transport is trusted infrastructure and MUST enforce the same constraints,
 including on redirects and every connection; it must honor remaining_seconds().
+Injected transports remain caller-owned and must support concurrent use when
+the verifier is shared. The caller manages their initialization and closure.
 
 Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
 limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
-depth 16, 16 signatures, and five same-host HTTPS redirects. The complete
+depth 16, 16 signatures, and five same-host HTTPS redirects. Compressed
+directory responses are rejected before reading. The complete
 operation has a default 30-second cooperative deadline.
 
 ### `WBAHttpVerifier` constructor

@@ -23,7 +23,7 @@ from ._https_client import _assert_same_host_https_redirect, _read_limited
 from ._utils import b64url_decode, b64url_encode, normalize_fqdn
 from ._verification_budget import remaining_seconds, verification_budget
 from .enums import VerificationCode
-from .exceptions import VerificationError
+from .exceptions import ValidationError, VerificationError
 from .http_signatures import (
     _build_signature_base,
     _now,
@@ -122,7 +122,8 @@ def _directory_url(uri: str, discovery_type: str) -> str:
     try:
         parsed = urlsplit(uri)
         parsed.port
-    except ValueError as exc:
+        host = normalize_fqdn(parsed.hostname or "")
+    except (ValueError, ValidationError) as exc:
         raise VerificationError(VerificationCode.TLS_ERROR, "invalid discovery URI") from exc
     if discovery_type == "directory":
         uri = urlunsplit((parsed.scheme, parsed.netloc, WBA_DIRECTORY_WELL_KNOWN_PATH, "", ""))
@@ -131,7 +132,7 @@ def _directory_url(uri: str, discovery_type: str) -> str:
     # Validate the original credentials too, including an empty username.
     if parsed.username is not None or parsed.password is not None:
         _reject("Signature-Agent credentials are forbidden")
-    _assert_same_host_https_redirect(uri, parsed.hostname or "")
+    _assert_same_host_https_redirect(uri, host)
     return uri
 
 
@@ -166,6 +167,16 @@ def _bounded_json(body: bytes) -> dict[str, Any]:
     return cast(dict[str, Any], data)
 
 
+class _BorrowedTransport(httpx.BaseTransport):
+    """Let a temporary client use a caller-owned transport without closing it."""
+
+    def __init__(self, transport: httpx.BaseTransport) -> None:
+        self._transport = transport
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return self._transport.handle_request(request)
+
+
 class WBAHttpVerifier:
     """Verify DNSid WBA requests and their signed directories.
 
@@ -173,10 +184,13 @@ class WBAHttpVerifier:
     validates Web PKI and pins connections to public DNS addresses. An injected
     transport is trusted infrastructure and MUST enforce the same constraints,
     including on redirects and every connection; it must honor remaining_seconds().
+    Injected transports remain caller-owned and must support concurrent use when
+    the verifier is shared. The caller manages their initialization and closure.
 
     Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
     limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
-    depth 16, 16 signatures, and five same-host HTTPS redirects. The complete
+    depth 16, 16 signatures, and five same-host HTTPS redirects. Compressed
+    directory responses are rejected before reading. The complete
     operation has a default 30-second cooperative deadline.
     """
 
@@ -331,19 +345,27 @@ class WBAHttpVerifier:
             _reject("DNSid evidence expired during WBA verification")
 
     def _fetch(self, url: str, domain: str) -> tuple[HttpRequest, HttpRequest]:
-        transport = self._transport or make_ssrf_safe_transport()
+        transport = (
+            _BorrowedTransport(self._transport)
+            if self._transport is not None else make_ssrf_safe_transport()
+        )
         try:
             with httpx.Client(transport=transport, trust_env=False) as client:
                 for _ in range(6):
                     _assert_same_host_https_redirect(url, domain)
                     with client.stream(
-                        "GET", url, follow_redirects=False, timeout=remaining_seconds(10)
+                        "GET", url, headers={"Accept-Encoding": "identity"},
+                        follow_redirects=False, timeout=remaining_seconds(10)
                     ) as response:
                         if response.is_redirect:
                             url = urljoin(url, response.headers.get("location", ""))
                             continue
                         if response.status_code != 200:
                             _reject("directory response must have status 200")
+                        if response.headers.get("content-encoding", "identity").strip().lower() != (
+                            "identity"
+                        ):
+                            _reject("compressed directory responses are forbidden")
                         body = _read_limited(
                             response, 1024 * 1024, VerificationCode.RECORD_INVALID,
                             "directory response size exceeded",

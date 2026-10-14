@@ -353,3 +353,119 @@ def test_deadline_covers_directory_read(setup):
     opts.timeout = 0.01
     with pytest.raises(VerificationError, match="deadline"):
         verifier.verify_web_bot_auth_signed_request(req, opts)
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br", "deflate", "gzip, identity"])
+def test_compressed_directory_rejected_before_read(setup, encoding):
+    _, resolver, _, req, opts, _, _ = setup
+
+    class UnreadStream(httpx.SyncByteStream):
+        def __iter__(self):
+            pytest.fail("compressed directory must not be read or decompressed")
+            yield b""  # Make this a streaming iterator without reading any bytes.
+
+    def handler(request):
+        assert request.headers["accept-encoding"] == "identity"
+        return httpx.Response(200, headers={"content-encoding": encoding}, stream=UnreadStream())
+
+    verifier = WBAHttpVerifier(resolver, transport=httpx.MockTransport(handler))
+    with pytest.raises(VerificationError, match="compressed directory"):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    resolver.verify_domain.assert_not_called()
+
+
+@pytest.mark.parametrize("uri", ["https://bad_host.example", "https://example..com"])
+def test_invalid_discovery_host_returns_verification_error(setup, uri):
+    provider, resolver, verifier, req, opts, _, fetched = setup
+    WBAHttpSigner(provider, DOMAIN, signature_agent=uri).sign(req)
+    with pytest.raises(VerificationError, match="invalid discovery URI"):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert fetched == []
+    resolver.verify_domain.assert_not_called()
+
+
+@pytest.mark.parametrize("uri,out_of_band", [
+    (f"https://{DOMAIN}.", False),
+    (f"https://{DOMAIN}.", True),
+    ("https://münchen.example", True),
+])
+def test_discovery_host_normalization(setup, uri, out_of_band):
+    from urllib.parse import urlsplit
+
+    from dnsid import WebBotAuthSigningOptions
+    from dnsid._utils import normalize_fqdn
+
+    provider, resolver, verifier, req, opts, _, fetched = setup
+    domain = normalize_fqdn(urlsplit(uri).hostname)
+    resolver.verify_domain.return_value.domain = opts.signer_domain = domain
+    if out_of_band:
+        # Structured Fields Strings are ASCII; IDNA U-labels are tested out of band.
+        req.headers.pop("signature-agent")
+        WBAHttpSigner(provider, domain).sign(
+            req, options=WebBotAuthSigningOptions(signature_agent=False)
+        )
+        opts.discovery_uri = uri
+    else:
+        WBAHttpSigner(provider, domain, signature_agent=uri).sign(req)
+    verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert len(fetched) == 1
+    resolver.verify_domain.assert_called_once_with(domain, peer_cert=None)
+
+
+def test_injected_transport_remains_open_on_reuse_concurrency_and_failure(setup, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    _, resolver, verifier, req, opts, hook, _ = setup
+    transport = verifier._transport
+    close = MagicMock()
+    monkeypatch.setattr(transport, "close", close)
+    for _ in range(2):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    close.assert_not_called()
+
+    barrier = Barrier(2)
+    original = transport.handle_request
+
+    def concurrent_handler(request):
+        barrier.wait(timeout=5)
+        return original(request)
+
+    monkeypatch.setattr(transport, "handle_request", concurrent_handler)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: verifier.verify_web_bot_auth_signed_request(req, opts),
+                                range(2)))
+    assert results == [resolver.verify_domain.return_value] * 2
+    close.assert_not_called()
+
+    monkeypatch.setattr(transport, "handle_request", original)
+
+    def corrupt(response):
+        response.status = 404
+        return response
+
+    hook.side_effect = corrupt
+    with pytest.raises(VerificationError):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    close.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_owned_transport_is_closed(setup, monkeypatch, failure):
+    _, resolver, verifier, req, opts, hook, _ = setup
+    transport = verifier._transport
+    close = MagicMock()
+    monkeypatch.setattr(transport, "close", close)
+    monkeypatch.setattr("dnsid.wba_verifier.make_ssrf_safe_transport", lambda: transport)
+    owned_verifier = WBAHttpVerifier(resolver)
+    if failure:
+        def corrupt(response):
+            response.status = 404
+            return response
+
+        hook.side_effect = corrupt
+        with pytest.raises(VerificationError):
+            owned_verifier.verify_web_bot_auth_signed_request(req, opts)
+    else:
+        owned_verifier.verify_web_bot_auth_signed_request(req, opts)
+    close.assert_called_once_with()
