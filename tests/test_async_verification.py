@@ -2,6 +2,8 @@
 
 import asyncio
 import datetime
+import gc
+import hashlib
 import threading
 from collections import Counter
 from concurrent.futures import Future
@@ -13,7 +15,7 @@ from dnsid import AsyncIdentityResolver, TrustedEntity, verification_budget
 from dnsid.enums import VerificationCode
 from dnsid.exceptions import VerificationError
 from dnsid.http_signatures import HttpSignatureProfile
-from dnsid.models import TLSCertificate
+from dnsid.models import SignatureParams, TLSCertificate
 from tests.test_http_signing import TestVerifySignedHttpRequest as _SignatureFixture
 from tests.test_verification_coalescing import _manager_fixture
 
@@ -138,6 +140,65 @@ async def test_failed_verification_can_retry(ec_pair):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("warm", [False, True])
+async def test_executor_rejection_can_retry(ec_pair, warm):
+    manager, _, _, domain, keys, status, _ = _manager_fixture(
+        ec_pair, interval=datetime.timedelta(0)
+    )
+    loop = asyncio.get_running_loop()
+    with (
+        manager,
+        patch("dnsid.manager._fetch_jwks", side_effect=keys),
+        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+    ):
+        if warm:
+            await manager.async_verify_domain(domain)
+        with patch.object(loop, "run_in_executor", side_effect=RuntimeError("executor rejected")):
+            with pytest.raises(RuntimeError, match="executor rejected"):
+                await manager.async_verify_domain(domain)
+        assert not manager._verification_futures
+        assert not manager._status_futures
+        assert (await manager.async_verify_domain(domain)).domain == domain
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiters_observe_late_worker_failure(ec_pair):
+    manager, _, _, domain, _, _, _ = _manager_fixture(ec_pair)
+    started, release = threading.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    notices = []
+
+    def fail(_):
+        started.set()
+        assert release.wait(2)
+        raise VerificationError(VerificationCode.DNS_RESOLUTION, "late failure", transient=True)
+
+    with (
+        manager,
+        patch.object(manager, "_verify_domain_uncached", side_effect=fail),
+        patch.object(loop, "call_exception_handler", side_effect=notices.append),
+    ):
+        leader = asyncio.create_task(manager.async_verify_domain(domain))
+        await _started(started)
+        follower = asyncio.create_task(manager.async_verify_domain(domain))
+        await asyncio.sleep(0)
+        try:
+            for task in (leader, follower):
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+        finally:
+            release.set()
+        async with asyncio.timeout(2):
+            while manager._verification_futures:
+                await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
+        del task, leader, follower
+        gc.collect()
+        assert notices == []
+
+
+@pytest.mark.asyncio
 async def test_stale_status_refreshes(ec_pair):
     manager, _, counters, domain, keys, status, _ = _manager_fixture(
         ec_pair, interval=datetime.timedelta(0)
@@ -217,6 +278,58 @@ async def test_bad_signature_rejected_after_async_resolution(ec_pair, ec_provide
     with pytest.raises(VerificationError, match="signature invalid"):
         await profile.async_verify_signed_http_request(signed)
     resolver.async_verify_domain.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("tampered", [False, True])
+async def test_multiple_candidates_hash_body_once(ec_pair, ec_provider, asynchronous, tampered):
+    signed, verifier, verified = _SignatureFixture()._sign_and_get_verifier(
+        ec_pair, ec_provider, body=b"original"
+    )
+    header = signed.get_header("signature-input")
+    signed.set_header("signature-input", ", ".join(
+        header.replace("sig1=", f"s{i}=", 1) for i in range(16)
+    ))
+    signed.set_header("signature", ", ".join(f"s{i}=:YWJj:" for i in range(16)))
+    if tampered:
+        signed.body = b"tampered"
+    with (
+        patch.object(verifier._resolver, "verify_domain", return_value=verified),
+        patch.object(verifier._resolver, "async_verify_domain", return_value=verified),
+        patch("dnsid.http_signatures.hashlib.new", wraps=hashlib.new) as hashes,
+    ):
+        for call in range(2):
+            with pytest.raises(VerificationError, match="Content-Digest" if tampered else "invalid"):
+                if asynchronous:
+                    await verifier.async_verify_signed_http_request(signed)
+                else:
+                    verifier.verify_signed_http_request(signed)
+            assert hashes.call_count == call + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_reused_digest_still_requires_candidate_coverage(ec_pair, ec_provider, asynchronous):
+    signed, verifier, verified = _SignatureFixture()._sign_and_get_verifier(
+        ec_pair, ec_provider, body=b"original"
+    )
+    header = signed.get_header("signature-input")
+    uncovered = SignatureParams.parse(header)
+    uncovered.label = "other"
+    uncovered.components.remove("content-digest")
+    signed.set_header("signature-input", f"{header}, {uncovered.serialize()}")
+    signed.set_header("signature", "sig1=:YWJj:, other=:YWJj:")
+    with (
+        patch.object(verifier._resolver, "verify_domain", return_value=verified) as sync_resolve,
+        patch.object(verifier._resolver, "async_verify_domain", return_value=verified) as async_resolve,
+    ):
+        with pytest.raises(VerificationError, match="supplied content requires covered Content-Digest"):
+            if asynchronous:
+                await verifier.async_verify_signed_http_request(signed)
+            else:
+                verifier.verify_signed_http_request(signed)
+        (async_resolve if asynchronous else sync_resolve).assert_called_once()
 
 
 @pytest.mark.asyncio

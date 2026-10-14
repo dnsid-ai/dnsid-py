@@ -1518,8 +1518,18 @@ class IdentityManager:
                         pass
 
                 # shortcut: synchronous adapters; remove worker after async adapter migration.
-                asyncio.get_running_loop().run_in_executor(None, context.run, complete)
-        result = await asyncio.shield(asyncio.wrap_future(future))
+                try:
+                    asyncio.get_running_loop().run_in_executor(None, context.run, complete)
+                except BaseException as exc:
+                    with self._coordination_lock:
+                        if pending.get(domain) is future:
+                            del pending[domain]
+                        future.set_exception(exc)
+                    raise
+        waiter = asyncio.wrap_future(future)
+        # Observe late failures even when every caller cancels its wait.
+        waiter.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        result = await asyncio.shield(waiter)
         if not leader and result.dns_ttl == 0:
             result = await asyncio.to_thread(self._verify_domain_uncached, domain)
         return self._accept_verification(domain, result, peer_cert, acceptance=True)

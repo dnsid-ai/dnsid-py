@@ -5,7 +5,7 @@ description: "Primary entry point of the dnsid Python SDK: IdentityManager and i
 
 <!-- GENERATED FILE — do not edit. Regenerate with `python scripts/gen_docs.py` in dnsid-ai/dnsid-py. -->
 
-`IdentityManager` is the primary entry point of the SDK; all protocol operations flow through it. The public API is **synchronous** — see the [package overview](https://docs.dnsid.ai/reference/py/overview/) for the async story.
+`IdentityManager` is the primary entry point of the SDK; all protocol operations flow through it. Verification supports both synchronous and asynchronous callers — see the [package overview](https://docs.dnsid.ai/reference/py/overview/) for async behavior and limits.
 
 ## `IdentityManager`
 
