@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 from ._https_client import _create_https_client
 from ._utils import (
+    _parse_ka_duration,
     b64url_decode_strict,
     normalize_fqdn,
 )
@@ -1735,28 +1736,11 @@ class IdentityManager:
         self, result: VerifiedDomain, *, fresh_dns_lookup: bool = False
     ) -> None:
         remaining_seconds()
-        now = _now()
-        code = None
-        for cert in (result.tls_cert, result.record_signing_tls_cert):
-            # A cert whose expiry is unknown (transport did not expose the
-            # peer certificate) carries no freshness bound, matching
-            # VerifiedDomain.expires_at.
-            if cert is not None and cert.not_after != _ZERO_TIME and now >= cert.not_after:
-                code = VerificationCode.TLS_ERROR
-        if result.record.ka and now >= result.key_bound_at + _parse_ka_duration(result.record.ka):
-            code = VerificationCode.KEY_AGE_EXCEEDED
-        dns_expiry = result.dns_expires_at or (
-            result.verified_at + datetime.timedelta(seconds=result.dns_ttl)
-        )
-        if code is None and not (fresh_dns_lookup and result.dns_ttl == 0) and now >= dns_expiry:
-            code = VerificationCode.DNS_RESOLUTION
-        if code is not None:
+        try:
+            result._require_fresh_evidence(_now(), fresh_dns_lookup=fresh_dns_lookup)
+        except VerificationError:
             self._cache.evict(result.domain)
-            raise VerificationError(
-                code,
-                "identity evidence expired during verification",
-                transient=code == VerificationCode.DNS_RESOLUTION,
-            )
+            raise
 
     def verify_log_evidence(
         self,
@@ -2381,16 +2365,6 @@ def _require_log_method(log_reader: LogReader, name: str) -> Any:
             f"log method does not support {name} required by draft 01 verification",
         )
     return method
-
-
-def _parse_ka_duration(ka: str) -> datetime.timedelta:
-    mapping = {
-        "24h": datetime.timedelta(hours=24),
-        "7d": datetime.timedelta(days=7),
-        "30d": datetime.timedelta(days=30),
-        "90d": datetime.timedelta(days=90),
-    }
-    return mapping[ka]
 
 
 class _PrivateCache(IdentityCache):

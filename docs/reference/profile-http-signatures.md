@@ -93,7 +93,7 @@ Wrap an httpx.Client so every outbound request is automatically signed.
 
 **Returns:**
 
-- `httpx.Client` — A new httpx.Client that signs each request before sending it.
+- `httpx.Client` — A new httpx.Client that signs each request before sending it. Content is buffered up to 8 MiB; replay streams retain original cleanup. The base client and its transport remain caller-owned.
 
 ### `create_signed_async_http_client`
 
@@ -111,7 +111,7 @@ Return an httpx.AsyncClient that auto-signs every outbound request.
 
 **Returns:**
 
-- `httpx.AsyncClient` — An httpx.AsyncClient that signs each request before sending it.
+- `httpx.AsyncClient` — An httpx.AsyncClient that signs each request before sending it. Content is buffered up to 8 MiB; replay streams retain original cleanup.
 
 ### `verify_signed_http_request`
 
@@ -152,7 +152,7 @@ Freshness settings for the HTTP Message Signature profile (RFC 9421).
 from dnsid import HttpRequest
 ```
 
-An HTTP request for use with create_signed_http_request / verify_signed_http_request.
+Buffered HTTP message for request and response signature construction.
 
 ### `get_header`
 
@@ -160,7 +160,7 @@ An HTTP request for use with create_signed_http_request / verify_signed_http_req
 HttpRequest.get_header(name: str) -> str
 ```
 
-Case-insensitive header lookup; returns empty string if absent.
+Combine matching field lines in order; return empty string if absent.
 
 ### `has_header`
 

@@ -1,4 +1,4 @@
-"""Web Bot Auth example.
+"""JWT bot bearer authentication example (legacy directory name, not RFC 9421 WBA).
 
 Demonstrates the WebBotAuthProfile signing side, fully offline:
 - Load (or create) a local Ed25519 key store
