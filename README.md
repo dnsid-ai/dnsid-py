@@ -202,7 +202,7 @@ identity = WBAHttpVerifier(manager).verify_web_bot_auth_signed_request(
 ```
 
 The verifier needs only an identity resolver, not local signing keys. It verifies
-both signatures, binds the directory key to current DNSid `ku` material, and
+both signatures, binds the directory key to the current DNSid `ku` signing key, and
 applies the resolver's entity acceptance on each invocation. Supply `peer_cert`
 in the options for the current application peer when `fl=mtls` applies; the
 directory endpoint's certificate is not a substitute.
@@ -213,7 +213,14 @@ responses are not cached. For one-time semantics, supply an atomic `replay_polic
 callback (see the [API reference](https://docs.dnsid.ai/reference/py/profile-web-bot-auth/)).
 Without it, time validity limits reuse but does not detect it. Applications must
 decide whether the covered components are sufficient: WBA requires `@authority`,
-not `@method` or `@target-uri`.
+not `@method` or `@target-uri`. For operation binding, sign additional components
+with `WebBotAuthSigningOptions.additional_components` and require them with
+`WebBotAuthVerificationOptions.required_components`. The verifier checks exact
+component coverage before discovery; its default adds no requirements.
+
+Directories must be uncoded; any `Content-Encoding` field is rejected before
+reading. Injected discovery transports must preserve bytes and enforce HTTPS,
+public-address routing, and original HTTP freshness if they reuse evidence.
 
 This is the narrower DNSid WBA profile targeting protocol and directory draft
 revision `00`, not a claim of general WBA or partner interoperability.
@@ -221,7 +228,9 @@ revision `00`, not a claim of general WBA or partner interoperability.
 ### JWT bot bearer authentication
 
 The legacy `WebBotAuthProfile` name is retained for compatibility. It implements
-JWT bearer authentication, not RFC 9421 Web Bot Auth.
+JWT bearer authentication, not RFC 9421 Web Bot Auth. Its request and client
+helpers reject existing `Authorization` fields before token creation, including
+empty values and client default credentials.
 
 Authenticate outbound bot/agent HTTP requests with DNSid-issued JWTs, and
 verify inbound bot identity from the `Authorization: Bearer` header.

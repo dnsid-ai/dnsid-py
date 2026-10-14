@@ -348,7 +348,7 @@ class TestVerifySignedHttpRequest:
         signed, verifier, mock_vd = self._sign_and_get_verifier(ec_pair, ec_provider, body=b"")
         signed.body = None
         with patch.object(verifier._resolver, "verify_domain", return_value=mock_vd):
-            with pytest.raises(VerificationError, match="request has no body"):
+            with pytest.raises(VerificationError, match="requires supplied content"):
                 verifier.verify_signed_http_request(signed)
 
     def test_expired_signature_raises(self, ec_pair, ec_provider):

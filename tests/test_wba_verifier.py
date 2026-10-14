@@ -10,12 +10,13 @@ from dnsid import (
     JWKS,
     HttpRequest,
     TLSCertificate,
+    VerifiedDomain,
     WBAHttpSigner,
     WBAHttpVerifier,
     WebBotAuthVerificationOptions,
 )
 from dnsid._utils import b64_std_encode
-from dnsid.enums import VerificationCode
+from dnsid.enums import DNSSECState, VerificationCode
 from dnsid.exceptions import VerificationError
 from dnsid.http_signatures import _build_signature_base
 from dnsid.local_key_provider import LocalKeyProvider
@@ -29,10 +30,14 @@ DOMAIN = "agent.example.com"
 def setup():
     provider = LocalKeyProvider.generate()
     resolver = MagicMock()
-    verified = resolver.verify_domain.return_value
-    verified.domain = DOMAIN
-    verified.jwks = JWKS(keys=[provider.signing_key()])
-    verified.expiry.return_value = datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=5)
+    now = datetime.datetime.now(datetime.UTC)
+    resolver.verify_domain.return_value = VerifiedDomain(
+        domain=DOMAIN, record=MagicMock(v="dnsid-draft-01", ka=""),
+        jwks=JWKS(keys=[provider.signing_key()]), signing_key=provider.signing_key(),
+        tls_cert=TLSCertificate(), registry_status=MagicMock(), verified_at=now,
+        dns_ttl=300, key_bound_at=now, last_status_check_at=now,
+        dnssec_state=DNSSECState.UNKNOWN, log_reader=MagicMock(),
+    )
     directory_hook = MagicMock(side_effect=lambda response: response)
     fetched = []
 
@@ -149,7 +154,7 @@ def test_each_invocation_rechecks_acceptance_and_key_state(setup):
     _, resolver, verifier, req, opts, _, fetched = setup
     verifier.verify_web_bot_auth_signed_request(req, opts)
     resolver.verify_domain.return_value.jwks = JWKS(keys=[LocalKeyProvider.generate().signing_key()])
-    with pytest.raises(VerificationError, match="ku material"):
+    with pytest.raises(VerificationError, match="ku signing key"):
         verifier.verify_web_bot_auth_signed_request(req, opts)
     resolver.verify_domain.side_effect = VerificationError(VerificationCode.SIGNATURE_INVALID, "denied")
     with pytest.raises(VerificationError, match="denied"):
@@ -159,7 +164,7 @@ def test_each_invocation_rechecks_acceptance_and_key_state(setup):
 
 def test_final_freshness_check(setup):
     _, resolver, verifier, req, opts, _, _ = setup
-    resolver.verify_domain.return_value.expiry.return_value = datetime.datetime.now(datetime.UTC)
+    resolver.verify_domain.return_value.dns_expires_at = datetime.datetime.now(datetime.UTC)
     with pytest.raises(VerificationError, match="evidence expired"):
         verifier.verify_web_bot_auth_signed_request(req, opts)
 
@@ -289,7 +294,7 @@ def test_absent_discovery_type_defaults_to_directory(setup):
     verifier.verify_web_bot_auth_signed_request(req, opts)
 
 
-@pytest.mark.parametrize("mode", ["success", "denied", "mtls", "directory-only"])
+@pytest.mark.parametrize("mode", ["success", "zero-ttl", "denied", "mtls", "directory-only"])
 def test_real_dnsid_resolver_policy(ec_pair, mode):
     from dnsid import VerificationConfig
     from tests.conftest import MockDNSResolver
@@ -297,7 +302,7 @@ def test_real_dnsid_resolver_policy(ec_pair, mode):
     from tests.test_counterparty_acceptance import _verifier
     from tests.test_verify_domain import _make_signed_txt_record
 
-    manager, _, _, patches = _verifier(
+    manager, counters, _, patches = _verifier(
         ec_pair, VerificationConfig(trusted_entities=[] if mode == "denied" else None)
     )
     if mode == "mtls":
@@ -307,6 +312,16 @@ def test_real_dnsid_resolver_policy(ec_pair, mode):
         )
     elif mode == "directory-only":
         manager._dns_resolver = MockDNSResolver()
+    elif mode == "zero-ttl":
+        original_lookup = manager._dns_resolver.fetch_txt
+
+        def zero_ttl_lookup(name):
+            records, state = original_lookup(name)
+            for record in records:
+                record.ttl = 0
+            return records, state
+
+        manager._dns_resolver.fetch_txt = zero_ttl_lookup
     provider = LocalKeyProvider.generate()
 
     def handler(request):
@@ -329,8 +344,11 @@ def test_real_dnsid_resolver_policy(ec_pair, mode):
             return jwks, cert
 
         fetch.side_effect = fetch_runtime
-        if mode == "success":
+        if mode in {"success", "zero-ttl"}:
             assert verifier.verify_web_bot_auth_signed_request(req, opts).domain == signer_domain
+            if mode == "zero-ttl":
+                assert verifier.verify_web_bot_auth_signed_request(req, opts).domain == signer_domain
+                assert counters["dns"] == 2
         else:
             with pytest.raises(VerificationError) as error:
                 verifier.verify_web_bot_auth_signed_request(req, opts)
@@ -355,7 +373,7 @@ def test_deadline_covers_directory_read(setup):
         verifier.verify_web_bot_auth_signed_request(req, opts)
 
 
-@pytest.mark.parametrize("encoding", ["gzip", "br", "deflate", "gzip, identity"])
+@pytest.mark.parametrize("encoding", ["gzip", "br", "deflate", "gzip, identity", "identity", ""])
 def test_compressed_directory_rejected_before_read(setup, encoding):
     _, resolver, _, req, opts, _, _ = setup
 

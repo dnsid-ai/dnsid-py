@@ -70,9 +70,12 @@ class HttpMessageSignatureConfig:
 
     def __post_init__(self) -> None:
         """Reject freshness settings outside the profile bounds."""
-        if self.max_age.total_seconds() <= 0:
+        if not isinstance(self.max_age, datetime.timedelta) or self.max_age.total_seconds() <= 0:
             raise ArgumentError("HTTP message signature max_age must be positive")
-        if self.clock_skew.total_seconds() < 0:
+        if (
+            not isinstance(self.clock_skew, datetime.timedelta)
+            or self.clock_skew.total_seconds() < 0
+        ):
             raise ArgumentError("HTTP message signature clock_skew must be non-negative")
 
 
@@ -242,7 +245,9 @@ class HttpSignatureProfile:
             opts: Optional signing overrides applied to every request.
 
         Returns:
-            A new httpx.Client that signs each request before sending it.
+            A new httpx.Client that signs each request before sending it. Content
+            is buffered up to 8 MiB; replay streams retain original cleanup. The
+            base client and its transport remain caller-owned.
         """
         import httpx
 
@@ -254,14 +259,34 @@ class HttpSignatureProfile:
                 self._inner = inner
 
             def handle_request(self, request: httpx.Request) -> httpx.Response:
-                content_supplied = bool(
-                    request.extensions.get(_CONTENT_SUPPLIED_EXTENSION, bool(request.content))
-                )
+                original_stream = request.stream
+                assert isinstance(original_stream, httpx.SyncByteStream)
+                original_close = original_stream.close
+                body = bytearray()
+                try:
+                    for chunk in original_stream:
+                        if len(body) + len(chunk) > 8 * 1024 * 1024:
+                            raise ArgumentError("HTTP signing content exceeds 8 MiB")
+                        body.extend(chunk)
+                except BaseException:
+                    original_close()
+                    raise
+
+                class _ReplayStream(httpx.ByteStream):
+                    def close(self) -> None:
+                        original_close()
+
+                replay = _ReplayStream(bytes(body))
+                request.stream = replay
+                request.read()
+                request.stream = replay
+                content_supplied = bool(body) or bool(request.extensions.get(
+                    _CONTENT_SUPPLIED_EXTENSION, type(original_stream) is not httpx.ByteStream,
+                ))
+                request.extensions[_CONTENT_SUPPLIED_EXTENSION] = content_supplied
                 sdk_req = HttpRequest(
-                    method=request.method,
-                    url=str(request.url),
-                    headers={k.decode(): v.decode() for k, v in request.headers.raw},
-                    body=request.read() if content_supplied else None,
+                    method=request.method, url=str(request.url), headers=dict(request.headers),
+                    body=request.content if content_supplied else None,
                 )
                 signed = profile.create_signed_http_request(sdk_req, signing_opts)
                 new_request = request.__class__(
@@ -271,6 +296,7 @@ class HttpSignatureProfile:
                     content=signed.body or b"",
                     extensions=request.extensions,
                 )
+                new_request.stream = replay
                 return self._inner._transport.handle_request(new_request)
 
         class _SignedClient(httpx.Client):
@@ -302,6 +328,7 @@ class HttpSignatureProfile:
 
         Returns:
             An httpx.AsyncClient that signs each request before sending it.
+            Content is buffered up to 8 MiB; replay streams retain original cleanup.
         """
         import httpx
 
@@ -315,11 +342,32 @@ class HttpSignatureProfile:
                 self._inner = inner
 
             async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+                original_stream = request.stream
+                assert isinstance(original_stream, httpx.AsyncByteStream)
+                original_close = original_stream.aclose
+                body = bytearray()
+                try:
+                    async for chunk in original_stream:
+                        if len(body) + len(chunk) > 8 * 1024 * 1024:
+                            raise ArgumentError("HTTP signing content exceeds 8 MiB")
+                        body.extend(chunk)
+                except BaseException:
+                    await original_close()
+                    raise
+
+                class _ReplayStream(httpx.ByteStream):
+                    async def aclose(self) -> None:
+                        await original_close()
+
+                replay = _ReplayStream(bytes(body))
+                request.stream = replay
                 raw = await request.aread()
-                content_supplied = bool(
-                    request.extensions.get(_CONTENT_SUPPLIED_EXTENSION, bool(raw))
-                )
-                headers_dict = {k.decode(): v.decode() for k, v in request.headers.raw}
+                request.stream = replay
+                content_supplied = bool(body) or bool(request.extensions.get(
+                    _CONTENT_SUPPLIED_EXTENSION, type(original_stream) is not httpx.ByteStream,
+                ))
+                request.extensions[_CONTENT_SUPPLIED_EXTENSION] = content_supplied
+                headers_dict = dict(request.headers)
                 raw_path = request.url.raw_path.decode()
                 url = (
                     f"{request.url.scheme}://{headers_dict.get('host', request.url.host)}{raw_path}"
@@ -338,6 +386,7 @@ class HttpSignatureProfile:
                     content=signed.body or b"",
                     extensions=request.extensions,
                 )
+                new_request.stream = replay
                 return await self._inner.handle_async_request(new_request)
 
             async def aclose(self) -> None:
@@ -523,30 +572,7 @@ class HttpSignatureProfile:
                 "HTTP message signature lifetime exceeds maximum allowed age",
             )
 
-        if req.body is not None and "content-digest" not in sig_params.components:
-            raise VerificationError(
-                VerificationCode.RECORD_INVALID,
-                "request body is present but content-digest is not covered by the signature",
-            )
-        if "content-digest" in sig_params.components:
-            if req.body is None:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID,
-                    "content-digest is a covered component but request has no body",
-                )
-            digest_header = req.get_header("content-digest")
-            if not digest_header:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID,
-                    "content-digest is a covered component but Content-Digest header is absent",
-                )
-            hashlib_alg, expected = _parse_content_digest(digest_header)
-            actual = hashlib.new(hashlib_alg, req.body).digest()
-            if not _constant_time_equal(expected, actual):
-                raise VerificationError(
-                    VerificationCode.SIGNATURE_INVALID,
-                    "Content-Digest does not match request body",
-                )
+        _check_content_digest(req, sig_params)
 
         verified_domain = (
             self._resolver.verify_domain(domain, peer_cert=peer_cert)
@@ -600,7 +626,7 @@ def _build_signature_base(
     from urllib.parse import parse_qsl, quote, urlsplit
 
     _validate_component_identifiers(
-        params.components, request_context=request_context is not None
+        params.components, request_context=req.status is not None or request_context is not None
     )
 
     response = req
@@ -611,8 +637,15 @@ def _build_signature_base(
         identifier = _canonical_component_identifier(component)
         req = response
         if "req" in parameter_values:
-            assert request_context is not None
+            if request_context is None:
+                raise VerificationError(
+                    VerificationCode.RECORD_INVALID, "originating request is unavailable",
+                )
             req = request_context
+        elif response.status is not None and name.startswith("@") and name != "@status":
+            raise VerificationError(
+                VerificationCode.RECORD_INVALID, "request derived component requires req",
+            )
         if name == "@method":
             value = req.method
         elif name == "@authority":
@@ -649,6 +682,12 @@ def _build_signature_base(
                     "@query-param selected parameter must be present exactly once",
                 )
             value = quote(matches[0], safe="-._~")
+        elif name == "@status":
+            if type(response.status) is not int or not 100 <= response.status <= 599:
+                raise VerificationError(
+                    VerificationCode.RECORD_INVALID, "actual response status is unavailable",
+                )
+            value = str(response.status)
         elif name.startswith("@"):
             raise VerificationError(
                 VerificationCode.RECORD_INVALID,
@@ -804,6 +843,29 @@ def _parse_content_digest(header_value: str) -> tuple[str, bytes]:
             "Content-Digest does not contain the required sha-256 member",
         )
     return "sha256", selected[0]
+
+
+def _check_content_digest(message: HttpRequest, params: SignatureParams) -> None:
+    if message.body is not None and "content-digest" not in params.components:
+        raise VerificationError(
+            VerificationCode.RECORD_INVALID,
+            "supplied content requires covered Content-Digest",
+        )
+    if any(_parse_component_identifier(component)[0] == "content-digest"
+           for component in params.components):
+        if message.body is None:
+            raise VerificationError(
+                VerificationCode.RECORD_INVALID, "covered Content-Digest requires supplied content",
+            )
+        if not message.has_header("content-digest"):
+            raise VerificationError(
+                VerificationCode.RECORD_INVALID, "covered Content-Digest header is absent",
+            )
+        algorithm, expected = _parse_content_digest(message.get_header("content-digest"))
+        if not _constant_time_equal(expected, hashlib.new(algorithm, message.body).digest()):
+            raise VerificationError(
+                VerificationCode.SIGNATURE_INVALID, "Content-Digest does not match content",
+            )
 
 
 def _constant_time_equal(a: bytes, b: bytes) -> bool:

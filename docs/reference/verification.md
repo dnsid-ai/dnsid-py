@@ -60,6 +60,8 @@ VerifiedDomain.expiry() -> datetime.datetime
 Return the earliest of all cache validity bounds.
 
 Candidates: DNS TTL, ku and ek TLS cert NotAfter, and key age (if ka set).
+Fresh zero-TTL DNS evidence is valid only in its acquiring operation;
+this cache-reuse deadline does not determine acquisition validity.
 
 ## `LoggedStateEvidence`
 

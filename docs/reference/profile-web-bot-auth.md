@@ -103,7 +103,7 @@ sets a ``User-Agent`` header incorporating the bot identity.
 
 **Raises:**
 
-- `ArgumentError`: Propagated from token creation (invalid URL, expiry over the maximum, or reserved-claim override).
+- `ArgumentError`: If Authorization is already present, or token creation rejects the URL, expiry, or claims. The original request is unchanged.
 
 ### `create_signed_bot_client`
 
@@ -208,7 +208,7 @@ required for DNSid conformance.
 ### `WBAHttpSigner` constructor
 
 ```python
-WBAHttpSigner(key_provider: KeyProvider, domain: str, *, config: WebBotAuthConfig | None = None, signature_agent: str | None = None, label: str = DEFAULT_LABEL, expires_in_seconds: int | None = None) -> None
+WBAHttpSigner(key_provider: KeyProvider, domain: str, *, config: WebBotAuthConfig | None = None, signature_agent: str | None = None, label: str = DEFAULT_LABEL, expires_in_seconds: int | float | None = None) -> None
 ```
 
 Initialize the signer for a local DNSid identity.
@@ -220,11 +220,11 @@ Initialize the signer for a local DNSid identity.
 - `config` (`WebBotAuthConfig | None`): Optional `WebBotAuthConfig`. — default `None`
 - `signature_agent` (`str | None`): Back-compat override for the directory URL placed in Signature-Agent. — default `None`
 - `label` (`str`): Signature label and Signature-Agent dictionary member name (profile default: ``sig1``). — default `DEFAULT_LABEL`
-- `expires_in_seconds` (`int | None`): Back-compat override for the request signature TTL. — default `None`
+- `expires_in_seconds` (`int | float | None`): Back-compat override for the request signature TTL. — default `None`
 
 **Raises:**
 
-- `ArgumentError`: If the resolved Signature-Agent directory URL is not https.
+- `ArgumentError`: If the discovery URI is invalid, contains credentials, is not HTTPS, or the TTL is not an integer from 1 through 300.
 
 ### `sign`
 
@@ -249,7 +249,7 @@ checked by the verifier, not a property of the signature bytes.
 
 **Raises:**
 
-- `ArgumentError`: If the signing key is not Ed25519, or an additional component is not a known derived component or a lowercase HTTP field name.
+- `ArgumentError`: If the TTL is invalid, the key is not Ed25519, or an additional component is unsupported.
 
 ## `WBAHttpVerifier`
 
@@ -263,13 +263,17 @@ Construction needs no local identity or signing key. The default transport
 validates Web PKI and pins connections to public DNS addresses. An injected
 transport is trusted infrastructure and MUST enforce the same constraints,
 including on redirects and every connection; it must honor remaining_seconds().
+Injected transports must preserve uncoded response bytes and fields, without
+transparent decompression. This verifier does not cache directories; injected
+transports must not reuse evidence without enforcing its original HTTP age
+and freshness deadline, even when Date/Age fields are absent.
 Injected transports remain caller-owned and must support concurrent use when
 the verifier is shared. The caller manages their initialization and closure.
 
 Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
 limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
-depth 16, 16 signatures, and five same-host HTTPS redirects. Compressed
-directory responses are rejected before reading. The complete
+depth 16, 16 signatures, and five same-host HTTPS redirects. Responses with
+any Content-Encoding field are rejected before reading. The complete
 operation has a default 30-second cooperative deadline.
 
 ### `WBAHttpVerifier` constructor
@@ -299,6 +303,7 @@ Return the signer only after request, directory, and DNSid checks succeed.
 
 **Raises:**
 
+- `ArgumentError`: On malformed required-component policy or invalid deadline.
 - `VerificationError`: On invalid evidence, discovery, acceptance, or replay.
 
 ## `WebBotAuthVerificationOptions`
@@ -312,6 +317,10 @@ Trusted per-invocation WBA policy.
 Without ``signer_domain``, discovery can identify the signer only when
 ``allow_signature_agent_domain`` is explicitly enabled. Discovery and
 redirects must remain on that signer's host; delegation is not supported.
+
+``required_components`` adds application coverage requirements, defaulting
+to none. Equality compares component names and parameter values. Malformed
+policy raises ArgumentError; missing coverage rejects before discovery.
 
 ``replay_policy(domain, keyid, nonce, retain_until)`` must atomically record
 an unused tuple through the supplied Unix timestamp and return True, or
@@ -350,6 +359,9 @@ from dnsid import WebBotAuthConfig
 ```
 
 WBA profile configuration (design doc 10 §Profile Configuration).
+
+TTLs require integral seconds from 1 through 300. Clock skew must be finite
+and non-negative. Boolean and non-numeric duration values are rejected.
 
 ## `WebBotAuthSigningOptions`
 

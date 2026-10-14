@@ -7,12 +7,12 @@ policy, valid requests can be reused until their signatures expire.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
+import math
 import re
+import ssl
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, NoReturn, cast
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -23,11 +23,11 @@ from ._https_client import _assert_same_host_https_redirect, _read_limited
 from ._utils import b64url_decode, b64url_encode, normalize_fqdn
 from ._verification_budget import remaining_seconds, verification_budget
 from .enums import VerificationCode
-from .exceptions import ValidationError, VerificationError
+from .exceptions import ArgumentError, ParseError, ValidationError, VerificationError
 from .http_signatures import (
     _build_signature_base,
+    _check_content_digest,
     _now,
-    _parse_content_digest,
     _parse_signature_dictionary,
 )
 from .interfaces import IdentityResolver
@@ -39,8 +39,9 @@ from .models import (
     VerifiedDomain,
     _parse_component_identifier,
     _parse_sf_dictionary,
+    _validate_component_identifiers,
 )
-from .safe_transport import make_ssrf_safe_transport
+from .safe_transport import SSRF_BLOCK_MARKER, make_ssrf_safe_transport
 from .wba_signer import (
     WBA_DIRECTORY_MEDIA_TYPE,
     WBA_DIRECTORY_TAG,
@@ -58,6 +59,10 @@ class WebBotAuthVerificationOptions:
     ``allow_signature_agent_domain`` is explicitly enabled. Discovery and
     redirects must remain on that signer's host; delegation is not supported.
 
+    ``required_components`` adds application coverage requirements, defaulting
+    to none. Equality compares component names and parameter values. Malformed
+    policy raises ArgumentError; missing coverage rejects before discovery.
+
     ``replay_policy(domain, keyid, nonce, retain_until)`` must atomically record
     an unused tuple through the supplied Unix timestamp and return True, or
     return False for reuse. Exceptions fail closed. Blocking callbacks and
@@ -71,6 +76,13 @@ class WebBotAuthVerificationOptions:
     peer_cert: TLSCertificate | None = None
     timeout: float = 30.0
     replay_policy: Callable[[str, str, str, int], bool] | None = None
+    #: Additional exact request components required before discovery.
+    required_components: list[str] = field(default_factory=list)
+
+
+def _component_identity(component: str) -> tuple[str, frozenset[tuple[str, Any]]]:
+    name, parameters = _parse_component_identifier(component)
+    return name, frozenset(parameters)
 
 
 def _reject(message: str) -> NoReturn:
@@ -78,14 +90,15 @@ def _reject(message: str) -> NoReturn:
 
 
 def _signatures(message: HttpRequest, tag: str) -> list[tuple[SignatureParams, bytes]]:
-    inputs = message.get_header("signature-input")
-    signatures = message.get_header("signature")
     if (
-        not inputs or not signatures
-        or sum(len(value) for value in message.headers.values()) > 65536
+        sum(len(name) + len(value) for name, value in message.headers.items()) > 65536
         or (message.body is not None and len(message.body) > 8 * 1024 * 1024)
     ):
-        _reject("missing signature fields or WBA input limit exceeded")
+        _reject("WBA input limit exceeded")
+    inputs = message.get_header("signature-input")
+    signatures = message.get_header("signature")
+    if not inputs or not signatures:
+        _reject("missing WBA signature fields")
     params = SignatureParams.parse_dictionary(inputs)
     raw = _parse_signature_dictionary(signatures)
     if len(params) > 16 or len(raw) > 16 or any(
@@ -96,7 +109,7 @@ def _signatures(message: HttpRequest, tag: str) -> list[tuple[SignatureParams, b
             if label in raw and item.tag == tag]
 
 
-def _check_time(params: SignatureParams, skew: int) -> None:
+def _check_time(params: SignatureParams, skew: int | float) -> None:
     now = _now().timestamp()
     if (
         type(params.created) is not int or type(params.expires) is not int
@@ -107,15 +120,6 @@ def _check_time(params: SignatureParams, skew: int) -> None:
         or b64url_encode(b64url_decode(params.key_id)) != params.key_id
     ):
         _reject("invalid WBA timestamps, algorithm, or thumbprint")
-
-
-def _check_digest(message: HttpRequest, params: SignatureParams) -> None:
-    if message.body is not None or "content-digest" in params.components:
-        if message.body is None or "content-digest" not in params.components:
-            _reject("supplied content requires covered Content-Digest")
-        _, expected = _parse_content_digest(message.get_header("content-digest"))
-        if not hmac.compare_digest(expected, hashlib.sha256(message.body).digest()):
-            _reject("WBA Content-Digest mismatch")
 
 
 def _directory_url(uri: str, discovery_type: str) -> str:
@@ -184,13 +188,17 @@ class WBAHttpVerifier:
     validates Web PKI and pins connections to public DNS addresses. An injected
     transport is trusted infrastructure and MUST enforce the same constraints,
     including on redirects and every connection; it must honor remaining_seconds().
+    Injected transports must preserve uncoded response bytes and fields, without
+    transparent decompression. This verifier does not cache directories; injected
+    transports must not reuse evidence without enforcing its original HTTP age
+    and freshness deadline, even when Date/Age fields are absent.
     Injected transports remain caller-owned and must support concurrent use when
     the verifier is shared. The caller manages their initialization and closure.
 
     Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
     limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
-    depth 16, 16 signatures, and five same-host HTTPS redirects. Compressed
-    directory responses are rejected before reading. The complete
+    depth 16, 16 signatures, and five same-host HTTPS redirects. Responses with
+    any Content-Encoding field are rejected before reading. The complete
     operation has a default 30-second cooperative deadline.
     """
 
@@ -216,13 +224,27 @@ class WBAHttpVerifier:
             Verified DNSid signer identity, not application authorization.
 
         Raises:
+            ArgumentError: On malformed required-component policy or invalid deadline.
             VerificationError: On invalid evidence, discovery, acceptance, or replay.
         """
         opts = opts or WebBotAuthVerificationOptions()
         with verification_budget(opts.timeout):
-            return self._verify(req, opts)
+            try:
+                return self._verify(req, opts)
+            except (ParseError, ValidationError, ValueError) as exc:
+                raise VerificationError(
+                    VerificationCode.RECORD_INVALID, "invalid WBA evidence",
+                ) from exc
 
     def _verify(self, req: HttpRequest, opts: WebBotAuthVerificationOptions) -> VerifiedDomain:
+        if not isinstance(opts.required_components, list) or any(
+            not isinstance(component, str) for component in opts.required_components
+        ):
+            raise ArgumentError("required_components must be a list of component identifiers")
+        try:
+            _validate_component_identifiers(opts.required_components, request_context=False)
+        except VerificationError as exc:
+            raise ArgumentError(f"invalid required_components policy: {exc}") from exc
         candidates = _signatures(req, WBA_TAG)
         if len(candidates) != 1:
             _reject("expected exactly one complete WBA request signature")
@@ -230,7 +252,12 @@ class WBAHttpVerifier:
         _check_time(params, self._config.clock_skew)
         if "@authority" not in params.components:
             _reject("WBA request requires exact @authority coverage")
-        _check_digest(req, params)
+        covered = {_component_identity(component) for component in params.components}
+        if any(
+            _component_identity(component) not in covered for component in opts.required_components
+        ):
+            _reject("WBA request missing required component coverage")
+        _check_content_digest(req, params)
         request_base = _build_signature_base(req, params)
         uri, discovery_type = opts.discovery_uri, opts.discovery_type
         if req.has_header("signature-agent"):
@@ -283,6 +310,16 @@ class WBAHttpVerifier:
                 or b64url_encode(b64url_decode(raw["x"])) != raw["x"]
             ):
                 _reject("invalid public directory JWK")
+            if "key_ops" in raw:
+                operations = raw["key_ops"]
+                if (
+                    not isinstance(operations, list)
+                    or not all(isinstance(operation, str) for operation in operations)
+                    or "verify" not in operations
+                    or len(set(operations)) != len(operations)
+                    or not set(operations).issubset({"sign", "verify"})
+                ):
+                    _reject("invalid directory JWK key_ops")
             key = JWK.from_dict({**raw, "alg": "EdDSA"})
             if key.thumbprint() != raw.get("kid"):
                 _reject("directory kid does not match its thumbprint")
@@ -302,7 +339,7 @@ class WBAHttpVerifier:
         required = {"@authority;req", "content-type", "cache-control", "content-digest"}
         if not required.issubset(directory_params.components):
             _reject("directory signature missing required coverage")
-        _check_digest(response, directory_params)
+        _check_content_digest(response, directory_params)
         if not key.verify(
             _build_signature_base(response, directory_params, directory_request),
             directory_signature,
@@ -311,11 +348,12 @@ class WBAHttpVerifier:
         if not key.verify(request_base, signature):
             _reject("invalid WBA request signature")
         verified = self._resolver.verify_domain(domain, peer_cert=opts.peer_cert)
-        if verified.domain != domain or not any(
-            candidate.signature_alg() == "EdDSA" and candidate.thumbprint() == params.key_id
-            for candidate in verified.jwks.signing_keys()
+        operational_key = verified.jwks.current_operational_signing_key(verified.record.v)
+        if (
+            verified.domain != domain or operational_key.signature_alg() != "EdDSA"
+            or operational_key.thumbprint() != params.key_id
         ):
-            _reject("WBA key is not in verified current DNSid ku material")
+            _reject("WBA key is not the verified current DNSid ku signing key")
         self._final_check(params, directory_params, verified)
         if opts.replay_policy is not None:
             if not params.nonce:
@@ -324,11 +362,11 @@ class WBAHttpVerifier:
             try:
                 accepted = opts.replay_policy(
                     domain, params.key_id, params.nonce,
-                    params.expires + self._config.clock_skew,
+                    math.ceil(params.expires + self._config.clock_skew),
                 )
             except Exception as exc:
                 raise VerificationError(
-                    VerificationCode.SIGNATURE_INVALID, "WBA replay store failed"
+                    VerificationCode.SIGNATURE_INVALID, "WBA replay store failed", transient=True,
                 ) from exc
             if accepted is not True:
                 _reject("WBA nonce replay rejected")
@@ -341,8 +379,9 @@ class WBAHttpVerifier:
         remaining_seconds()
         _check_time(params, self._config.clock_skew)
         _check_time(directory, self._config.clock_skew)
-        if _now() >= verified.expiry():
-            _reject("DNSid evidence expired during WBA verification")
+        # VerifyDomain acquired this invocation's evidence; zero DNS TTL forbids
+        # later reuse, not completion of this operation. TLS and ka still apply.
+        verified._require_fresh_evidence(_now(), fresh_dns_lookup=True)
 
     def _fetch(self, url: str, domain: str) -> tuple[HttpRequest, HttpRequest]:
         transport = (
@@ -361,20 +400,33 @@ class WBAHttpVerifier:
                             url = urljoin(url, response.headers.get("location", ""))
                             continue
                         if response.status_code != 200:
-                            _reject("directory response must have status 200")
-                        if response.headers.get("content-encoding", "identity").strip().lower() != (
-                            "identity"
-                        ):
+                            raise VerificationError(
+                                VerificationCode.TLS_ERROR,
+                                "directory response must have status 200, "
+                                f"got {response.status_code}",
+                                transient=(
+                                    response.status_code >= 500 or response.status_code == 429
+                                ),
+                            )
+                        if "content-encoding" in response.headers:
                             _reject("compressed directory responses are forbidden")
                         body = _read_limited(
                             response, 1024 * 1024, VerificationCode.RECORD_INVALID,
-                            "directory response size exceeded",
+                            "directory response size exceeded", decode_content=False,
                         )
                         return (
                             HttpRequest(method="GET", url=str(response.request.url)),
                             HttpRequest(method="GET", url=url, headers=dict(response.headers),
-                                        body=body),
+                                        body=body, status=response.status_code),
                         )
         except httpx.TransportError as exc:
-            raise VerificationError(VerificationCode.TLS_ERROR, "directory fetch failed") from exc
+            permanent = SSRF_BLOCK_MARKER in str(exc) or isinstance(exc, httpx.ProtocolError)
+            cause: BaseException | None = exc
+            while cause is not None:
+                if isinstance(cause, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(cause):
+                    permanent = True
+                cause = cause.__cause__ or cause.__context__
+            raise VerificationError(
+                VerificationCode.TLS_ERROR, "directory fetch failed", transient=not permanent,
+            ) from exc
         _reject("directory redirect limit exceeded")
