@@ -74,7 +74,12 @@ def test_invalid_signing_overrides_leave_request_unchanged(setup, ttl):
 
 @pytest.mark.parametrize("uri", ["https://@agent.example", "https://user:pass@agent.example",
                                "https://agent.example:bad", "https://agent.example:99999",
-                               "https://[broken"])
+                               "https://[broken", "https://agent.example/",
+                               "https://agent.example/custom", "https://agent.example?keys=1",
+                               "https://agent.example#keys", "https://agent.example?",
+                               "https://agent.example#", "https://AGENT.example",
+                               "https://agent.example:443", "https://münchen.example",
+                               " https://agent.example", "https://agent.example\n"])
 def test_invalid_signer_discovery_uri_is_argument_error(setup, uri):
     provider, _, _, _, _, _, _ = setup
     with pytest.raises(ArgumentError):
@@ -124,7 +129,8 @@ def test_signer_snapshots_configuration_before_caller_mutation(setup):
 
 @pytest.mark.parametrize("entry_point", ["verifier", "signer", "directory"])
 @pytest.mark.parametrize("field,value", [("clock_skew", float("nan")), ("signature_ttl", 301),
-                                         ("directory_signature_ttl", True)])
+                                         ("directory_signature_ttl", True),
+                                         ("include_signature_agent", False)])
 def test_mutated_invalid_configuration_rejects_before_work(setup, entry_point, field, value):
     provider, resolver, original, req, _, _, fetched = setup
     config = WebBotAuthConfig()
@@ -332,6 +338,37 @@ def test_fractional_skew_replay_retention_rounds_up(setup):
     verifier.verify_web_bot_auth_signed_request(req, opts)
     params = SignatureParams.parse(req.get_header("signature-input"))
     assert opts.replay_policy.call_args.args[-1] == params.expires + 1
+
+
+@pytest.mark.parametrize("future", ["request", "directory"])
+def test_future_creation_only_allows_request_skew(setup, monkeypatch, future):
+    provider, resolver, verifier, req, opts, hook, _ = setup
+    now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
+    monkeypatch.setattr("dnsid.wba_signer._now", lambda: now)
+    monkeypatch.setattr("dnsid.wba_verifier._now", lambda: now)
+
+    def advance(response):
+        params = SignatureParams.parse(response.headers["signature-input"])
+        params.created += 1
+        params.expires += 1
+        response.headers["signature-input"] = params.serialize()
+        return _resign_directory(response, provider)
+
+    if future == "directory":
+        hook.side_effect = advance
+        with pytest.raises(VerificationError, match="timestamps"):
+            verifier.verify_web_bot_auth_signed_request(req, opts)
+        resolver.verify_domain.assert_not_called()
+    else:
+        WBAHttpSigner(provider, DOMAIN).sign(req)
+        params = SignatureParams.parse(req.get_header("signature-input"))
+        params.created += 1
+        params.expires += 1
+        req.set_header("signature-input", params.serialize())
+        req.set_header("signature", "sig1=:" + b64_std_encode(
+            provider.sign(_build_signature_base(req, params))
+        ) + ":")
+        verifier.verify_web_bot_auth_signed_request(req, opts)
 
 
 def test_valid_directory_covers_actual_status(setup):

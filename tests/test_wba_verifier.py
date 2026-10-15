@@ -82,12 +82,14 @@ def test_broken_requests(setup, variant):
     ("components", ["@authority", 'signature-agent;key="bot2"']),
 ])
 def test_request_policy(setup, field, value):
-    _, _, verifier, req, opts, _, _ = setup
+    _, resolver, verifier, req, opts, _, fetched = setup
     params = SignatureParams.parse(req.get_header("signature-input"))
     setattr(params, field, value)
     req.set_header("signature-input", params.serialize())
     with pytest.raises(VerificationError):
         verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert fetched == []
+    resolver.verify_domain.assert_not_called()
 
 
 def test_ambiguous_complete_wba_signatures(setup):
@@ -162,6 +164,28 @@ def test_each_invocation_rechecks_acceptance_and_key_state(setup):
     assert len(fetched) == 3
 
 
+def test_same_key_at_another_url_requires_fresh_authenticated_discovery(setup):
+    from dnsid.wba_signer import WebBotAuthConfig
+
+    provider, resolver, verifier, req, opts, hook, fetched = setup
+    verifier.verify_web_bot_auth_signed_request(req, opts)
+    uri = f"https://{DOMAIN}/other-keys"
+    WBAHttpSigner(provider, DOMAIN, config=WebBotAuthConfig(
+        signature_agent_uri=uri, signature_agent_type="jwks_uri",
+    )).sign(req)
+
+    def unavailable(response):
+        response.status = 503
+        return response
+
+    hook.side_effect = unavailable
+    with pytest.raises(VerificationError, match="status 200"):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert fetched[-1] == uri
+    assert len(fetched) == 2
+    resolver.verify_domain.assert_called_once()
+
+
 def test_final_freshness_check(setup):
     _, resolver, verifier, req, opts, _, _ = setup
     resolver.verify_domain.return_value.dns_expires_at = datetime.datetime.now(datetime.UTC)
@@ -228,32 +252,71 @@ def test_discovery_requires_explicit_policy(setup):
     verifier.verify_web_bot_auth_signed_request(req, opts)
 
 
-@pytest.mark.parametrize("uri,kind,path", [
-    (f"https://{DOMAIN}/discard?query#fragment", "directory",
-     "/.well-known/http-message-signatures-directory"),
-    (f"https://{DOMAIN}/direct?query", "jwks_uri", "/direct?query"),
+@pytest.mark.parametrize("kind,path", [
+    ("directory", "/.well-known/http-message-signatures-directory"),
+    ("jwks_uri", "/direct?query"),
 ])
-def test_discovery_types_and_out_of_band(setup, uri, kind, path):
-    provider, _, verifier, req, opts, _, fetched = setup
-    from dnsid import WebBotAuthSigningOptions
+def test_discovery_types(setup, kind, path):
+    from dnsid.wba_signer import WebBotAuthConfig
 
-    req.headers.pop("signature-agent")
-    WBAHttpSigner(provider, DOMAIN).sign(
-        req, options=WebBotAuthSigningOptions(signature_agent=False)
-    )
+    provider, _, verifier, req, opts, _, fetched = setup
+    uri = f"https://{DOMAIN}" + (path if kind == "jwks_uri" else "")
+    WBAHttpSigner(provider, DOMAIN, config=WebBotAuthConfig(
+        signature_agent_uri=uri, signature_agent_type=kind,
+    )).sign(req)
     opts.discovery_uri, opts.discovery_type = uri, kind
     verifier.verify_web_bot_auth_signed_request(req, opts)
     assert fetched == [f"https://{DOMAIN}{path}"]
 
 
-@pytest.mark.parametrize("location", ["http://agent.example.com/", "https://127.0.0.1/",
-                                        "https://other.example/", "https://localhost/"])
-def test_unsafe_redirects(setup, location):
-    _, resolver, _, req, opts, _, _ = setup
-    transport = httpx.MockTransport(lambda request: httpx.Response(302, headers={"location": location}))
-    verifier = WBAHttpVerifier(resolver, transport=transport)
-    with pytest.raises(VerificationError):
+@pytest.mark.parametrize("trusted_uri", ["", f"https://{DOMAIN}"])
+def test_missing_signature_agent_rejects_before_discovery(setup, trusted_uri):
+    provider, resolver, verifier, req, opts, _, fetched = setup
+    params = SignatureParams.parse(req.get_header("signature-input"))
+    params.components.remove('signature-agent;key="bot2"')
+    req.headers.pop("signature-agent")
+    req.set_header("signature-input", params.serialize())
+    req.set_header("signature", "bot2=:" + b64_std_encode(
+        provider.sign(_build_signature_base(req, params))
+    ) + ":")
+    opts.discovery_uri = trusted_uri
+    with pytest.raises(VerificationError, match="missing required Signature-Agent"):
         verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert fetched == []
+    resolver.verify_domain.assert_not_called()
+
+
+def test_intermediary_relabels_signature_without_relabeling_discovery(setup):
+    _, _, verifier, req, opts, _, _ = setup
+    for field in ("signature", "signature-input"):
+        req.set_header(field, req.get_header(field).replace("bot2=", "relay=", 1))
+    verifier.verify_web_bot_auth_signed_request(req, opts)
+
+
+def test_trusted_discovery_uri_constrains_signed_member(setup):
+    _, resolver, verifier, req, opts, _, fetched = setup
+    opts.discovery_uri = f"https://{DOMAIN}:8443"
+    with pytest.raises(VerificationError, match="trusted discovery URI"):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert fetched == []
+    resolver.verify_domain.assert_not_called()
+
+
+@pytest.mark.parametrize("location", [f"https://{DOMAIN}/next", "/next",
+                                        "http://agent.example.com/", "https://127.0.0.1/",
+                                        "https://other.example/", "https://localhost/"])
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_redirects_rejected_without_following(setup, location, status):
+    _, resolver, _, req, opts, _, _ = setup
+    handler = MagicMock(side_effect=lambda request: httpx.Response(
+        status, headers={"location": location},
+    ))
+    verifier = WBAHttpVerifier(resolver, transport=httpx.MockTransport(handler))
+    with pytest.raises(VerificationError, match="status 200") as error:
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert not error.value.transient
+    handler.assert_called_once()
+    resolver.verify_domain.assert_not_called()
 
 
 def test_default_transport_rejects_private_resolution(setup, monkeypatch):
@@ -272,12 +335,22 @@ def test_default_transport_rejects_private_resolution(setup, monkeypatch):
     '"http://agent.example.com";type=directory',
     '"https://other.example";type=directory',
     '"https://agent.example.com";type=unknown',
+    '"https://agent.example.com";type=cimd',
     '"https://agent.example.com";type="directory"',
     '"https://user@agent.example.com";type=directory',
     '"https://[";type=directory',
+    f'"https://{DOMAIN}/";type=directory',
+    f'"https://{DOMAIN}/custom";type=directory',
+    f'"https://{DOMAIN}?keys=1";type=directory',
+    f'"https://{DOMAIN}#keys";type=directory',
+    f'"https://{DOMAIN}?";type=directory',
+    f'"https://{DOMAIN}#";type=directory',
+    f'"https://{DOMAIN}:443";type=directory',
+    f'"https://{DOMAIN.upper()}";type=directory',
 ])
 def test_rejects_untrusted_signature_agent(setup, member):
-    provider, _, verifier, req, opts, _, _ = setup
+    provider, resolver, verifier, req, opts, _, fetched = setup
+    opts.discovery_uri = f"https://{DOMAIN}"
     req.set_header("signature-agent", "bot2=" + member)
     params = SignatureParams.parse(req.get_header("signature-input"))
     req.set_header("signature", "bot2=:" + b64_std_encode(
@@ -285,6 +358,8 @@ def test_rejects_untrusted_signature_agent(setup, member):
     ) + ":")
     with pytest.raises(VerificationError):
         verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert fetched == []
+    resolver.verify_domain.assert_not_called()
 
 
 def test_absent_discovery_type_defaults_to_directory(setup):
@@ -405,32 +480,12 @@ def test_invalid_discovery_host_returns_verification_error(setup, uri):
     resolver.verify_domain.assert_not_called()
 
 
-@pytest.mark.parametrize("uri,out_of_band", [
-    (f"https://{DOMAIN}.", False),
-    (f"https://{DOMAIN}.", True),
-    ("https://münchen.example", True),
-])
-def test_discovery_host_normalization(setup, uri, out_of_band):
-    from urllib.parse import urlsplit
-
-    from dnsid import WebBotAuthSigningOptions
-    from dnsid._utils import normalize_fqdn
-
+def test_discovery_host_normalization(setup):
     provider, resolver, verifier, req, opts, _, fetched = setup
-    domain = normalize_fqdn(urlsplit(uri).hostname)
-    resolver.verify_domain.return_value.domain = opts.signer_domain = domain
-    if out_of_band:
-        # Structured Fields Strings are ASCII; IDNA U-labels are tested out of band.
-        req.headers.pop("signature-agent")
-        WBAHttpSigner(provider, domain).sign(
-            req, options=WebBotAuthSigningOptions(signature_agent=False)
-        )
-        opts.discovery_uri = uri
-    else:
-        WBAHttpSigner(provider, domain, signature_agent=uri).sign(req)
+    WBAHttpSigner(provider, DOMAIN, signature_agent=f"https://{DOMAIN}.").sign(req)
     verifier.verify_web_bot_auth_signed_request(req, opts)
     assert len(fetched) == 1
-    resolver.verify_domain.assert_called_once_with(domain, peer_cert=None)
+    resolver.verify_domain.assert_called_once_with(DOMAIN, peer_cert=None)
 
 
 def test_injected_transport_remains_open_on_reuse_concurrency_and_failure(setup, monkeypatch):

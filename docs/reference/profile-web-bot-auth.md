@@ -245,11 +245,11 @@ checked by the verifier, not a property of the signature bytes.
 
 **Returns:**
 
-- `HttpRequest` — The same request, with Signature-Input, Signature, and (when enabled) Signature-Agent headers set.
+- `HttpRequest` — The same request, with Signature-Input, Signature, and Signature-Agent set.
 
 **Raises:**
 
-- `ArgumentError`: If the TTL is invalid, the key is not Ed25519, or an additional component is unsupported.
+- `ArgumentError`: If the TTL is invalid, Signature-Agent is disabled, the key is not Ed25519, or an additional component is unsupported. Nested signing is not supported because signature fields are replaced.
 
 ## `WBAHttpVerifier`
 
@@ -262,11 +262,14 @@ Verify DNSid WBA requests and their signed directories.
 Construction needs no local identity or signing key. The default transport
 validates Web PKI and pins connections to public DNS addresses. An injected
 transport is trusted infrastructure and MUST enforce the same constraints,
-including on redirects and every connection; it must honor remaining_seconds().
+on every connection, reject redirects, and honor remaining_seconds().
 Injected transports must preserve uncoded response bytes and fields, without
 transparent decompression. This verifier does not cache directories; injected
 transports must not reuse evidence without enforcing its original HTTP age
-and freshness deadline, even when Date/Age fields are absent.
+and freshness deadline, even when Date/Age fields are absent. Cache attribution
+must bind the normalized resolved URL and thumbprint within the policy context.
+Newer proofs replace older keys by signed created time; failed refreshes must
+not evict evidence, extend freshness, or permit stale success.
 The default secure transport and its connection pool are reused until close().
 Call close() after all verification operations finish. Injected transports
 remain caller-owned and must support concurrent use when the verifier is
@@ -274,7 +277,7 @@ shared. The caller manages their initialization and closure.
 
 Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
 limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
-depth 16, 16 signatures, and five same-host HTTPS redirects. Responses with
+depth 16, and 16 signatures. Redirects are rejected. Responses with
 any Content-Encoding field are rejected before reading. The complete
 operation has a default 30-second cooperative deadline.
 
@@ -329,8 +332,10 @@ from dnsid import WebBotAuthVerificationOptions
 Trusted per-invocation WBA policy.
 
 Without ``signer_domain``, discovery can identify the signer only when
-``allow_signature_agent_domain`` is explicitly enabled. Discovery and
-redirects must remain on that signer's host; delegation is not supported.
+``allow_signature_agent_domain`` is explicitly enabled. Discovery must remain
+on that signer's host; redirects and delegation are not supported.
+``discovery_uri``, when supplied, constrains the signed discovery URL; it
+cannot replace the required covered Signature-Agent member.
 
 ``required_components`` adds application coverage requirements, defaulting
 to none. Equality compares component names and parameter values. Malformed
@@ -376,6 +381,8 @@ WBA profile configuration (design doc 10 §Profile Configuration).
 
 TTLs require integral seconds from 1 through 300. Clock skew must be finite
 and non-negative. Boolean and non-numeric duration values are rejected.
+Signature-Agent is mandatory; its compatibility flag cannot disable it.
+Directory discovery requires an ASCII HTTPS origin without a trailing slash.
 
 ## `WebBotAuthSigningOptions`
 

@@ -1,4 +1,4 @@
-"""DNSid WBA request verification for the revision-00 WBA drafts.
+"""DNSid WBA verification for draft-ietf-webbotauth-httpsig-protocol-00.
 
 Directory self-signatures are never a substitute for DNSid verification and
 configured entity acceptance. No directory evidence is cached. Without a replay
@@ -14,7 +14,7 @@ import ssl
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, NoReturn, cast
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 import http_sf
 import httpx
@@ -48,6 +48,7 @@ from .wba_signer import (
     WBA_DIRECTORY_WELL_KNOWN_PATH,
     WBA_TAG,
     WebBotAuthConfig,
+    _is_https_origin,
 )
 
 
@@ -56,8 +57,10 @@ class WebBotAuthVerificationOptions:
     """Trusted per-invocation WBA policy.
 
     Without ``signer_domain``, discovery can identify the signer only when
-    ``allow_signature_agent_domain`` is explicitly enabled. Discovery and
-    redirects must remain on that signer's host; delegation is not supported.
+    ``allow_signature_agent_domain`` is explicitly enabled. Discovery must remain
+    on that signer's host; redirects and delegation are not supported.
+    ``discovery_uri``, when supplied, constrains the signed discovery URL; it
+    cannot replace the required covered Signature-Agent member.
 
     ``required_components`` adds application coverage requirements, defaulting
     to none. Equality compares component names and parameter values. Malformed
@@ -109,12 +112,12 @@ def _signatures(message: HttpRequest, tag: str) -> list[tuple[SignatureParams, b
             if label in raw and item.tag == tag]
 
 
-def _check_time(params: SignatureParams, skew: int | float) -> None:
+def _check_time(params: SignatureParams, skew: int | float, *, directory: bool = False) -> None:
     now = _now().timestamp()
     if (
         type(params.created) is not int or type(params.expires) is not int
         or not 0 <= params.expires - params.created <= 300
-        or params.created > now + skew or now > params.expires + skew
+        or params.created > now + (0 if directory else skew) or now > params.expires + skew
         or params.alg != "ed25519"
         or not re.fullmatch(r"[A-Za-z0-9_-]{43}", params.key_id)
         or b64url_encode(b64url_decode(params.key_id)) != params.key_id
@@ -130,7 +133,9 @@ def _directory_url(uri: str, discovery_type: str) -> str:
     except (ValueError, ValidationError) as exc:
         raise VerificationError(VerificationCode.TLS_ERROR, "invalid discovery URI") from exc
     if discovery_type == "directory":
-        uri = urlunsplit((parsed.scheme, parsed.netloc, WBA_DIRECTORY_WELL_KNOWN_PATH, "", ""))
+        if not _is_https_origin(uri):
+            _reject("Signature-Agent directory URI must be an ASCII HTTPS origin")
+        uri += WBA_DIRECTORY_WELL_KNOWN_PATH
     elif discovery_type != "jwks_uri":
         _reject("unsupported Signature-Agent discovery type")
     # Validate the original credentials too, including an empty username.
@@ -187,11 +192,14 @@ class WBAHttpVerifier:
     Construction needs no local identity or signing key. The default transport
     validates Web PKI and pins connections to public DNS addresses. An injected
     transport is trusted infrastructure and MUST enforce the same constraints,
-    including on redirects and every connection; it must honor remaining_seconds().
+    on every connection, reject redirects, and honor remaining_seconds().
     Injected transports must preserve uncoded response bytes and fields, without
     transparent decompression. This verifier does not cache directories; injected
     transports must not reuse evidence without enforcing its original HTTP age
-    and freshness deadline, even when Date/Age fields are absent.
+    and freshness deadline, even when Date/Age fields are absent. Cache attribution
+    must bind the normalized resolved URL and thumbprint within the policy context.
+    Newer proofs replace older keys by signed created time; failed refreshes must
+    not evict evidence, extend freshness, or permit stale success.
     The default secure transport and its connection pool are reused until close().
     Call close() after all verification operations finish. Injected transports
     remain caller-owned and must support concurrent use when the verifier is
@@ -199,7 +207,7 @@ class WBAHttpVerifier:
 
     Requests are buffered: hosts must enforce the 8 MiB body and 64 KiB header
     limits while reading. Directory reads are limited to 1 MiB, 32 keys, JSON
-    depth 16, 16 signatures, and five same-host HTTPS redirects. Responses with
+    depth 16, and 16 signatures. Redirects are rejected. Responses with
     any Content-Encoding field are rejected before reading. The complete
     operation has a default 30-second cooperative deadline.
     """
@@ -277,33 +285,29 @@ class WBAHttpVerifier:
             _reject("WBA request missing required component coverage")
         _check_content_digest(req, params)
         request_base = _build_signature_base(req, params)
-        uri, discovery_type = opts.discovery_uri, opts.discovery_type
-        if req.has_header("signature-agent"):
-            selected = []
-            for component in params.components:
-                name, parameters = _parse_component_identifier(component)
-                if name == "signature-agent" and set(dict(parameters)) == {"key"}:
-                    selected.append(dict(parameters)["key"])
-            if len(selected) != 1:
-                _reject("Signature-Agent requires exactly one covered member")
-            try:
-                member = _parse_sf_dictionary(req.get_header("signature-agent"))[selected[0]]
-                value, attributes = member
-                if type(value) is not str:
-                    raise ValueError("URI must be a String")
-                kind = attributes.get("type", http_sf.Token("directory"))
-                if not isinstance(kind, http_sf.Token):
-                    raise ValueError("type must be a Token")
-                uri, discovery_type = value, str(kind)
-            except (ValueError, KeyError, TypeError) as exc:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID, "invalid Signature-Agent member"
-                ) from exc
-        if not uri:
-            if not opts.signer_domain:
-                _reject("trusted signer and discovery policy required")
-            uri = f"https://{opts.signer_domain}"
-        url = _directory_url(uri, discovery_type)
+        if not req.has_header("signature-agent"):
+            _reject("missing required Signature-Agent")
+        selected = []
+        for component in params.components:
+            name, parameters = _parse_component_identifier(component)
+            if name == "signature-agent" and set(dict(parameters)) == {"key"}:
+                selected.append(dict(parameters)["key"])
+        if len(selected) != 1:
+            _reject("Signature-Agent requires exactly one covered member")
+        try:
+            value, attributes = _parse_sf_dictionary(req.get_header("signature-agent"))[selected[0]]
+            if type(value) is not str:
+                raise ValueError("URI must be a String")
+            kind = attributes.get("type", http_sf.Token("directory"))
+            if not isinstance(kind, http_sf.Token):
+                raise ValueError("type must be a Token")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise VerificationError(
+                VerificationCode.RECORD_INVALID, "invalid Signature-Agent member"
+            ) from exc
+        url = _directory_url(value, str(kind))
+        if opts.discovery_uri and url != _directory_url(opts.discovery_uri, opts.discovery_type):
+            _reject("Signature-Agent does not match trusted discovery URI")
         host = normalize_fqdn(urlsplit(url).hostname or "")
         if not opts.signer_domain and not opts.allow_signature_agent_domain:
             _reject("Signature-Agent signer discovery is not permitted")
@@ -353,7 +357,7 @@ class WBAHttpVerifier:
         if len(directory_candidates) != 1:
             _reject("expected exactly one matching directory signature")
         directory_params, directory_signature = directory_candidates[0]
-        _check_time(directory_params, self._config.clock_skew)
+        _check_time(directory_params, self._config.clock_skew, directory=True)
         required = {"@authority;req", "content-type", "cache-control", "content-digest"}
         if not required.issubset(directory_params.components):
             _reject("directory signature missing required coverage")
@@ -396,7 +400,7 @@ class WBAHttpVerifier:
     ) -> None:
         remaining_seconds()
         _check_time(params, self._config.clock_skew)
-        _check_time(directory, self._config.clock_skew)
+        _check_time(directory, self._config.clock_skew, directory=True)
         # VerifyDomain acquired this invocation's evidence; zero DNS TTL forbids
         # later reuse, not completion of this operation. TLS and ka still apply.
         verified._require_fresh_evidence(_now(), fresh_dns_lookup=True)
@@ -405,35 +409,29 @@ class WBAHttpVerifier:
         transport = _BorrowedTransport(self._transport)
         try:
             with httpx.Client(transport=transport, trust_env=False) as client:
-                for _ in range(6):
-                    _assert_same_host_https_redirect(url, domain)
-                    with client.stream(
-                        "GET", url, headers={"Accept-Encoding": "identity"},
-                        follow_redirects=False, timeout=remaining_seconds(10)
-                    ) as response:
-                        if response.is_redirect:
-                            url = urljoin(url, response.headers.get("location", ""))
-                            continue
-                        if response.status_code != 200:
-                            raise VerificationError(
-                                VerificationCode.TLS_ERROR,
-                                "directory response must have status 200, "
-                                f"got {response.status_code}",
-                                transient=(
-                                    response.status_code >= 500 or response.status_code == 429
-                                ),
-                            )
-                        if "content-encoding" in response.headers:
-                            _reject("compressed directory responses are forbidden")
-                        body = _read_limited(
-                            response, 1024 * 1024, VerificationCode.RECORD_INVALID,
-                            "directory response size exceeded", decode_content=False,
+                _assert_same_host_https_redirect(url, domain)
+                with client.stream(
+                    "GET", url, headers={"Accept-Encoding": "identity"},
+                    follow_redirects=False, timeout=remaining_seconds(10)
+                ) as response:
+                    if response.status_code != 200:
+                        raise VerificationError(
+                            VerificationCode.TLS_ERROR,
+                            "directory response must have status 200, "
+                            f"got {response.status_code}",
+                            transient=(response.status_code >= 500 or response.status_code == 429),
                         )
-                        return (
-                            HttpRequest(method="GET", url=str(response.request.url)),
-                            HttpRequest(method="GET", url=url, headers=dict(response.headers),
-                                        body=body, status=response.status_code),
-                        )
+                    if "content-encoding" in response.headers:
+                        _reject("compressed directory responses are forbidden")
+                    body = _read_limited(
+                        response, 1024 * 1024, VerificationCode.RECORD_INVALID,
+                        "directory response size exceeded", decode_content=False,
+                    )
+                    return (
+                        HttpRequest(method="GET", url=str(response.request.url)),
+                        HttpRequest(method="GET", url=url, headers=dict(response.headers),
+                                    body=body, status=response.status_code),
+                    )
         except httpx.TransportError as exc:
             permanent = SSRF_BLOCK_MARKER in str(exc) or isinstance(exc, httpx.ProtocolError)
             cause: BaseException | None = exc
@@ -444,4 +442,3 @@ class WBAHttpVerifier:
             raise VerificationError(
                 VerificationCode.TLS_ERROR, "directory fetch failed", transient=not permanent,
             ) from exc
-        _reject("directory redirect limit exceeded")
