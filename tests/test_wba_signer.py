@@ -116,13 +116,14 @@ def test_ttl_override_via_options():
     assert params.expires == params.created + 120
 
 
-def test_signature_agent_suppressed_via_options():
+def test_signature_agent_cannot_be_suppressed():
     signer, req = _signer(), _req()
-    signer.sign(req, options=WebBotAuthSigningOptions(signature_agent=False))
-    assert req.get_header("signature-agent") == ""
-    params = SignatureParams.parse(req.get_header("signature-input"))
-    assert all(not c.startswith("signature-agent") for c in params.components)
-    assert _sig_valid(signer, req)
+    before = req.headers.copy()
+    with pytest.raises(ArgumentError, match="requires Signature-Agent"):
+        signer.sign(req, options=WebBotAuthSigningOptions(signature_agent=False))
+    assert req.headers == before
+    with pytest.raises(ArgumentError, match="requires Signature-Agent"):
+        WebBotAuthConfig(include_signature_agent=False)
 
 
 def test_preserves_other_signature_agent_members():
@@ -150,6 +151,14 @@ def test_unknown_additional_component_rejected():
     signer, req = _signer(), _req()
     with pytest.raises(ArgumentError, match="unknown signature component"):
         signer.sign(req, options=WebBotAuthSigningOptions(additional_components=["Bad-Header"]))
+
+
+@pytest.mark.parametrize("component", ['signature;key="inner"', 'signature-input;key="inner"'])
+def test_nested_signing_is_not_supported(component):
+    signer, req = _signer(), _req()
+    signer.sign(req)
+    with pytest.raises(ArgumentError, match="nested signing"):
+        signer.sign(req, options=WebBotAuthSigningOptions(additional_components=[component]))
 
 
 def test_directory_response_is_signed_and_typed():
@@ -203,15 +212,16 @@ def test_signature_agent_must_be_https_uri():
         WBAHttpSigner(LocalKeyProvider.generate(), DOMAIN, signature_agent=DOMAIN)
 
 
-def test_directory_discovery_emits_origin_and_explicit_type():
+@pytest.mark.parametrize("origin", ["https://bots.example", "https://bots.example:8443"])
+def test_directory_discovery_emits_origin_and_explicit_type(origin):
     signer = WBAHttpSigner(
         LocalKeyProvider.generate(),
         DOMAIN,
-        config=WebBotAuthConfig(directory_url="https://bots.example/dir"),
+        config=WebBotAuthConfig(directory_url=origin),
     )
     req = _req()
     signer.sign(req)
-    assert req.get_header("signature-agent") == 'sig1="https://bots.example";type=directory'
+    assert req.get_header("signature-agent") == f'sig1="{origin}";type=directory'
 
 
 def test_jwks_uri_discovery_keeps_direct_endpoint():

@@ -213,9 +213,10 @@ directory endpoint's certificate is not a substitute. Reuse the verifier across
 requests to reuse its secure connection pool, then call `close()` at shutdown
 once in-flight verifications finish. Injected transports remain caller-owned.
 
-Discovery uses public-address-only HTTPS and same-host redirects. The complete
-operation has a default 30-second deadline; `timeout` can lower it. Directory
-responses are not cached. For one-time semantics, supply an atomic `replay_policy`
+Discovery uses public-address-only HTTPS and rejects all redirects, including
+same-host redirects. The complete operation has a default 30-second deadline;
+`timeout` can lower it. Directory responses are not cached. For one-time semantics,
+supply an atomic `replay_policy`
 callback (see the [API reference](https://docs.dnsid.ai/reference/py/profile-web-bot-auth/)).
 Without it, time validity limits reuse but does not detect it. Applications must
 decide whether the covered components are sufficient: WBA requires `@authority`,
@@ -228,8 +229,16 @@ Directories must be uncoded; any `Content-Encoding` field is rejected before
 reading. Injected discovery transports must preserve bytes and enforce HTTPS,
 public-address routing, and original HTTP freshness if they reuse evidence.
 
-This is the narrower DNSid WBA profile targeting protocol and directory draft
-revision `00`, not a claim of general WBA or partner interoperability.
+This is the narrower DNSid WBA profile targeting published
+`draft-ietf-webbotauth-httpsig-protocol-00`, including its directory format,
+not a claim of general WBA or partner interoperability. A covered `Signature-Agent`
+is mandatory, even with trusted caller discovery. Compatibility flags
+`include_signature_agent=False` and `signature_agent=False` now raise `ArgumentError`.
+For `directory`, configure an ASCII HTTPS origin without a path (including `/`),
+query, fragment, or credentials; use `jwks_uri` for a direct endpoint. Directory
+signatures cannot have future `created` timestamps, even within clock skew.
+Nested signing is unsupported. Only the current DNSid operational key is accepted;
+rotation can invalidate outstanding old-key requests without an overlap period.
 
 ### JWT bot bearer authentication
 
