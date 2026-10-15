@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.serialization import (
 
 from ._crypto import ec_sign, ed25519_sign, jwk_from_dict
 from ._utils import b64url_decode, b64url_encode
-from .exceptions import ArgumentError
+from .exceptions import ArgumentError, NoActiveSigningKeyError
 from .interfaces import KeyProvider
 from .models import JWK
 
@@ -490,9 +490,9 @@ class LocalKeyProvider(KeyProvider):
     # ---- KeyProvider runtime methods ----
 
     def signing_key(self) -> JWK:
-        """Return the public JWK of the current active signing key."""
+        """Return the active public JWK; raise NoActiveSigningKeyError if absent."""
         if self._store.active is None:
-            raise ArgumentError("provider has no active signing key")
+            raise NoActiveSigningKeyError("provider has no active signing key")
         return self._store.active.public_jwk()
 
     def jwk(self, kid: str) -> JWK:

@@ -97,6 +97,10 @@ Return the JWK of the current active signing key (public side only).
 The returned kid MUST NOT contain '#' because application-layer helpers
 encode key IDs as '{domain}#{kid}'.
 
+**Raises:**
+
+- `NoActiveSigningKeyError`: If provider state has no active key. Key-access failures must use a different error.
+
 ### `jwk`
 
 ```python
@@ -142,6 +146,18 @@ Sign *payload* with a specified active or pending key.
 Used for rotation authorization and proof of possession, where the
 signing key is not (yet) the active key.  Providers that cannot
 address keys by kid may leave this unimplemented.
+
+### `generation_algorithm`
+
+```python
+KeyProvider.generation_algorithm() -> str
+```
+
+Return the JOSE algorithm used by generate_key without generating.
+
+Defaults to the active key algorithm. Providers with independent
+generation settings must override this method, including those that
+generate without an active key.
 
 ### `generate_key`
 

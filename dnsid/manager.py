@@ -47,7 +47,12 @@ from ._utils import (
     normalize_fqdn,
 )
 from .enums import DNSSECMode, DNSSECState, EventType, LogSignerRole, VerificationCode
-from .exceptions import ArgumentError, ValidationError, VerificationError
+from .exceptions import (
+    ArgumentError,
+    NoActiveSigningKeyError,
+    ValidationError,
+    VerificationError,
+)
 from .interfaces import (
     DNSResolver,
     HTTPSFetcher,
@@ -771,7 +776,7 @@ class IdentityManager:
         selected_algorithm = (
             previous_key.signature_alg() if target_algorithm is None else target_algorithm
         )
-        if target.signing_key().signature_alg() != selected_algorithm:
+        if target.generation_algorithm() != selected_algorithm:
             raise ArgumentError("target provider is not configured for the selected algorithm")
         new_kid = target.generate_key()
         new_key = target.jwk(new_kid)
@@ -1213,13 +1218,17 @@ class IdentityManager:
 
     def _validate_rotation_keys(
         self, rotation: KeyRotationResult, previous: KeyProvider, target: KeyProvider
-    ) -> None:
+    ) -> bool:
         new_key = target.jwk(rotation.new_kid)
         if new_key.kid != rotation.new_kid or new_key.thumbprint() != rotation.new_thumbprint:
             raise ValidationError("target key does not match persisted rotation")
-        active_target = target.signing_key()
+        try:
+            active_target = target.signing_key()
+        except NoActiveSigningKeyError:
+            active_target = None
         target_is_active = (
-            active_target.kid == rotation.new_kid
+            active_target is not None
+            and active_target.kid == rotation.new_kid
             and active_target.thumbprint() == rotation.new_thumbprint
         )
         accepted = rotation.submission is not None and rotation.submission.accepted
@@ -1236,23 +1245,23 @@ class IdentityManager:
                 raise ValidationError("previous provider key changed")
             active_source = previous.signing_key()
             if previous is target and accepted and target_is_active:
-                return
+                return target_is_active
             if (
                 active_source.kid != rotation.previous_kid
                 or active_source.thumbprint() != rotation.previous_thumbprint
             ):
                 raise ValidationError("active source key does not match persisted previous key")
-            return
+            return target_is_active
         if not accepted or not target_is_active:
             raise ValidationError("absent previous key requires saved acceptance and active target")
         if previous is not target:
             try:
                 previous.signing_key()
-            except ArgumentError:
-                if previous.list_key_ids():
-                    raise ValidationError("source provider key is unavailable") from None
+            except NoActiveSigningKeyError:
+                pass
             else:
                 raise ValidationError("superseded source provider still has an active key")
+        return target_is_active
 
     def _rotation_publication(self, rotation: KeyRotationResult) -> str:
         self.evict_domain(rotation.domain)
@@ -1269,8 +1278,7 @@ class IdentityManager:
     def _reconcile_rotation_keys(
         self, rotation: KeyRotationResult, previous: KeyProvider, target: KeyProvider
     ) -> None:
-        self._validate_rotation_keys(rotation, previous, target)
-        if target.signing_key().kid != rotation.new_kid:
+        if not self._validate_rotation_keys(rotation, previous, target):
             target.activate(rotation.new_kid)
         if rotation.previous_kid in previous.list_key_ids():
             if previous.jwk(rotation.previous_kid).thumbprint() != rotation.previous_thumbprint:
