@@ -35,11 +35,13 @@ The transparency-log integration is the exception: import it from
 Use `await manager.async_verify_domain(domain)` and
 `await http_signer.async_verify_signed_http_request(request)` in async code.
 Fresh cache hits, shared waits, and default stale-status refreshes need no worker
-threads. Status refreshes use native async DNS and SSRF-safe HTTPS. Cold
-verification and injected synchronous HTTPS fetchers still use workers.
-Injected fetchers implementing `AsyncHTTPSFetcher` are awaited for stale-status
-refreshes. Optional `AsyncDNSResolver` and `AsyncLogReader` contracts prepare
-adapters for native async cold verification; that path is not implemented yet.
+threads. Async-led cold verification awaits native TXT, JWKS, status and C2SP
+reads, including bundles, tiles and recursive predecessors. Injected adapters
+may implement `AsyncDNSResolver`, `AsyncHTTPSFetcher` and `AsyncLogReader`
+alongside their synchronous methods. Sync-only adapters and atomic checkpoint
+stores use tracked workers. Sync-led work retains synchronous adapters in
+workers; both APIs share whichever evidence leader starts first. Injected
+resources remain caller-owned.
 Shared evidence has an independent 30-second budget. Cancellation or a request
 deadline stops only that caller's wait. Use `async with manager` or
 `await manager.aclose()` at shutdown to drain owned work and close resources.

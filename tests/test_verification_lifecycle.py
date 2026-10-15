@@ -32,6 +32,7 @@ async def verifier(ec_pair):
     with (
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
     ):
         async with manager:
             yield manager, resolver, counters, domain
@@ -136,7 +137,7 @@ async def test_status_deadline_errors_are_not_reclassified_as_unavailable(verifi
     if warm:
         manager.verify_domain(domain)
     failure = VerificationError(VerificationCode.DEADLINE_EXCEEDED, "status deadline", transient=True)
-    target = "dnsid.manager." + ("async_fetch_agent_status" if warm else "_fetch_strict_json_status")
+    target = "dnsid.manager.async_fetch_agent_status"
     with patch(target, side_effect=failure):
         with pytest.raises(VerificationError) as error:
             await manager.async_verify_domain(domain)
@@ -149,17 +150,19 @@ async def test_status_deadline_errors_are_not_reclassified_as_unavailable(verifi
 async def test_aclose_drains_cancelled_cold_work_and_rejects_new_calls(verifier, fails):
     manager, _, _, domain = verifier
     started, release = threading.Event(), threading.Event()
-    original = manager._verify_domain_uncached
+    original = manager._async_verify_domain_uncached
 
-    def cold(domain):
+    async def cold(domain):
         started.set()
-        assert release.wait(2)
+        assert await asyncio.to_thread(release.wait, 2)
         if fails:
             raise VerificationError(VerificationCode.DNS_RESOLUTION, "late failure", transient=True)
-        return original(domain)
+        return await original(domain)
 
     with (
-        patch.object(manager, "_verify_domain_uncached", side_effect=cold),
+        patch.object(manager, "_async_verify_domain_uncached", side_effect=cold),
+        patch("dnsid.manager.async_fetch_agent_status",
+              side_effect=lambda su, **kwargs: manager._fetch_status(su)),
         patch.object(manager._http_client, "close", wraps=manager._http_client.close) as close,
     ):
         call = asyncio.create_task(manager.async_verify_domain(domain))
@@ -240,9 +243,15 @@ async def test_aclose_drains_abandoned_status_branch_after_identity_failure(veri
         assert release.wait(2)
         remaining_seconds()
 
+    async def async_keys(*args, **kwargs):
+        return await manager._async_run_blocking(lambda: keys(*args, **kwargs))
+
+    async def async_status(*args, **kwargs):
+        return await manager._async_run_blocking(lambda: status(*args, **kwargs))
+
     with (
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch.object(manager, "_async_fetch_key_set", side_effect=async_keys),
+        patch.object(manager, "_async_fetch_status", side_effect=async_status),
     ):
         try:
             with pytest.raises(VerificationError) as error:
@@ -265,16 +274,20 @@ async def test_cancelled_zero_ttl_followup_worker_is_drained(verifier):
     resolver.records[f"_dnsid.{domain}"].ttl = 0
     resolver.started, resolver.release = threading.Event(), threading.Event()
     started, release = threading.Event(), threading.Event()
-    original, calls = manager._verify_domain_uncached, []
+    original, calls = manager._async_verify_domain_uncached, []
 
-    def cold(domain):
+    async def cold(domain):
         calls.append(domain)
         if len(calls) == 2:
             started.set()
-            assert release.wait(2)
-        return original(domain)
+            assert await asyncio.to_thread(release.wait, 2)
+        return await original(domain)
 
-    with patch.object(manager, "_verify_domain_uncached", side_effect=cold):
+    with (
+        patch.object(manager, "_async_verify_domain_uncached", side_effect=cold),
+        patch("dnsid.manager.async_fetch_agent_status",
+              side_effect=lambda su, **kwargs: manager._fetch_status(su)),
+    ):
         leader = asyncio.create_task(manager.async_verify_domain(domain))
         await _started(resolver.started)
         follower = asyncio.create_task(manager.async_verify_domain(domain))
@@ -319,9 +332,11 @@ def test_sync_context_exit_drains_work_after_a_wait_deadline(ec_pair):
 
 
 @pytest.mark.asyncio
-async def test_native_task_cancelled_before_start_does_not_leave_pending_future(verifier):
+@pytest.mark.parametrize("warm", [False, True])
+async def test_native_task_cancelled_before_start_does_not_leave_pending_future(verifier, warm):
     manager, _, _, domain = verifier
-    manager.verify_domain(domain)
+    if warm:
+        manager.verify_domain(domain)
     create_task = asyncio.create_task
 
     def cancelled(coroutine, **kwargs):
@@ -333,5 +348,6 @@ async def test_native_task_cancelled_before_start_does_not_leave_pending_future(
         with pytest.raises(asyncio.CancelledError):
             await manager.async_verify_domain(domain)
     assert not manager._status_futures
-    assert not manager._async_status_tasks
+    assert not manager._verification_futures
+    assert not manager._async_verification_tasks
     await manager.aclose()

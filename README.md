@@ -83,14 +83,13 @@ method or trust root; configure a matching reader (see the
 `await http_signer.async_verify_signed_http_request(request)` in middleware.
 Fresh identity-cache hits, coalesced waits, and default stale-status refreshes
 use no worker threads; policy and signature checks still run on every request.
-Status refreshes use native async DNS and SSRF-safe HTTPS. Cold verification
-and injected synchronous HTTPS fetchers still use workers. Injected fetchers
-that also implement `AsyncHTTPSFetcher` are awaited for stale-status refreshes;
-keep their synchronous methods for cold verification and synchronous callers.
-Injected resources remain caller-owned. The built-in C2SP reader also implements
-`AsyncLogReader`, with native bundle, tile and predecessor reads. Sync-only log
-adapters and atomic checkpoint-store operations use workers. The manager's cold
-pipeline has not yet switched to these async reader methods.
+Async-led cold verification uses native TXT, JWKS, status and C2SP bundle,
+tile and predecessor reads. Optional `AsyncDNSResolver`, `AsyncHTTPSFetcher`
+and `AsyncLogReader` capabilities are awaited; keep synchronous methods for
+synchronous callers. Sync-only adapters and atomic checkpoint-store operations
+use workers. Mixed sync/async calls share whichever evidence leader starts
+first; sync-led work retains synchronous adapters in workers.
+Injected resources remain caller-owned.
 Shared evidence has its own 30-second budget. Caller cancellation or deadlines
 stop only that caller's wait. Reuse one manager for the application lifetime;
 use `async with manager` or `await manager.aclose()` at shutdown to drain work

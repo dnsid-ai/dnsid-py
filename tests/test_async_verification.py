@@ -23,7 +23,16 @@ from tests.test_verification_coalescing import _manager_fixture
 @pytest.mark.parametrize("fails", [False, True])
 def test_shared_future_is_removed_before_notifying_waiters(ec_pair, fails):
     manager, _, _, domain, _, _, _ = _manager_fixture(ec_pair)
-    future = Future()
+    class PublishingFuture(Future):
+        def set_result(self, result):
+            assert self in manager._pending_verification_work()
+            super().set_result(result)
+
+        def set_exception(self, error):
+            assert self in manager._pending_verification_work()
+            super().set_exception(error)
+
+    future = PublishingFuture()
     pending = manager._verification_futures
     pending[domain] = future
     observed = []
@@ -50,7 +59,7 @@ async def _started(event):
 
 
 @pytest.mark.asyncio
-async def test_cold_calls_share_one_worker_and_hot_calls_need_none(ec_pair):
+async def test_cold_calls_share_work_and_hot_calls_need_no_workers(ec_pair):
     manager, resolver, counters, domain, keys, status, _ = _manager_fixture(ec_pair)
     resolver.started = threading.Event()
     resolver.release = threading.Event()
@@ -58,6 +67,8 @@ async def test_cold_calls_share_one_worker_and_hot_calls_need_none(ec_pair):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
+        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
         patch.object(manager._verification_executor, "submit",
                      wraps=manager._verification_executor.submit) as workers,
     ):
@@ -69,8 +80,9 @@ async def test_cold_calls_share_one_worker_and_hot_calls_need_none(ec_pair):
             resolver.release.set()
         results = await asyncio.gather(*calls)
         assert all(result is results[0] for result in results)
+        cold_workers = workers.call_count
         assert await manager.async_verify_domain(domain) is results[0]
-        assert workers.call_count == 1
+        assert workers.call_count == cold_workers
     assert counters == Counter(dns=1, ek=1, ku=1, status=1, bilateral=1, continuity=1)
 
 
@@ -84,6 +96,8 @@ async def test_cancellation_does_not_cancel_shared_evidence(ec_pair, cancel_lead
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
+        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
     ):
         leader = asyncio.create_task(manager.async_verify_domain(domain))
         await _started(resolver.started)
@@ -111,6 +125,8 @@ async def test_waiter_deadline_does_not_cancel_sync_leader(ec_pair):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
+        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
     ):
         leader = asyncio.create_task(asyncio.to_thread(manager.verify_domain, domain))
         await _started(resolver.started)
@@ -132,6 +148,8 @@ async def test_failed_verification_can_retry(ec_pair):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
+        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
     ):
         with pytest.raises(VerificationError, match="failed"):
             await manager.async_verify_domain(domain)
@@ -149,6 +167,8 @@ async def test_executor_rejection_can_retry(ec_pair, warm):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
+        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
     ):
         if warm:
             await manager.async_verify_domain(domain)
@@ -180,7 +200,7 @@ async def test_cancelled_waiters_observe_late_worker_failure(ec_pair):
 
     with (
         manager,
-        patch.object(manager, "_verify_domain_uncached", side_effect=fail),
+        patch.object(manager._dns_resolver, "fetch_txt", side_effect=fail),
         patch.object(loop, "call_exception_handler", side_effect=notices.append),
     ):
         leader = asyncio.create_task(manager.async_verify_domain(domain))
@@ -212,6 +232,7 @@ async def test_stale_status_refreshes(ec_pair):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
         patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
     ):
         await manager.async_verify_domain(domain)
@@ -228,6 +249,8 @@ async def test_hot_cache_enforces_mtls_and_acceptance(ec_pair):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
+        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
     ):
         await manager.async_verify_domain(domain, peer_cert=cert)
         with pytest.raises(VerificationError):
@@ -346,6 +369,8 @@ async def test_zero_ttl_requires_each_call_to_fetch_dns(ec_pair):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
+        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
     ):
         await manager.async_verify_domain(domain)
         await manager.async_verify_domain(domain)

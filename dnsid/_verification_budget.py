@@ -185,6 +185,59 @@ def run_concurrently(primary: Callable[[], T], secondary: Callable[[], U]) -> tu
     return primary_result, wait_for_verification(future)
 
 
+async def async_run_concurrently(
+    primary: Callable[[], Awaitable[T]], secondary: Callable[[], Awaitable[U]],
+) -> tuple[T, U]:
+    """Await native branches with the same failure precedence and worker cancellation."""
+    cancel = threading.Event()
+    tasks: list[asyncio.Task[Any]] = []
+    cancelled: asyncio.CancelledError | None = None
+
+    async def guarded(work: Callable[[], Awaitable[Any]]) -> Any:
+        try:
+            with verification_budget(cancelled=cancel):
+                return await work()
+        except BaseException:
+            cancel.set()
+            raise
+
+    try:
+        for work in (primary, secondary):
+            coroutine = guarded(work)
+            try:
+                tasks.append(asyncio.create_task(coroutine))
+            except BaseException:
+                coroutine.close()
+                raise
+        pending = set(tasks)
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if any(task.cancelled() or task.exception() is not None for task in done):
+                break
+    except asyncio.CancelledError as exc:
+        cancelled = exc
+    finally:
+        for task in tasks:
+            if not task.done():
+                cancel.set()
+                task.cancel()
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError as exc:
+            cancelled = exc
+    # Preserve settled nested failures even when a sibling cancelled their parent.
+    errors = [asyncio.CancelledError() if task.cancelled() else task.exception() for task in tasks]
+    for error in errors:
+        if error is not None and not isinstance(error, (BudgetExhausted, asyncio.CancelledError)):
+            raise error
+    if cancelled is not None:
+        raise cancelled
+    for error in errors:
+        if error is not None:
+            raise error
+    return tasks[0].result(), tasks[1].result()
+
+
 def bounded_http_timeout(timeout: float | httpx.Timeout | None = None) -> httpx.Timeout:
     """Clamp every HTTP phase to the remaining invocation budget."""
     value = httpx.Timeout(timeout) if timeout is not None else httpx.Timeout(10.0)
