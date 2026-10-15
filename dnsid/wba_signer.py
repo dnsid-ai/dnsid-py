@@ -85,7 +85,8 @@ def _wba_identifier(uri: str) -> str:
         ) else match[0].upper()
 
     uri = re.sub(r"%[0-9a-fA-F]{2}", normalize_escape, uri)
-    return str(httpx.URL(uri).copy_with(query=None, fragment=None))
+    url = httpx.URL(uri).copy_with(query=None, fragment=None)
+    return str(url.copy_with(raw_path=url.raw_path or b"/"))
 
 
 @dataclass
@@ -252,6 +253,7 @@ class WBAHttpSigner:
         Raises:
             ArgumentError: If the TTL is invalid, Signature-Agent is disabled,
                 the key is not Ed25519, or an additional component is unsupported.
+                Also raised if the signing key changes during signing.
                 Nested signing is not supported because signature fields are replaced.
         """
         import hashlib
@@ -265,7 +267,7 @@ class WBAHttpSigner:
         ttl = opts.ttl if opts.ttl is not None else self._expires_in
         _validate_ttl(ttl)
         ttl = int(ttl)
-        signing_key = self._key_provider.signing_key()
+        signing_key = JWK.from_dict(self._key_provider.signing_key().to_dict())
         signing_alg = signing_key.signature_alg()
         if signing_alg != "EdDSA":
             raise ArgumentError("Web Bot Auth signing requires Ed25519")
@@ -328,6 +330,8 @@ class WBAHttpSigner:
             sig_bytes = LocalKeyProvider.generate().sign(sig_base)
         else:
             sig_bytes = self._key_provider.sign(sig_base)
+            if not signing_key.verify(sig_base, sig_bytes):
+                raise ArgumentError("Web Bot Auth signing key changed during signing")
 
         req.set_header("signature-input", params.serialize())
         req.set_header("signature", f"{self._label}=:{b64_std_encode(sig_bytes)}:")
@@ -425,13 +429,14 @@ def serve_http_message_signatures_directory(
         A WBADirectoryResponse with status, headers, and JWKS body.
 
     Raises:
-        ArgumentError: If the key is not Ed25519 or the signature expires during signing.
+        ArgumentError: If the key is not Ed25519, changes during signing, or the
+            signature expires during signing.
     """
     import hashlib
     import json
 
     cfg = replace(config) if config is not None else WebBotAuthConfig()
-    signing_key = key_provider.signing_key()
+    signing_key = JWK.from_dict(key_provider.signing_key().to_dict())
     signing_alg = signing_key.signature_alg()
     if signing_alg != "EdDSA":
         raise ArgumentError("Web Bot Auth directory signing requires Ed25519")
@@ -468,6 +473,8 @@ def serve_http_message_signatures_directory(
     response = HttpRequest(method=req.method, url=req.url, headers=headers, body=body, status=200)
     sig_base = _build_signature_base(response, params, request_context=req)
     sig_bytes = key_provider.sign(sig_base)
+    if not signing_key.verify(sig_base, sig_bytes):
+        raise ArgumentError("Web Bot Auth directory signing key changed during signing")
     if _now().timestamp() >= now_ts - backdate + ttl:
         raise ArgumentError("directory signature expired during signing")
 

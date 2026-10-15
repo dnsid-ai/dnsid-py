@@ -210,7 +210,7 @@ def test_expiry_during_network_work(setup):
 
     hook.side_effect = advance_clock
     with patch("dnsid.wba_verifier._now", return_value=now) as clock:
-        with pytest.raises(VerificationError, match="timestamps"):
+        with pytest.raises(VerificationError, match="timestamps|HTTP-stale"):
             verifier.verify_web_bot_auth_signed_request(req, opts)
 
 

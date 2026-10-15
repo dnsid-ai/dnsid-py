@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -45,6 +46,30 @@ def _sig_valid(signer: WBAHttpSigner, req: HttpRequest) -> bool:
     prefix = f"{params.label}=:"
     raw = b64_std_decode(req.get_header("signature")[len(prefix) : -1])
     return signer._key_provider.signing_key().verify(sig_base, raw)
+
+
+@pytest.mark.parametrize("directory", [False, True])
+@pytest.mark.parametrize("mutate_advertised_key", [False, True])
+def test_rotation_between_key_selection_and_signing_fails_closed(directory, mutate_advertised_key):
+    provider, replacement = LocalKeyProvider.generate(), LocalKeyProvider.generate()
+    advertised = provider.signing_key()
+    rotating = MagicMock(wraps=provider)
+    rotating.signing_key.return_value = advertised
+
+    def sign(payload):
+        if mutate_advertised_key:
+            advertised._raw = replacement.signing_key().to_dict()
+        return replacement.sign(payload)
+
+    rotating.sign.side_effect = sign
+    req = _req()
+    with pytest.raises(ArgumentError, match="key changed during signing"):
+        if directory:
+            serve_http_message_signatures_directory(req, rotating)
+        else:
+            WBAHttpSigner(rotating, DOMAIN).sign(req)
+    assert not req.has_header("signature")
+    assert not req.has_header("signature-input")
 
 
 def test_active_is_wba_compliant_and_valid():

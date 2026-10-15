@@ -250,7 +250,7 @@ checked by the verifier, not a property of the signature bytes.
 
 **Raises:**
 
-- `ArgumentError`: If the TTL is invalid, Signature-Agent is disabled, the key is not Ed25519, or an additional component is unsupported. Nested signing is not supported because signature fields are replaced.
+- `ArgumentError`: If the TTL is invalid, Signature-Agent is disabled, the key is not Ed25519, or an additional component is unsupported. Also raised if the signing key changes during signing. Nested signing is not supported because signature fields are replaced.
 
 ## `WBAHttpVerifier`
 
@@ -267,7 +267,9 @@ on every connection, reject redirects, and honor remaining_seconds().
 Injected transports must preserve uncoded response bytes and fields, without
 transparent decompression. Directories are fetched unconditionally with
 Cache-Control: no-cache on every invocation; injected caches must revalidate
-and must never serve stale evidence. No local directory cache is maintained.
+and must never serve stale evidence. Visible Date/Age and max-age bound the
+operation, including DNSid refresh and replay checks. Fresh zero-freshness
+responses can serve their acquiring invocation. No local cache is maintained.
 A verified key mismatch permits one DNSid refresh per domain per five seconds;
 concurrent retries are suppressed, failures consume the allowance, and at
 most 1024 active/cooldown domains are retained. No stale-key fallback is allowed.
@@ -426,4 +428,4 @@ serving, stale-while-revalidate, and stale-if-error for this endpoint.
 
 **Raises:**
 
-- `ArgumentError`: If the key is not Ed25519 or the signature expires during signing.
+- `ArgumentError`: If the key is not Ed25519, changes during signing, or the signature expires during signing.

@@ -231,6 +231,10 @@ component coverage before discovery; its default adds no requirements.
 Directories must be uncoded; any `Content-Encoding` field is rejected before
 reading. Injected discovery transports must preserve bytes and enforce HTTPS,
 public-address routing, and original HTTP freshness if they reuse evidence.
+The verifier checks visible `Date`/`Age` metadata and rechecks positive `max-age`
+deadlines before return, including after identity refresh and replay callbacks.
+Fresh `no-store`, `no-cache`, and `max-age=0` responses can serve their acquiring
+invocation; HTTP-stale evidence cannot.
 
 This is the narrower DNSid WBA profile targeting published
 `draft-ietf-webbotauth-httpsig-protocol-00`, including its directory format,

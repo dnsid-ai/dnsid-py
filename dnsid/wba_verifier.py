@@ -7,6 +7,7 @@ policy, valid requests can be reused until their signatures expire.
 
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import re
@@ -15,6 +16,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from email.utils import parsedate_to_datetime
 from typing import Any, NoReturn, cast
 from urllib.parse import urlsplit
 
@@ -148,6 +150,50 @@ def _directory_url(uri: str, discovery_type: str) -> str:
     return uri
 
 
+def _directory_freshness(
+    headers: httpx.Headers, started: float, received: float,
+) -> float | None:
+    control = headers.get("cache-control", "").strip()
+    token = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+    directive = re.compile(
+        rf'\s*({token})(?:\s*=\s*("(?:[^"\\\r\n]|\\[^\r\n])*"|{token}))?\s*(?:,|$)'
+    )
+    max_age = None
+    position = 0
+    while position < len(control):
+        match = directive.match(control, position)
+        if match is None:
+            _reject("invalid directory cache control")
+        name, value = match.groups()
+        if name.lower() == "max-age":
+            if max_age is not None or not re.fullmatch(r"[0-9]+", value or ""):
+                _reject("invalid directory max-age")
+            max_age = int(value)
+            if max_age >= 2 ** 64:
+                _reject("invalid directory max-age")
+        position = match.end()
+
+    raw_age = headers.get("age", "")
+    if raw_age and (not re.fullmatch(r"[0-9]+", raw_age) or int(raw_age) >= 2 ** 31):
+        _reject("invalid directory age")
+    upstream_age = int(raw_age or "0")
+    age = upstream_age + max(0, received - started)
+    try:
+        date = parsedate_to_datetime(headers.get("date", ""))
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=datetime.UTC)
+        age = max(age, received - date.timestamp())
+    except (ValueError, TypeError, OverflowError):
+        pass
+    # Revalidated zero-freshness evidence belongs only to this acquisition.
+    if max_age is None or (max_age == 0 and upstream_age == 0):
+        return None
+    deadline = received + min(max_age, 2 ** 31) - age
+    if received >= deadline:
+        _reject("HTTP-stale directory")
+    return deadline
+
+
 def _bounded_json(body: bytes) -> dict[str, Any]:
     # Bound nesting before decoding to prevent recursive JSON allocation.
     depth = 0
@@ -199,7 +245,9 @@ class WBAHttpVerifier:
     Injected transports must preserve uncoded response bytes and fields, without
     transparent decompression. Directories are fetched unconditionally with
     Cache-Control: no-cache on every invocation; injected caches must revalidate
-    and must never serve stale evidence. No local directory cache is maintained.
+    and must never serve stale evidence. Visible Date/Age and max-age bound the
+    operation, including DNSid refresh and replay checks. Fresh zero-freshness
+    responses can serve their acquiring invocation. No local cache is maintained.
     A verified key mismatch permits one DNSid refresh per domain per five seconds;
     concurrent retries are suppressed, failures consume the allowance, and at
     most 1024 active/cooldown domains are retained. No stale-key fallback is allowed.
@@ -323,7 +371,7 @@ class WBAHttpVerifier:
         domain = normalize_fqdn(opts.signer_domain) if opts.signer_domain else host
         if domain != host:
             _reject("cross-host WBA delegation is unsupported")
-        directory_request, response = self._fetch(url, domain)
+        directory_request, response, directory_expiry = self._fetch(url, domain)
         if response.get_header("content-type").split(";", 1)[0].strip().lower() != (
             WBA_DIRECTORY_MEDIA_TYPE
         ):
@@ -379,12 +427,12 @@ class WBAHttpVerifier:
         if not key.verify(request_base, signature):
             _reject("invalid WBA request signature")
         verified = self._resolver.verify_domain(domain, peer_cert=opts.peer_cert)
-        self._final_check(params, directory_params, verified)
+        self._final_check(params, directory_params, verified, directory_expiry)
         if not self._current_key(verified, domain, url, params.key_id):
             verified = self._refresh(domain, opts.peer_cert)
             if not self._current_key(verified, domain, url, params.key_id):
                 _reject("WBA key is not the verified current DNSid ku signing key")
-            self._final_check(params, directory_params, verified)
+            self._final_check(params, directory_params, verified, directory_expiry)
         if opts.replay_policy is not None:
             if not params.nonce:
                 _reject("replay policy requires a non-empty nonce")
@@ -400,7 +448,7 @@ class WBAHttpVerifier:
                 ) from exc
             if accepted is not True:
                 _reject("WBA nonce replay rejected")
-            self._final_check(params, directory_params, verified)
+            self._final_check(params, directory_params, verified, directory_expiry)
         return verified
 
     def _current_key(self, verified: VerifiedDomain, domain: str, url: str, keyid: str) -> bool:
@@ -431,19 +479,23 @@ class WBAHttpVerifier:
 
     def _final_check(
         self, params: SignatureParams, directory: SignatureParams, verified: VerifiedDomain,
+        directory_expiry: float | None,
     ) -> None:
         remaining_seconds()
+        if directory_expiry is not None and _now().timestamp() >= directory_expiry:
+            _reject("HTTP-stale directory")
         _check_time(params, self._config.clock_skew)
         _check_time(directory, self._config.clock_skew, directory=True)
         # VerifyDomain acquired this invocation's evidence; zero DNS TTL forbids
         # later reuse, not completion of this operation. TLS and ka still apply.
         verified._require_fresh_evidence(_now(), fresh_dns_lookup=True)
 
-    def _fetch(self, url: str, domain: str) -> tuple[HttpRequest, HttpRequest]:
+    def _fetch(self, url: str, domain: str) -> tuple[HttpRequest, HttpRequest, float | None]:
         transport = _BorrowedTransport(self._transport)
         try:
             with httpx.Client(transport=transport, trust_env=False) as client:
                 _assert_same_host_https_redirect(url, domain)
+                started = _now().timestamp()
                 with client.stream(
                     "GET", url,
                     headers={"Accept-Encoding": "identity", "Cache-Control": "no-cache"},
@@ -458,6 +510,7 @@ class WBAHttpVerifier:
                         )
                     if "content-encoding" in response.headers:
                         _reject("compressed directory responses are forbidden")
+                    expiry = _directory_freshness(response.headers, started, _now().timestamp())
                     body = _read_limited(
                         response, 1024 * 1024, VerificationCode.RECORD_INVALID,
                         "directory response size exceeded", decode_content=False,
@@ -466,6 +519,7 @@ class WBAHttpVerifier:
                         HttpRequest(method="GET", url=str(response.request.url)),
                         HttpRequest(method="GET", url=url, headers=dict(response.headers),
                                     body=body, status=response.status_code),
+                        expiry,
                     )
         except httpx.TransportError as exc:
             permanent = SSRF_BLOCK_MARKER in str(exc) or isinstance(exc, httpx.ProtocolError)

@@ -15,7 +15,7 @@ from dnsid.enums import VerificationCode
 from dnsid.exceptions import ArgumentError, VerificationError
 from dnsid.local_key_provider import LocalKeyProvider
 from dnsid.models import SignatureParams
-from dnsid.wba_signer import serve_http_message_signatures_directory
+from dnsid.wba_signer import _wba_identifier, serve_http_message_signatures_directory
 from tests.test_verification_coalescing import _manager_fixture
 from tests.test_wba_verifier import DOMAIN
 from tests.test_wba_verifier import setup as setup
@@ -52,6 +52,27 @@ def test_directory_tolerates_verifier_five_seconds_behind(setup, monkeypatch):
     now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
     monkeypatch.setattr("dnsid.wba_verifier._now", lambda: now - datetime.timedelta(seconds=5))
     verifier.verify_web_bot_auth_signed_request(req, opts)
+
+
+def test_wba_identifier_preserves_reserved_path_escapes():
+    assert _wba_identifier(f"https://{DOMAIN}/a%2fb?key=1#key") == f"https://{DOMAIN}/a%2Fb"
+    assert _wba_identifier(f"https://{DOMAIN}/a%2Fb") != _wba_identifier(f"https://{DOMAIN}/a/b")
+
+
+@pytest.mark.parametrize("endpoint,ku", [
+    (f"https://{DOMAIN}", f"https://{DOMAIN}/?key=1#key"),
+    (f"https://{DOMAIN}/", f"https://{DOMAIN}"),
+])
+def test_empty_https_path_is_equivalent_to_slash_for_ku_guard(setup, endpoint, ku):
+    provider, resolver, verifier, req, opts, _, _ = setup
+    config = WebBotAuthConfig(signature_agent_uri=endpoint, signature_agent_type="jwks_uri")
+    with pytest.raises(ArgumentError, match="local ku"):
+        WBAHttpSigner(provider, DOMAIN, config=config, ku_url=ku)
+    WBAHttpSigner(provider, DOMAIN, config=config).sign(req)
+    resolver.verify_domain.return_value.record.ku = ku
+    with pytest.raises(VerificationError, match="authenticated ku"):
+        verifier.verify_web_bot_auth_signed_request(req, opts)
+    resolver.refresh_domain.assert_not_called()
 
 
 @pytest.mark.parametrize("ku", [
