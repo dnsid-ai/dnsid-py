@@ -1,20 +1,22 @@
 """Stream sources: fetch a checkpoint plus every entry of a C2SP log.
 
-Fetching goes through a synchronous transport callable ``(url) -> bytes | str``.
+Synchronous transports remain supported; bounded fetchers may add native async reads.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
+from .._verification_budget import async_run_blocking, async_verification_operation
 from .checkpoint import Checkpoint, parse_checkpoint
 from .errors import C2spTlogError, C2spTlogTransportError, C2spTlogVerificationError
 from .lr import ParsedC2spTlogLr
 from .resource_fetcher import (
     C2spBoundedResourceFetcher,
     C2spResourceFetchGuarantees,
+    async_fetch_bounded_bytes,
     fetch_bounded_bytes,
 )
 from .tiles import checkpoint_path, entry_bundle_path, parse_entry_bundle
@@ -104,6 +106,22 @@ class C2spTlogSource(Protocol):
         ...
 
 
+class AsyncC2spTlogSource(C2spTlogSource, Protocol):
+    """Optional async evidence reads with the same guarantees as C2spTlogSource."""
+
+    async def async_fetch_checkpoint(self, reference: ParsedC2spTlogLr) -> bytes:
+        """Fetch the raw signed checkpoint bytes without blocking."""
+        ...
+
+    async def async_read_entry(self, reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry:
+        """Return bounded, untrusted inclusion evidence without blocking."""
+        ...
+
+    async def async_load_stream(self, reference: ParsedC2spTlogLr, fqdn: str) -> C2spStreamEvidence:
+        """Return the same complete evidence as load_stream without blocking."""
+        ...
+
+
 class C2spConsistencyProofSource(Protocol):
     """Optional source for RFC 6962 checkpoint consistency proofs."""
 
@@ -160,7 +178,35 @@ class ScanStreamSource:
             C2spTlogVerificationError: If checkpoint authentication fails, a
                 configured size limit is exceeded, or a bundle width is wrong.
         """
-        checkpoint_bytes = self._bytes(checkpoint_path(prefix), self._max_checkpoint_bytes)
+        steps = self._load_steps(prefix)
+        try:
+            url, maximum = next(steps)
+            while True:
+                url, maximum = steps.send(self._bytes(url, maximum))
+        except StopIteration as done:
+            return cast(StreamEvidence, done.value)
+        finally:
+            steps.close()
+
+    @async_verification_operation
+    async def async_load(self, prefix: str) -> StreamEvidence:
+        """Scan standard resources asynchronously, authenticating before tile reads."""
+        steps = self._load_steps(prefix)
+        try:
+            url, maximum = next(steps)
+            while True:
+                if callable(getattr(self._transport, "fetch_bounded", None)):
+                    data = await async_fetch_bounded_bytes(self._transport, url, maximum)
+                else:
+                    data = await async_run_blocking(self._bytes, url, maximum)
+                url, maximum = steps.send(data)
+        except StopIteration as done:
+            return cast(StreamEvidence, done.value)
+        finally:
+            steps.close()
+
+    def _load_steps(self, prefix: str) -> Generator[tuple[str, int], bytes, StreamEvidence]:
+        checkpoint_bytes = yield checkpoint_path(prefix), self._max_checkpoint_bytes
         checkpoint = parse_checkpoint(checkpoint_bytes.decode("utf-8"))
         self._authenticate_checkpoint(checkpoint)
         if checkpoint.tree_size > self._max_tree_size:
@@ -177,9 +223,7 @@ class ScanStreamSource:
                 checkpoint.tree_size - n * self._entries_per_bundle,
             )
             width = None if want == self._entries_per_bundle else want
-            bundle_bytes = self._bytes(
-                entry_bundle_path(prefix, n, width), self._max_entry_bundle_bytes
-            )
+            bundle_bytes = yield entry_bundle_path(prefix, n, width), self._max_entry_bundle_bytes
             total_entry_bytes += len(bundle_bytes)
             if total_entry_bytes > self._max_total_entry_bytes:
                 raise C2spTlogVerificationError(
@@ -227,6 +271,27 @@ class ScanStreamSource:
     def read_entry(self, reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry:
         """Return one entry plus a proof derived from a complete scan."""
         evidence = self.load_stream(reference, reference.stream_id)
+        return self._proven_entry(evidence, index)
+
+    @async_verification_operation
+    async def async_fetch_checkpoint(self, reference: ParsedC2spTlogLr) -> bytes:
+        """Fetch one bounded checkpoint using the native capability if present."""
+        url = checkpoint_path(reference.log_prefix)
+        if callable(getattr(self._transport, "fetch_bounded", None)):
+            return await async_fetch_bounded_bytes(self._transport, url, self._max_checkpoint_bytes)
+        return await async_run_blocking(self._bytes, url, self._max_checkpoint_bytes)
+
+    async def async_load_stream(self, reference: ParsedC2spTlogLr, fqdn: str) -> C2spStreamEvidence:
+        """Load complete raw evidence through native async resource reads."""
+        return await self.async_load(reference.log_prefix)
+
+    async def async_read_entry(self, reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry:
+        """Build an inclusion proof from an asynchronously fetched full scan."""
+        evidence = await self.async_load_stream(reference, reference.stream_id)
+        return self._proven_entry(evidence, index)
+
+    @staticmethod
+    def _proven_entry(evidence: StreamEvidence, index: int) -> C2spProvenEntry:
         entries = sorted(evidence.entries, key=lambda entry: entry.index)
         if index < 0 or index >= len(entries) or entries[index].index != index:
             raise C2spTlogVerificationError(f"C2SP entry index out of range: {index}")

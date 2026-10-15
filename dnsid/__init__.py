@@ -119,6 +119,10 @@ from .exceptions import (
 from .http_signatures import HttpMessageSignatureConfig, HttpSignatureProfile
 from .interfaces import (
     AbstractRegistryClient,
+    AsyncDNSResolver,
+    AsyncHTTPSFetcher,
+    AsyncIdentityResolver,
+    AsyncLogReader,
     DNSResolver,
     HTTPSFetcher,
     IdentityCache,
@@ -334,6 +338,10 @@ __all__ = [
     # Interfaces
     "AbstractRegistryClient",
     "IdentityResolver",
+    "AsyncIdentityResolver",
+    "AsyncDNSResolver",
+    "AsyncHTTPSFetcher",
+    "AsyncLogReader",
     "KeyProvider",
     "Log",
     "LogReader",

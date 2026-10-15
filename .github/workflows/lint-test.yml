@@ -29,6 +29,10 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Install A2A example test dependencies
+        if: matrix.python-version == '3.13'
+        run: pip install fastapi uvicorn "a2a-sdk>=1.2" sse-starlette
+
       # Scans the installed environment (runtime + dev). Accepted risks: add
       # `--ignore-vuln <ID>` here with a comment linking the advisory.
       - name: Dependency vulnerability audit

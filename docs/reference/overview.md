@@ -1,6 +1,6 @@
 ---
 title: "Python: SDK overview"
-description: "Import surface, sync-only design, and layout of the dnsid Python SDK reference."
+description: "Import surface, async verification, and layout of the dnsid Python SDK reference."
 ---
 
 <!-- GENERATED FILE — do not edit. Regenerate with `python scripts/gen_docs.py` in dnsid-ai/dnsid-py. -->
@@ -30,12 +30,30 @@ from dnsid.http_signatures import HttpSignatureProfile
 The transparency-log integration is the exception: import it from
 `dnsid.c2sp_tlog`.
 
-## Synchronous by design
+## Async verification
 
-Verification and most public operations are synchronous. Async support
-includes `RegistryClient.async_wait_for_status()` (which polls synchronously),
-signed `httpx.AsyncClient` transport plumbing, and `async_retry_transient`.
-Call blocking SDK operations from async code via `asyncio.to_thread` or an executor.
+Use `await manager.async_verify_domain(domain)` and
+`await http_signer.async_verify_signed_http_request(request)` in async code.
+Fresh cache hits, shared waits, and default stale-status refreshes need no worker
+threads. Async-led cold verification awaits native TXT, JWKS, status and C2SP
+reads, including bundles, tiles and recursive predecessors. Injected adapters
+may implement `AsyncDNSResolver`, `AsyncHTTPSFetcher` and `AsyncLogReader`
+alongside their synchronous methods. Sync-only adapters and atomic checkpoint
+stores use tracked workers. Sync-led work retains synchronous adapters in
+workers; both APIs share whichever evidence leader starts first. Injected
+resources remain caller-owned.
+Shared evidence has an independent 30-second budget. Cancellation or a request
+deadline stops only that caller's wait. Use `async with manager` or
+`await manager.aclose()` at shutdown to drain owned work and close resources.
+Use `with verification_budget(5):` around a request to set its deadline; expiry
+raises `VerificationError` with `DEADLINE_EXCEEDED` and `transient=True`.
+Injected identity caches must be nonblocking.
+
+Signed `httpx.AsyncClient` requests offload synchronous signing, including KMS.
+`create_signed_async_http_client(transport=...)` accepts an outbound transport;
+the returned client owns and closes it. Synchronous APIs remain available.
+Other blocking SDK operations, including the status reads in
+`RegistryClient.async_wait_for_status()`, still need workers.
 
 ## Application profiles
 

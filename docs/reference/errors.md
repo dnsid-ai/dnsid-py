@@ -258,6 +258,7 @@ Values:
   policy check failed (permanent).
 * COUNTERPARTY_NOT_ACCEPTED — configured ``trusted_entities`` policy
   denied a protocol-valid identity; permanent.
+* DEADLINE_EXCEEDED — verification exceeded its budget; transient.
 
 **Members:**
 
@@ -271,6 +272,7 @@ Values:
 - `STATUS_UNAVAILABLE` = `auto()`
 - `LOG_ERROR` = `auto()`
 - `COUNTERPARTY_NOT_ACCEPTED` = `auto()`
+- `DEADLINE_EXCEEDED` = `auto()`
 
 ## `AgentState`
 

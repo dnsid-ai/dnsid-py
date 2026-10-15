@@ -8,7 +8,7 @@ entity-signed lifecycle events, with logical-event chaining in every scope.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -95,13 +95,30 @@ def verify_stream_lifecycle(
     historical state. Applied logical IDs deduplicate regardless of signatures
     or physical position. Authenticated forks or invalid transitions are fatal.
     """
+    from ._async import run_verification
+
+    return run_verification(
+        _verify_stream_lifecycle_steps(entries, domain, options),
+        options.verify_migration if options is not None else None,
+    )
+
+
+def _verify_stream_lifecycle_steps(
+    entries: list[IndexedEntry],
+    domain: str,
+    options: StreamVerifierOptions | None = None,
+    *,
+    migration_results: dict[int, MigrationVerificationResult] | None = None,
+) -> Generator[MigrationEvent, MigrationVerificationResult, list[VerifiedLifecycleEvent]]:
+    """Pause only for authenticated predecessor reads; all validation is shared."""
     opts = options or StreamVerifierOptions()
     if (type(opts.max_entries) is not int or opts.max_entries <= 0
             or type(opts.max_entry_bytes) is not int or opts.max_entry_bytes <= 0):
         raise C2spTlogVerificationError("lifecycle limits must be positive integers")
     if len(entries) > opts.max_entries or sum(len(e.data) for e in entries) > opts.max_entry_bytes:
         raise C2spTlogVerificationError("lifecycle input limit exceeded")
-    migration_results: dict[int, MigrationVerificationResult] = {}
+    if migration_results is None:
+        migration_results = {}
     if opts.verify_migration is not None:
         verify_migration = opts.verify_migration
 
@@ -171,6 +188,9 @@ def verify_stream_lifecycle(
             authority = selected
             if predecessor is not None:
                 authority = selected[:selected.index(predecessor) + 1]
+            if not selected and isinstance(event, MigrationEvent):
+                if opts.signer_key is None or _migration_signed_by(candidate, opts.signer_key):
+                    migration_results[id(event)] = yield event
             authenticated = _candidate_is_authenticated(candidate, authority, opts)
         except Exception as exc:
             if not selected and isinstance(event, MigrationEvent):
@@ -280,6 +300,18 @@ def _malformed_authenticated(
         return False
 
 
+def _migration_signed_by(candidate: VerifiedLifecycleEvent, key: JWK) -> bool:
+    if candidate.event.signing_kid != key.kid:
+        return False
+    try:
+        _verify_event_signature(
+            candidate, candidate.event.sig, key, "invalid MIGRATION entity signature",
+        )
+    except (C2spTlogVerificationError, VerificationError):
+        return False
+    return True
+
+
 def _candidate_is_authenticated(
     candidate: VerifiedLifecycleEvent,
     selected: list[VerifiedLifecycleEvent],
@@ -295,13 +327,7 @@ def _candidate_is_authenticated(
         if key is None:
             migrated = options.verify_migration(event)
             key = migrated.entity_key
-        if event.signing_kid != key.kid:
-            return False
-        try:
-            _verify_event_signature(
-                candidate, event.sig, key, "invalid MIGRATION entity signature"
-            )
-        except (C2spTlogVerificationError, VerificationError):
+        if not _migration_signed_by(candidate, key):
             return False
         if migrated is None:
             options.verify_migration(event)

@@ -44,6 +44,166 @@ Verify the DNSid identity record for *domain*.
 
 - `VerificationError`: If any verification step fails.
 
+## `AsyncIdentityResolver`
+
+```python
+from dnsid import AsyncIdentityResolver
+```
+
+*Bases:* `Protocol`
+
+Async identity verification contract for application-layer profiles.
+
+### `async_verify_domain`
+
+```python
+AsyncIdentityResolver.async async_verify_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify identity evidence and enforce per-caller policy.
+
+## `AsyncDNSResolver`
+
+```python
+from dnsid import AsyncDNSResolver
+```
+
+*Bases:* `Protocol`
+
+Optional async TXT lookup capability of a synchronous DNSResolver.
+
+Supply the same object through IdentityManagerDependencies.dns_resolver; it
+must still implement fetch_txt for synchronous callers. Async-led cold
+verification awaits this capability; sync-only resolvers use workers.
+Return values, absolute-name handling, DNSSEC states and errors match
+DNSResolver.fetch_txt. Implementations must not block the event loop and
+must honor the remaining verification budget. Injected resolvers remain
+caller-owned and must support concurrent calls on their supported event loops.
+
+### `async_fetch_txt`
+
+```python
+AsyncDNSResolver.async async_fetch_txt(name: str) -> tuple[list[TXTRecord], DNSSECState]
+```
+
+Fetch TXT records and DNSSEC validation state for an absolute name.
+
+## `AsyncHTTPSFetcher`
+
+```python
+from dnsid import AsyncHTTPSFetcher
+```
+
+*Bases:* `Protocol`
+
+Optional async JSON fetch capability of a synchronous HTTPSFetcher.
+
+Supply the same object through IdentityManagerDependencies.https_fetcher;
+fetch_strict_json remains required for synchronous verification. Async-led
+cold verification and stale-status refreshes await async_fetch_strict_json
+for key sets and status; sync-only fetchers retain the worker fallback.
+
+TLS validation, redirect boundaries, peer certificate reporting and error
+taxonomy match HTTPSFetcher.fetch_strict_json. Bound decoded bodies during
+reads (64 KiB for status and 1 MiB for key sets), honor the remaining
+verification budget, and close responses on cancellation. Methods must not
+block the event loop. Injected fetchers and clients remain caller-owned;
+implementations must support concurrent calls on their supported event loops.
+
+### `async_fetch_strict_json`
+
+```python
+AsyncHTTPSFetcher.async async_fetch_strict_json(url: str, allowed_host: str | None = None, domain_boundary: bool = False) -> tuple[dict[str, Any], TLSCertificate]
+```
+
+Fetch bounded JSON and its peer certificate under the sync HTTPS rules.
+
+## `AsyncLogReader`
+
+```python
+from dnsid import AsyncLogReader
+```
+
+*Bases:* `Protocol`
+
+Optional async read capability of a synchronous LogReader.
+
+Registered factories continue to return LogReader instances. A reader may
+additionally implement this contract without changing its synchronous API.
+Canonical serialization remains synchronous. Async reads have the same
+proof, timestamp, consistency and fail-closed requirements as LogReader.
+
+Async-led manager verification awaits these methods. Sync-led verification
+retains synchronous reads. Implementations must not block the event loop,
+must honor the remaining verification budget, and must close
+in-progress responses on cancellation. Blocking stores require worker offload
+without splitting atomic checkpoint verification and advancement. Injected
+readers and their resources remain caller-owned.
+
+### `async_preload_history`
+
+```python
+AsyncLogReader.async async_preload_history(domain: str, entity_key: JWK) -> None
+```
+
+Load authenticated history for subsequent lifecycle checks.
+
+### `async_key_timestamp`
+
+```python
+AsyncLogReader.async async_key_timestamp(domain: str, key_thumbprint: str) -> datetime.datetime
+```
+
+Return a verified key binding timestamp, as LogReader.key_timestamp.
+
+### `async_verify_non_revocation`
+
+```python
+AsyncLogReader.async async_verify_non_revocation(domain: str, at: datetime.datetime) -> LoggedStateEvidence
+```
+
+Verify complete, fresh, non-terminal history through *at*.
+
+### `async_read_event`
+
+```python
+AsyncLogReader.async async_read_event(ref: LogRef) -> AnyLogEvent
+```
+
+Read an event with verified inclusion and timestamp proofs.
+
+### `async_rebuild_history`
+
+```python
+AsyncLogReader.async async_rebuild_history(domain: str) -> list[AnyLogEvent]
+```
+
+Rebuild verified chronological history, including consistency checks.
+
+### `async_rebuild_history_through`
+
+```python
+AsyncLogReader.async async_rebuild_history_through(domain: str, final_entry_ref: str, entity_key: JWK, *, max_depth: int, max_events: int, max_response_bytes: int, seen_log_references: frozenset[str]) -> VerifiedCutoffHistory
+```
+
+Verify history through the exact signed cutoff within cumulative bounds.
+
+### `async_verify_bilateral_binding`
+
+```python
+AsyncLogReader.async async_verify_bilateral_binding(record: DnsIdTxtRecord, entity_key: JWK, operational_key: JWK) -> Any
+```
+
+Verify both authorizing signatures and the identity's genesis binding.
+
+### `async_verify_operational_continuity`
+
+```python
+AsyncLogReader.async async_verify_operational_continuity(domain: str, initial_operational_thumbprint: str, current_operational_thumbprint: str) -> None
+```
+
+Verify the rotation chain connecting initial and current operational keys.
+
 ## `KeyProvider`
 
 ```python
@@ -439,6 +599,8 @@ Pluggable DNS resolver.
 
 Decouples VerifyDomain from the system resolver so deployments can substitute
 a DNSSEC-validating library, a trusted DoT/DoH upstream, or a test double.
+Implementations MUST be safe for concurrent use. Shared verification runs
+blocking adapters in workers for both synchronous and asynchronous callers.
 
 ### `fetch_txt`
 
