@@ -1591,6 +1591,17 @@ class IdentityManager:
                 VerificationCode.DNSSEC_FAILED,
                 f"DNSSEC required but state is {dnssec_state.name}",
             )
+        if not records:
+            # NXDOMAIN and an empty TXT answer both arrive here as an empty
+            # list. Absence is not malformation: a managed agent's record can
+            # be missing while its operator republishes it after an incident,
+            # so the verdict is transient and distinct from RECORD_INVALID.
+            raise VerificationError(
+                VerificationCode.RECORD_NOT_FOUND,
+                f"no _dnsid TXT record found at _dnsid.{domain}; the record may "
+                "be absent while its operator republishes it",
+                transient=True,
+            )
         if len(records) != 1:
             raise VerificationError(
                 VerificationCode.RECORD_INVALID,
