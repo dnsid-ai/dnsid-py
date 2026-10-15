@@ -22,7 +22,7 @@ class LogRegistry:
     counterparty readers during verification. Factories remain synchronous and
     return LogReader instances; readers may additionally implement AsyncLogReader.
     Factory construction must not block the event loop when used by native async
-    verification. Current cold verification still constructs readers in workers.
+    verification. Synchronous verification constructs readers in workers.
     """
 
     def __init__(self) -> None:

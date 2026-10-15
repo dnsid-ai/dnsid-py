@@ -30,6 +30,13 @@ independent 30-second budget and survives caller cancellation or deadline expiry
 Shutdown waits for that work, so it can outlast the five-second request deadline.
 Injected blocking dependencies must honor SDK budgets. In a server, keep one
 manager for the application lifetime and call `aclose()` during shutdown.
+Keep participating event loops running until shutdown completes.
+
+Async-led cold verification uses native TXT, JWKS, status and C2SP reads.
+Sync-only adapters and atomic checkpoint stores use workers. Mixed sync/async
+calls share whichever evidence leader starts first; sync-led work remains
+worker-backed. Injected adapters must retain their synchronous methods and
+remain caller-owned.
 
 ## Testing outbound signatures without network access
 

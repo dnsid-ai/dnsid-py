@@ -117,8 +117,11 @@ Request-budget expiry reports `VerificationCode.DEADLINE_EXCEEDED` with
 `transient=True`. Cancelling or timing out a caller does not cancel shared
 identity evidence work, which has its own 30-second budget. `aclose()` waits for
 that work before releasing resources, so shutdown can outlast the request deadline.
-Injected blocking adapters must honor verification budgets. Cold evidence uses
-workers; default stale-status refreshes use native async DNS and HTTPS.
+Async-led cold verification uses native TXT, JWKS, status and C2SP reads.
+Sync-only adapters and atomic checkpoint stores use workers. Mixed sync/async
+calls share whichever evidence leader starts first; sync-led work remains
+worker-backed. Injected blocking adapters must honor verification budgets.
+Keep participating event loops running until shutdown completes.
 
 For inbound HTTP signatures, await
 `http_signer.async_verify_signed_http_request(request)`. The A2A example shows

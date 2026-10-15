@@ -94,8 +94,8 @@ from dnsid import AsyncDNSResolver
 Optional async TXT lookup capability of a synchronous DNSResolver.
 
 Supply the same object through IdentityManagerDependencies.dns_resolver; it
-must still implement fetch_txt for synchronous callers. Native async cold
-verification will use this capability; current cold lookups run in workers.
+must still implement fetch_txt for synchronous callers. Async-led cold
+verification awaits this capability; sync-only resolvers use workers.
 Return values, absolute-name handling, DNSSEC states and errors match
 DNSResolver.fetch_txt. Implementations must not block the event loop and
 must honor the remaining verification budget. Injected resolvers remain
@@ -120,10 +120,9 @@ from dnsid import AsyncHTTPSFetcher
 Optional async JSON fetch capability of a synchronous HTTPSFetcher.
 
 Supply the same object through IdentityManagerDependencies.https_fetcher;
-fetch_strict_json remains required for synchronous and cold verification.
-Async stale-status refreshes prefer async_fetch_strict_json when available;
-sync-only fetchers retain the worker fallback. Native async cold verification
-will also use this capability for key sets.
+fetch_strict_json remains required for synchronous verification. Async-led
+cold verification and stale-status refreshes await async_fetch_strict_json
+for key sets and status; sync-only fetchers retain the worker fallback.
 
 TLS validation, redirect boundaries, peer certificate reporting and error
 taxonomy match HTTPSFetcher.fetch_strict_json. Bound decoded bodies during
@@ -155,9 +154,9 @@ additionally implement this contract without changing its synchronous API.
 Canonical serialization remains synchronous. Async reads have the same
 proof, timestamp, consistency and fail-closed requirements as LogReader.
 
-These methods are reserved for native async cold verification; the current
-manager still runs cold log reads in workers. Implementations must not block
-the event loop, must honor the remaining verification budget, and must close
+Async-led manager verification awaits these methods. Sync-led verification
+retains synchronous reads. Implementations must not block the event loop,
+must honor the remaining verification budget, and must close
 in-progress responses on cancellation. Blocking stores require worker offload
 without splitting atomic checkpoint verification and advancement. Injected
 readers and their resources remain caller-owned.

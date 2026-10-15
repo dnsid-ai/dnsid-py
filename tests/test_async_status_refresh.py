@@ -34,6 +34,7 @@ def warmed(ec_pair):
         manager,
         patch("dnsid.manager._fetch_jwks", side_effect=keys),
         patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
     ):
         cached = manager.verify_domain(domain, peer_cert=cert)
         yield manager, counters, domain, cert, cached, active
@@ -70,7 +71,7 @@ async def test_native_refresh_coalesces_and_needs_no_workers(warmed):
     assert results[0] is not cached
     assert counters["dns"] == 1
     assert not manager._status_futures
-    assert not manager._async_status_tasks
+    assert not manager._async_verification_tasks
 
 
 @pytest.mark.asyncio
@@ -187,7 +188,11 @@ async def test_expired_dns_during_refresh_leadership_uses_cold_verification(warm
         manager.evict_domain(domain)
         return await original(*args)
 
-    with patch.object(manager, "_async_refresh_status", side_effect=expire):
+    with (
+        patch.object(manager, "_async_refresh_status", side_effect=expire),
+        patch("dnsid.manager.async_fetch_agent_status",
+              side_effect=lambda su, **kwargs: manager._fetch_status(su)),
+    ):
         assert (await manager.async_verify_domain(domain, peer_cert=cert)).domain == domain
     assert counters["dns"] == 2
 
@@ -230,11 +235,11 @@ async def test_cancelled_native_task_closes_transport_and_removes_shared_future(
     ):
         call = asyncio.create_task(manager.async_verify_domain(domain, peer_cert=cert))
         await asyncio.wait_for(started.wait(), 2)
-        next(iter(manager._async_status_tasks)).cancel()
+        next(iter(manager._async_verification_tasks)).cancel()
         with pytest.raises(asyncio.CancelledError):
             await call
         assert not manager._status_futures
-        assert not manager._async_status_tasks
+        assert not manager._async_verification_tasks
         close.assert_awaited_once()
 
 
