@@ -11,6 +11,8 @@ import json
 import math
 import re
 import ssl
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, NoReturn, cast
@@ -30,7 +32,7 @@ from .http_signatures import (
     _now,
     _parse_signature_dictionary,
 )
-from .interfaces import IdentityResolver
+from .interfaces import RefreshingIdentityResolver
 from .models import (
     JWK,
     HttpRequest,
@@ -49,6 +51,7 @@ from .wba_signer import (
     WBA_TAG,
     WebBotAuthConfig,
     _is_https_origin,
+    _wba_identifier,
 )
 
 
@@ -194,12 +197,12 @@ class WBAHttpVerifier:
     transport is trusted infrastructure and MUST enforce the same constraints,
     on every connection, reject redirects, and honor remaining_seconds().
     Injected transports must preserve uncoded response bytes and fields, without
-    transparent decompression. This verifier does not cache directories; injected
-    transports must not reuse evidence without enforcing its original HTTP age
-    and freshness deadline, even when Date/Age fields are absent. Cache attribution
-    must bind the normalized resolved URL and thumbprint within the policy context.
-    Newer proofs replace older keys by signed created time; failed refreshes must
-    not evict evidence, extend freshness, or permit stale success.
+    transparent decompression. Directories are fetched unconditionally with
+    Cache-Control: no-cache on every invocation; injected caches must revalidate
+    and must never serve stale evidence. No local directory cache is maintained.
+    A verified key mismatch permits one DNSid refresh per domain per five seconds;
+    concurrent retries are suppressed, failures consume the allowance, and at
+    most 1024 active/cooldown domains are retained. No stale-key fallback is allowed.
     The default secure transport and its connection pool are reused until close().
     Call close() after all verification operations finish. Injected transports
     remain caller-owned and must support concurrent use when the verifier is
@@ -213,11 +216,15 @@ class WBAHttpVerifier:
     """
 
     def __init__(
-        self, resolver: IdentityResolver, *, config: WebBotAuthConfig | None = None,
+        self, resolver: RefreshingIdentityResolver, *, config: WebBotAuthConfig | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         """Set the resolver and transport; copy and validate the configuration."""
+        if not isinstance(resolver, RefreshingIdentityResolver):
+            raise ArgumentError("WBA requires a RefreshingIdentityResolver")
         self._resolver = resolver
+        self._refresh_lock = threading.Lock()
+        self._refresh_deadlines: dict[str, float] = {}
         self._config = replace(config) if config is not None else WebBotAuthConfig()
         self._transport = transport if transport is not None else make_ssrf_safe_transport()
         self._owns_transport = transport is None
@@ -306,7 +313,9 @@ class WBAHttpVerifier:
                 VerificationCode.RECORD_INVALID, "invalid Signature-Agent member"
             ) from exc
         url = _directory_url(value, str(kind))
-        if opts.discovery_uri and url != _directory_url(opts.discovery_uri, opts.discovery_type):
+        if opts.discovery_uri and _wba_identifier(url) != _wba_identifier(
+            _directory_url(opts.discovery_uri, opts.discovery_type)
+        ):
             _reject("Signature-Agent does not match trusted discovery URI")
         host = normalize_fqdn(urlsplit(url).hostname or "")
         if not opts.signer_domain and not opts.allow_signature_agent_domain:
@@ -370,13 +379,12 @@ class WBAHttpVerifier:
         if not key.verify(request_base, signature):
             _reject("invalid WBA request signature")
         verified = self._resolver.verify_domain(domain, peer_cert=opts.peer_cert)
-        operational_key = verified.jwks.current_operational_signing_key(verified.record.v)
-        if (
-            verified.domain != domain or operational_key.signature_alg() != "EdDSA"
-            or operational_key.thumbprint() != params.key_id
-        ):
-            _reject("WBA key is not the verified current DNSid ku signing key")
         self._final_check(params, directory_params, verified)
+        if not self._current_key(verified, domain, url, params.key_id):
+            verified = self._refresh(domain, opts.peer_cert)
+            if not self._current_key(verified, domain, url, params.key_id):
+                _reject("WBA key is not the verified current DNSid ku signing key")
+            self._final_check(params, directory_params, verified)
         if opts.replay_policy is not None:
             if not params.nonce:
                 _reject("replay policy requires a non-empty nonce")
@@ -395,6 +403,32 @@ class WBAHttpVerifier:
             self._final_check(params, directory_params, verified)
         return verified
 
+    def _current_key(self, verified: VerifiedDomain, domain: str, url: str, keyid: str) -> bool:
+        if verified.domain != domain:
+            _reject("DNSid resolver returned a different signer domain")
+        if _wba_identifier(url) == _wba_identifier(verified.record.ku):
+            _reject("WBA discovery must not identify the authenticated ku endpoint")
+        key = verified.jwks.current_operational_signing_key(verified.record.v)
+        return key.signature_alg() == "EdDSA" and key.thumbprint() == keyid
+
+    def _refresh(self, domain: str, peer_cert: TLSCertificate | None) -> VerifiedDomain:
+        remaining_seconds()
+        now = time.monotonic()
+        with self._refresh_lock:
+            self._refresh_deadlines = {
+                name: deadline for name, deadline in self._refresh_deadlines.items()
+                if deadline > now
+            }
+            if domain in self._refresh_deadlines or len(self._refresh_deadlines) >= 1024:
+                _reject("WBA ku signing key mismatch refresh suppressed")
+            # In-flight attempts cannot be evicted even if network work exceeds cooldown.
+            self._refresh_deadlines[domain] = math.inf
+        try:
+            return self._resolver.refresh_domain(domain, peer_cert=peer_cert)
+        finally:
+            with self._refresh_lock:
+                self._refresh_deadlines[domain] = now + 5
+
     def _final_check(
         self, params: SignatureParams, directory: SignatureParams, verified: VerifiedDomain,
     ) -> None:
@@ -411,7 +445,8 @@ class WBAHttpVerifier:
             with httpx.Client(transport=transport, trust_env=False) as client:
                 _assert_same_host_https_redirect(url, domain)
                 with client.stream(
-                    "GET", url, headers={"Accept-Encoding": "identity"},
+                    "GET", url,
+                    headers={"Accept-Encoding": "identity", "Cache-Control": "no-cache"},
                     follow_redirects=False, timeout=remaining_seconds(10)
                 ) as response:
                     if response.status_code != 200:

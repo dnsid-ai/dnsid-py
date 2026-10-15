@@ -55,7 +55,8 @@ def fetch_jwks(
     try:
         for _ in range(_MAX_REDIRECTS + 1):
             try:
-                with client.stream("GET", url, follow_redirects=False,
+                with client.stream("GET", url, headers={"Cache-Control": "no-cache"},
+                                   follow_redirects=False,
                                    timeout=remaining_seconds(10.0)) as response:
                     if response.is_redirect:
                         location = urljoin(url, response.headers.get("location", ""))
@@ -139,7 +140,7 @@ def fetch_agent_status(
                 with client.stream(
                     "GET",
                     url,
-                    headers={"Accept": "application/json"},
+                    headers={"Accept": "application/json", "Cache-Control": "no-cache"},
                     follow_redirects=False,
                     timeout=remaining_seconds(10.0),
                 ) as response:

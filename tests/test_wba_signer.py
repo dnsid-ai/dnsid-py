@@ -174,7 +174,7 @@ def test_directory_response_is_signed_and_typed():
 
     assert res.status == 200
     assert res.headers["content-type"] == WBA_DIRECTORY_MEDIA_TYPE
-    assert res.headers["cache-control"] == "max-age=300"
+    assert res.headers["cache-control"] == "max-age=295, must-revalidate"
 
     import json as _json
 

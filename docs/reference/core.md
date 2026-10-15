@@ -426,6 +426,19 @@ including identity-cache hits.
 
 - `VerificationError`: If any verification step fails — DNS resolution, DNSSEC, identity record parsing or validation, signature checks, key-set fetches, lifecycle-log checks, key age, policy flags, or status. Carries a VerificationCode identifying the failing step.
 
+### `refresh_domain`
+
+```python
+IdentityManager.refresh_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Fully verify fresh identity evidence, bypassing the cached identity result.
+
+Concurrent full acquisitions share network work, not status-only work.
+Each caller enforces its current peer, acceptance, and final freshness.
+Failure never falls back to cached evidence or extends its lifetime.
+Injected resource fetchers must revalidate their caches.
+
 ### `verify_log_evidence`
 
 ```python

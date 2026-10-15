@@ -205,7 +205,8 @@ finally:
     verifier.close()
 ```
 
-The verifier needs only an identity resolver, not local signing keys. It verifies
+The verifier requires a `RefreshingIdentityResolver` (implemented by
+`IdentityManager`), not local signing keys. It verifies
 both signatures, binds the directory key to the current DNSid `ku` signing key, and
 applies the resolver's entity acceptance on each invocation. Supply `peer_cert`
 in the options for the current application peer when `fl=mtls` applies; the
@@ -215,7 +216,9 @@ once in-flight verifications finish. Injected transports remain caller-owned.
 
 Discovery uses public-address-only HTTPS and rejects all redirects, including
 same-host redirects. The complete operation has a default 30-second deadline;
-`timeout` can lower it. Directory responses are not cached. For one-time semantics,
+`timeout` can lower it. Directories are fetched with `Cache-Control: no-cache`
+on every invocation; injected caches must revalidate and cannot serve stale evidence.
+For one-time semantics,
 supply an atomic `replay_policy`
 callback (see the [API reference](https://docs.dnsid.ai/reference/py/profile-web-bot-auth/)).
 Without it, time validity limits reuse but does not detect it. Applications must
@@ -239,6 +242,25 @@ query, fragment, or credentials; use `jwks_uri` for a direct endpoint. Directory
 signatures cannot have future `created` timestamps, even within clock skew.
 Nested signing is unsupported. Only the current DNSid operational key is accepted;
 rotation can invalidate outstanding old-key requests without an overlap period.
+After both signatures verify, a current-key mismatch permits one full identity
+refresh per domain per five seconds. Concurrent retries are suppressed; failed
+attempts consume the allowance. Refresh never bypasses acceptance or revocation.
+
+WBA discovery must not identify the live `ku` endpoint, including query/fragment
+variants. Supply `ku_url` to `WBAHttpSigner` when locally known to reject invalid
+`jwks_uri` configuration before signing. Verification checks authenticated `ku`.
+Directory serving backdates signatures by `min(5, ttl - 1)` seconds and emits signed
+`max-age=N, must-revalidate`, with at most 295 seconds at the default TTL. Disable
+all CDN stale-serving overrides, `stale-while-revalidate`, and `stale-if-error`.
+
+Use the shared managed rotation/recovery workflow and pause request/directory
+signing during rotation; do not publish overlapping live `ku` keys. Disable
+signing and use revocation/reissuance for suspected key compromise. Cache and
+publication delays can delay new-key acceptance; short TTLs do not revoke a key.
+Unrestricted WBA signing-key access also authorizes `KEY_ROTATION`, not just
+crawler requests. Keeping `ek` off the signing fleet does not remove that authority.
+Dedicated WBA-key delegation requires a separate security design before broad
+multi-node deployment.
 
 ### JWT bot bearer authentication
 
