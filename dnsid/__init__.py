@@ -111,6 +111,7 @@ from .exceptions import (
     LifecycleVerificationError,
     ManagedKeyRotationActivationError,
     ManagedKeyRotationSubmissionError,
+    NoActiveSigningKeyError,
     ParseError,
     RegistryRequestError,
     ValidationError,
@@ -377,6 +378,7 @@ __all__ = [
     "RegistryRequestError",
     "VerificationError",
     "ArgumentError",
+    "NoActiveSigningKeyError",
     "NetworkError",
     "OAuthError",
     # Enumerations

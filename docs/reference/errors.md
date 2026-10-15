@@ -156,6 +156,16 @@ from dnsid import ArgumentError
 
 Caller-supplied argument is invalid (wrong format, reserved field override, etc.).
 
+## `NoActiveSigningKeyError`
+
+```python
+from dnsid import NoActiveSigningKeyError
+```
+
+*Bases:* `ArgumentError`
+
+Provider state has no active signing key; not a key-access failure.
+
 ## `NetworkError`
 
 ```python

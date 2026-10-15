@@ -380,6 +380,7 @@ PAGES: list[dict] = [
             "LifecycleVerificationError",
             "LifecycleErrorCategory",
             "ArgumentError",
+            "NoActiveSigningKeyError",
             "NetworkError",
             "OAuthError",
             "DNSSECState",
