@@ -14,7 +14,7 @@ import httpcore
 import pytest
 
 from dnsid import verification_budget
-from dnsid._https_client import async_fetch_agent_status
+from dnsid._https_client import async_fetch_agent_status, async_fetch_jwks
 from dnsid.enums import VerificationCode
 from dnsid.exceptions import VerificationError
 from dnsid.models import TransportConfig
@@ -169,7 +169,8 @@ async def test_stream_recomputes_deadlines_and_preserves_tls_metadata():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("trusted,host", [(True, "agent.test"), (False, "agent.test"), (True, "other.test")])
-async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, host):
+@pytest.mark.parametrize("kind", ["status", "jwks"])
+async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, host, kind):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -201,8 +202,11 @@ async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, h
         try:
             headers = await reader.readuntil(b"\r\n\r\n")
             assert b"Host: agent.test:" in headers
-            body = b'{"state":"ACTIVE"}'
-            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 18\r\nConnection: close\r\n\r\n" + body)
+            body = b'{"state":"ACTIVE"}' if kind == "status" else b'{"keys":[]}'
+            writer.write(
+                f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+                + body
+            )
             await writer.drain()
         finally:
             writer.close()
@@ -221,13 +225,26 @@ async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, h
             patch.object(asyncio.get_running_loop(), "run_in_executor",
                          side_effect=AssertionError("unexpected worker")),
         ):
+            call = (
+                async_fetch_agent_status(f"https://{host}:{port}/status", transport=transport)
+                if kind == "status" else async_fetch_jwks(
+                    f"https://{host}:{port}/jwks", host, transport=transport,
+                )
+            )
             if trusted and host == "agent.test":
-                status = await async_fetch_agent_status(f"https://{host}:{port}/status", transport=transport)
-                assert status.state == "ACTIVE"
+                result = await call
+                if kind == "status":
+                    assert result.state == "ACTIVE"
+                else:
+                    jwks, cert = result
+                    assert jwks.keys == []
+                    assert cert.der == certificate.public_bytes(serialization.Encoding.DER)
+                    assert cert.san_dns_names == ["agent.test"]
+                    assert cert.not_after == certificate.not_valid_after_utc
                 await asyncio.wait_for(finished.wait(), 2)
             else:
                 with pytest.raises(VerificationError) as error:
-                    await async_fetch_agent_status(f"https://{host}:{port}/status", transport=transport)
+                    await call
                 assert error.value.code == VerificationCode.TLS_ERROR
                 assert not finished.is_set()
     assert names == [host]

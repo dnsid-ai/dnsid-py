@@ -443,9 +443,10 @@ IdentityManager.async async_verify_domain(domain: str, peer_cert: TLSCertificate
 Verify without blocking the event loop; enforce the same policy as verify_domain.
 
 Fresh cache hits, shared waits and default stale-status refreshes need
-no worker thread. Cold verification and injected synchronous fetchers
-run in workers. Shared work has its own 30-second budget; caller
-cancellation or deadlines stop only that caller's wait. Use ``aclose()``
+no worker thread. Async-capable injected fetchers are also awaited for
+stale-status refreshes. Cold verification and sync-only fetchers run in
+workers. Shared work has its own 30-second budget; caller cancellation
+or deadlines stop only that caller's wait. Use ``aclose()``
 or ``async with`` to drain background work before closing resources.
 
 ### `refresh_domain`
@@ -573,13 +574,19 @@ Optional dependencies for IdentityManager.
 All fields default to None; the manager uses built-in defaults when omitted.
 Verification dependencies must be safe for concurrent use and honor the
 remaining verification budget. Blocking adapters run in workers even for
-synchronous callers. Injected dependencies remain caller-owned.
+synchronous callers. Optional AsyncDNSResolver, AsyncHTTPSFetcher and
+AsyncLogReader capabilities supplement the existing synchronous interfaces;
+adapters must also provide synchronous methods. AsyncHTTPSFetcher is used for
+stale-status refreshes; cold evidence still runs in workers. Injected
+dependencies remain caller-owned. Async adapters must support concurrent
+calls on the event loops used by the application; the manager does not move
+loop-bound clients between loops.
 
 **Attributes:**
 
 - `log_registry` (`LogRegistry | None`): Registry of log-method bindings. Used to derive the local log for config.identity.log_ref and to construct readers for counterparty logs during verification.
 - `dns_resolver` (`DNSResolver | None`): DNS resolver used for _dnsid TXT lookups. Omit to use the built-in default resolver: system DNS or a ``host:port`` server (neither reports DNSSEC state), or DNS-over-HTTPS when config.transport.dns_server is an ``http(s)://`` URL (reports DNSSEC state from the AD bit). System and ``host:port`` resolution report ``UNKNOWN``, which the default ``AUTO`` policy accepts and preserves. Inject a DNSSEC-aware resolver for ``VALIDATED`` or ``REQUIRED`` policy.
-- `https_fetcher` (`HTTPSFetcher | None`): HTTPS fetcher used for JWKS and status endpoint requests. Omit to use the SDK's default transport.
+- `https_fetcher` (`HTTPSFetcher | None`): HTTPS fetcher used for JWKS and status endpoint requests. Omit to use the SDK's default transport. An implementation of AsyncHTTPSFetcher is awaited during async stale-status refreshes.
 - `cache` (`IdentityCache | None`): Cache for verified identities. Defaults to an in-memory cache.
 - `entity_key_provider` (`KeyProvider | None`): Accountable-entity key provider, used only for _dnsid identity record signing and entity lifecycle events. Keep separate from the agent key_provider; for draft 01 the current entity and agent public keys MUST be distinct.
 

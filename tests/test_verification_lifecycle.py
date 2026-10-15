@@ -11,7 +11,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from dnsid import JWKS, VerificationCode, remaining_seconds, verification_budget
+from dnsid import JWKS, HTTPSFetcher, VerificationCode, remaining_seconds, verification_budget
 from dnsid.exceptions import VerificationError
 from tests.test_verification_coalescing import _manager_fixture
 
@@ -64,7 +64,7 @@ async def test_short_async_leader_cannot_shorten_followers_deadline(verifier, mo
     if mode == "cold":
         resolver.started, resolver.release = started, release
     elif mode == "injected":
-        manager._https_fetcher = MagicMock()
+        manager._https_fetcher = MagicMock(spec=HTTPSFetcher)
         manager._https_fetcher.fetch_strict_json.side_effect = fetch
 
     async def short_call():

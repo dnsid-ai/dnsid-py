@@ -37,6 +37,9 @@ Use `await manager.async_verify_domain(domain)` and
 Fresh cache hits, shared waits, and default stale-status refreshes need no worker
 threads. Status refreshes use native async DNS and SSRF-safe HTTPS. Cold
 verification and injected synchronous HTTPS fetchers still use workers.
+Injected fetchers implementing `AsyncHTTPSFetcher` are awaited for stale-status
+refreshes. Optional `AsyncDNSResolver` and `AsyncLogReader` contracts prepare
+adapters for native async cold verification; that path is not implemented yet.
 Shared evidence has an independent 30-second budget. Cancellation or a request
 deadline stops only that caller's wait. Use `async with manager` or
 `await manager.aclose()` at shutdown to drain owned work and close resources.

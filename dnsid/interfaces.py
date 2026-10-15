@@ -377,6 +377,77 @@ class LogReader(ABC):
         )
 
 
+@runtime_checkable
+class AsyncLogReader(Protocol):
+    """Optional async read capability of a synchronous LogReader.
+
+    Registered factories continue to return LogReader instances. A reader may
+    additionally implement this contract without changing its synchronous API.
+    Canonical serialization remains synchronous. Async reads have the same
+    proof, timestamp, consistency and fail-closed requirements as LogReader.
+
+    These methods are reserved for native async cold verification; the current
+    manager still runs cold log reads in workers. Implementations must not block
+    the event loop, must honor the remaining verification budget, and must close
+    in-progress responses on cancellation. Blocking stores require worker offload
+    without splitting atomic checkpoint verification and advancement. Injected
+    readers and their resources remain caller-owned.
+    """
+
+    async def async_preload_history(self, domain: str, entity_key: JWK) -> None:
+        """Load authenticated history for subsequent lifecycle checks."""
+        ...
+
+    async def async_key_timestamp(
+        self, domain: str, key_thumbprint: str
+    ) -> datetime.datetime:
+        """Return a verified key binding timestamp, as LogReader.key_timestamp."""
+        ...
+
+    async def async_verify_non_revocation(
+        self, domain: str, at: datetime.datetime
+    ) -> LoggedStateEvidence:
+        """Verify complete, fresh, non-terminal history through *at*."""
+        ...
+
+    async def async_read_event(self, ref: LogRef) -> AnyLogEvent:
+        """Read an event with verified inclusion and timestamp proofs."""
+        ...
+
+    async def async_rebuild_history(self, domain: str) -> list[AnyLogEvent]:
+        """Rebuild verified chronological history, including consistency checks."""
+        ...
+
+    async def async_rebuild_history_through(
+        self,
+        domain: str,
+        final_entry_ref: str,
+        entity_key: JWK,
+        *,
+        max_depth: int,
+        max_events: int,
+        max_response_bytes: int,
+        seen_log_references: frozenset[str],
+    ) -> VerifiedCutoffHistory:
+        """Verify history through the exact signed cutoff within cumulative bounds."""
+        ...
+
+    async def async_verify_bilateral_binding(
+        self, record: DnsIdTxtRecord, entity_key: JWK, operational_key: JWK
+    ) -> Any:
+        """Verify both authorizing signatures and the identity's genesis binding."""
+        ...
+
+    async def async_verify_operational_continuity(
+        self,
+        domain: str,
+        initial_operational_thumbprint: str,
+        current_operational_thumbprint: str,
+    ) -> None:
+        """Verify the rotation chain connecting initial and current operational keys."""
+        ...
+
+
 # ---------------------------------------------------------------------------
 # NoopLogReader — returned for unknown ledger methods
 # ---------------------------------------------------------------------------
@@ -489,6 +560,24 @@ class DNSResolver(ABC):
         """
 
 
+@runtime_checkable
+class AsyncDNSResolver(Protocol):
+    """Optional async TXT lookup capability of a synchronous DNSResolver.
+
+    Supply the same object through IdentityManagerDependencies.dns_resolver; it
+    must still implement fetch_txt for synchronous callers. Native async cold
+    verification will use this capability; current cold lookups run in workers.
+    Return values, absolute-name handling, DNSSEC states and errors match
+    DNSResolver.fetch_txt. Implementations must not block the event loop and
+    must honor the remaining verification budget. Injected resolvers remain
+    caller-owned and must support concurrent calls on their supported event loops.
+    """
+
+    async def async_fetch_txt(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
+        """Fetch TXT records and DNSSEC validation state for an absolute name."""
+        ...
+
+
 # ---------------------------------------------------------------------------
 # HTTPSFetcher
 # ---------------------------------------------------------------------------
@@ -551,6 +640,34 @@ class HTTPSFetcher(ABC):
                 connect, request timeouts) — callers use the transient flag
                 to classify status-endpoint availability.
         """
+
+
+@runtime_checkable
+class AsyncHTTPSFetcher(Protocol):
+    """Optional async JSON fetch capability of a synchronous HTTPSFetcher.
+
+    Supply the same object through IdentityManagerDependencies.https_fetcher;
+    fetch_strict_json remains required for synchronous and cold verification.
+    Async stale-status refreshes prefer async_fetch_strict_json when available;
+    sync-only fetchers retain the worker fallback. Native async cold verification
+    will also use this capability for key sets.
+
+    TLS validation, redirect boundaries, peer certificate reporting and error
+    taxonomy match HTTPSFetcher.fetch_strict_json. Bound decoded bodies during
+    reads (64 KiB for status and 1 MiB for key sets), honor the remaining
+    verification budget, and close responses on cancellation. Methods must not
+    block the event loop. Injected fetchers and clients remain caller-owned;
+    implementations must support concurrent calls on their supported event loops.
+    """
+
+    async def async_fetch_strict_json(
+        self,
+        url: str,
+        allowed_host: str | None = None,
+        domain_boundary: bool = False,
+    ) -> tuple[dict[str, Any], TLSCertificate]:
+        """Fetch bounded JSON and its peer certificate under the sync HTTPS rules."""
+        ...
 
 
 # ---------------------------------------------------------------------------

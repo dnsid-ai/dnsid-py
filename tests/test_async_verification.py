@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from dnsid import AsyncIdentityResolver, TrustedEntity, verification_budget
+from dnsid import AsyncIdentityResolver, HTTPSFetcher, TrustedEntity, verification_budget
 from dnsid.enums import VerificationCode
 from dnsid.exceptions import VerificationError
 from dnsid.http_signatures import HttpSignatureProfile
@@ -152,7 +152,7 @@ async def test_executor_rejection_can_retry(ec_pair, warm):
     ):
         if warm:
             await manager.async_verify_domain(domain)
-            manager._https_fetcher = MagicMock()
+            manager._https_fetcher = MagicMock(spec=HTTPSFetcher)
             manager._https_fetcher.fetch_strict_json.return_value = (
                 {"state": "ACTIVE", "lastTransitionAt": datetime.datetime.now(datetime.UTC).isoformat()},
                 None,
