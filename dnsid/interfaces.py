@@ -104,6 +104,10 @@ class KeyProvider(ABC):
 
         The returned kid MUST NOT contain '#' because application-layer helpers
         encode key IDs as '{domain}#{kid}'.
+
+        Raises:
+            NoActiveSigningKeyError: If provider state has no active key.
+                Key-access failures must use a different error.
         """
 
     @abstractmethod
@@ -141,6 +145,15 @@ class KeyProvider(ABC):
     # ------------------------------------------------------------------
     # Management methods — called by operator code during key rotation
     # ------------------------------------------------------------------
+
+    def generation_algorithm(self) -> str:
+        """Return the JOSE algorithm used by generate_key without generating.
+
+        Defaults to the active key algorithm. Providers with independent
+        generation settings must override this method, including those that
+        generate without an active key.
+        """
+        return self.signing_key().signature_alg()
 
     @abstractmethod
     def generate_key(self) -> str:

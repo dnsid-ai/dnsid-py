@@ -172,7 +172,7 @@ class DefaultDNSResolver(DNSResolver):
                 txt_records.append(
                     TXTRecord(
                         strings=[s.encode("ascii") for s in strings],
-                        ttl=answer.get("TTL", 300),
+                        ttl=answer.get("TTL", 0),
                     )
                 )
 

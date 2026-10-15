@@ -279,7 +279,8 @@ only when absent (the trust section is then not inspected), and key
 providers are built from ``key_source`` only when ``dnsid.identity`` is
 present and the corresponding provider is absent. ``loaded.dnsid`` is
 validated first so invalid configuration never reads a key file or fetches
-a policy. Adds no configuration values.
+a policy. Selected providers are opened before policy fetch/discovery and
+matched against verified local publication before return. Adds no values.
 
 ## `identity_manager_from_environment`
 
