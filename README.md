@@ -87,7 +87,10 @@ Status refreshes use native async DNS and SSRF-safe HTTPS. Cold verification
 and injected synchronous HTTPS fetchers still use workers. Injected fetchers
 that also implement `AsyncHTTPSFetcher` are awaited for stale-status refreshes;
 keep their synchronous methods for cold verification and synchronous callers.
-Injected resources remain caller-owned.
+Injected resources remain caller-owned. The built-in C2SP reader also implements
+`AsyncLogReader`, with native bundle, tile and predecessor reads. Sync-only log
+adapters and atomic checkpoint-store operations use workers. The manager's cold
+pipeline has not yet switched to these async reader methods.
 Shared evidence has its own 30-second budget. Caller cancellation or deadlines
 stop only that caller's wait. Reuse one manager for the application lifetime;
 use `async with manager` or `await manager.aclose()` at shutdown to drain work
