@@ -7,6 +7,63 @@ description: "LogReader for C2SP tile-log transparency logs (dnsid.c2sp_tlog)."
 
 Everything on this page is imported from `dnsid.c2sp_tlog`. The subpackage is wire-compatible with the other DNSid SDKs' c2sp-tlog implementations.
 
+## `AsyncC2spBoundedResourceFetcher`
+
+```python
+from dnsid.c2sp_tlog import AsyncC2spBoundedResourceFetcher
+```
+
+*Bases:* `C2spBoundedResourceFetcher`, `Protocol`
+
+Optional native async capability of a synchronous bounded fetcher.
+
+Apply the same URL, decoded-byte, DNS/TLS and redirect guarantees. Honor the
+verification budget and close in-progress responses on cancellation. Injected
+resources remain caller-owned and must support concurrent calls on their
+supported event loops.
+
+### `async_fetch_bounded`
+
+```python
+AsyncC2spBoundedResourceFetcher.async async_fetch_bounded(url: str, max_bytes: int) -> bytes
+```
+
+Fetch bounded decoded bytes, closing the response on cancellation.
+
+## `AsyncC2spTlogSource`
+
+```python
+from dnsid.c2sp_tlog import AsyncC2spTlogSource
+```
+
+*Bases:* `C2spTlogSource`, `Protocol`
+
+Optional async evidence reads with the same guarantees as C2spTlogSource.
+
+### `async_fetch_checkpoint`
+
+```python
+AsyncC2spTlogSource.async async_fetch_checkpoint(reference: ParsedC2spTlogLr) -> bytes
+```
+
+Fetch the raw signed checkpoint bytes without blocking.
+
+### `async_read_entry`
+
+```python
+AsyncC2spTlogSource.async async_read_entry(reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry
+```
+
+Return bounded, untrusted inclusion evidence without blocking.
+
+### `async_load_stream`
+
+```python
+AsyncC2spTlogSource.async async_load_stream(reference: ParsedC2spTlogLr, fqdn: str) -> C2spStreamEvidence
+```
+
+Return the same complete evidence as load_stream without blocking.
+
 ## `C2SP_SPEC_REVISIONS`
 
 ```python
@@ -286,6 +343,10 @@ LogReader over a C2SP tile log, verified against a local trust policy.
 
 Read paths authenticate the checkpoint and select the signed lifecycle
 from either a strictly verified per-domain bundle or a complete raw scan.
+AsyncLogReader methods use native async source/fetcher capabilities, with
+worker fallback for sync-only injected adapters. Both APIs share verified
+history caches and deterministic validation. Async checkpoint-store calls
+run atomically in tracked workers. Injected resources remain caller-owned.
 
 For a draft 01 record this reader performs the binding-level lifecycle
 checks verify_domain requires:
@@ -446,6 +507,70 @@ C2spTlogReader.rebuild_history_through(domain: str, final_entry_ref: str, entity
 ```
 
 Verify this stream through exactly *final_entry_ref*.
+
+### `async_preload_history`
+
+```python
+C2spTlogReader.async async_preload_history(domain: str, entity_key: JWK) -> None
+```
+
+Load authenticated history through native reads or sync-adapter fallback.
+
+### `async_key_timestamp`
+
+```python
+C2spTlogReader.async async_key_timestamp(domain: str, key_thumbprint: str) -> datetime.datetime
+```
+
+Return the same verified key introduction time as key_timestamp.
+
+### `async_verify_bilateral_binding`
+
+```python
+C2spTlogReader.async async_verify_bilateral_binding(record: object, entity_key: JWK, operational_key: JWK) -> BilateralBindingResult
+```
+
+Verify both anchors against asynchronously loaded lifecycle evidence.
+
+### `async_verify_operational_continuity`
+
+```python
+C2spTlogReader.async async_verify_operational_continuity(domain: str, initial_operational_thumbprint: str, current_operational_thumbprint: str) -> None
+```
+
+Verify rotations under the same lifecycle rules as the sync reader.
+
+### `async_verify_non_revocation`
+
+```python
+C2spTlogReader.async async_verify_non_revocation(domain: str, at: datetime.datetime) -> LoggedStateEvidence
+```
+
+Verify fresh, complete, non-terminal history through at.
+
+### `async_rebuild_history`
+
+```python
+C2spTlogReader.async async_rebuild_history(domain: str) -> list[AnyLogEvent]
+```
+
+Rebuild authenticated history, including recursive predecessor reads.
+
+### `async_rebuild_history_through`
+
+```python
+C2spTlogReader.async async_rebuild_history_through(domain: str, final_entry_ref: str, entity_key: JWK, *, max_depth: int, max_events: int, max_response_bytes: int, seen_log_references: frozenset[str]) -> VerifiedCutoffHistory
+```
+
+Verify the exact signed cutoff under cumulative migration bounds.
+
+### `async_read_event`
+
+```python
+C2spTlogReader.async async_read_event(ref: LogRef) -> AnyLogEvent
+```
+
+Verify an exact occurrence, its inclusion proof and lifecycle authority.
 
 ## `C2spTlogReaderOptions`
 
@@ -969,6 +1094,17 @@ SafeC2spResourceFetcher.fetch_bounded(url: str, max_bytes: int) -> bytes
 
 Fetch one HTTPS resource, requiring HTTP 200 and an exact byte bound.
 
+### `async_fetch_bounded`
+
+```python
+SafeC2spResourceFetcher.async async_fetch_bounded(url: str, max_bytes: int) -> bytes
+```
+
+Read natively with the sync guarantees and a per-call owned client.
+
+Clients are not shared between event loops. Closing this fetcher closes
+only its synchronous pool; each async call closes its own resources.
+
 ### `security_guarantees`
 
 ```python
@@ -1025,6 +1161,14 @@ Fetch the checkpoint under *prefix* and scan every entry beneath it.
 - `C2spTlogParseError`: If the checkpoint or an entry bundle is malformed.
 - `C2spTlogVerificationError`: If checkpoint authentication fails, a configured size limit is exceeded, or a bundle width is wrong.
 
+### `async_load`
+
+```python
+ScanStreamSource.async async_load(prefix: str) -> StreamEvidence
+```
+
+Scan standard resources asynchronously, authenticating before tile reads.
+
 ### `security_guarantees`
 
 ```python
@@ -1056,6 +1200,30 @@ ScanStreamSource.read_entry(reference: ParsedC2spTlogLr, index: int) -> C2spProv
 ```
 
 Return one entry plus a proof derived from a complete scan.
+
+### `async_fetch_checkpoint`
+
+```python
+ScanStreamSource.async async_fetch_checkpoint(reference: ParsedC2spTlogLr) -> bytes
+```
+
+Fetch one bounded checkpoint using the native capability if present.
+
+### `async_load_stream`
+
+```python
+ScanStreamSource.async async_load_stream(reference: ParsedC2spTlogLr, fqdn: str) -> C2spStreamEvidence
+```
+
+Load complete raw evidence through native async resource reads.
+
+### `async_read_entry`
+
+```python
+ScanStreamSource.async async_read_entry(reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry
+```
+
+Build an inclusion proof from an asynchronously fetched full scan.
 
 ## `SignedNoteKey`
 

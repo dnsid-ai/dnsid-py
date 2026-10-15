@@ -169,12 +169,14 @@ async def test_stream_recomputes_deadlines_and_preserves_tls_metadata():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("trusted,host", [(True, "agent.test"), (False, "agent.test"), (True, "other.test")])
-@pytest.mark.parametrize("kind", ["status", "jwks"])
+@pytest.mark.parametrize("kind", ["status", "jwks", "c2sp"])
 async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, host, kind):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.x509.oid import NameOID
+
+    from dnsid.c2sp_tlog import C2spTlogTransportError, SafeC2spResourceFetcher
 
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "agent.test")])
@@ -219,13 +221,18 @@ async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, h
         config = TransportConfig(
             ca_bundle_path=str(cert_file) if trusted else "", private_address_hosts=frozenset({host})
         )
-        transport = make_ssrf_safe_async_transport(config)
+        transport = make_ssrf_safe_async_transport(config) if kind != "c2sp" else None
+
+        async def fetch_resource():
+            with SafeC2spResourceFetcher(transport_config=config) as fetcher:
+                return await fetcher.async_fetch_bounded(f"https://{host}:{port}/checkpoint", 1024)
+
         with (
             patch("dnsid.safe_transport._async_resolve_addresses", return_value=["127.0.0.1"]),
             patch.object(asyncio.get_running_loop(), "run_in_executor",
                          side_effect=AssertionError("unexpected worker")),
         ):
-            call = (
+            call = fetch_resource() if kind == "c2sp" else (
                 async_fetch_agent_status(f"https://{host}:{port}/status", transport=transport)
                 if kind == "status" else async_fetch_jwks(
                     f"https://{host}:{port}/jwks", host, transport=transport,
@@ -235,6 +242,8 @@ async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, h
                 result = await call
                 if kind == "status":
                     assert result.state == "ACTIVE"
+                elif kind == "c2sp":
+                    assert result == b'{"keys":[]}'
                 else:
                     jwks, cert = result
                     assert jwks.keys == []
@@ -243,8 +252,11 @@ async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, h
                     assert cert.not_after == certificate.not_valid_after_utc
                 await asyncio.wait_for(finished.wait(), 2)
             else:
-                with pytest.raises(VerificationError) as error:
+                with pytest.raises((VerificationError, C2spTlogTransportError)) as error:
                     await call
-                assert error.value.code == VerificationCode.TLS_ERROR
+                if kind == "c2sp":
+                    assert isinstance(error.value, C2spTlogTransportError)
+                else:
+                    assert error.value.code == VerificationCode.TLS_ERROR
                 assert not finished.is_set()
     assert names == [host]

@@ -107,6 +107,7 @@ from .reader import (
     C2spTlogReaderOptions,
 )
 from .resource_fetcher import (
+    AsyncC2spBoundedResourceFetcher,
     C2spBoundedResourceFetcher,
     C2spResourceFetchGuarantees,
     SafeC2spResourceFetcher,
@@ -125,6 +126,7 @@ from .stream_bundle import (
     verify_c2sp_stream_bundle,
 )
 from .stream_source import (
+    AsyncC2spTlogSource,
     C2spConsistencyProofSource,
     C2spProvenEntry,
     C2spScanLimits,
@@ -189,6 +191,8 @@ DNSID_C2SP_ENVELOPE_VERSION: int = 1
 
 
 __all__ = [
+    "AsyncC2spBoundedResourceFetcher",
+    "AsyncC2spTlogSource",
     "C2spEventContext",
     "C2spConsistencyProofSource",
     "C2spSignatureValue",

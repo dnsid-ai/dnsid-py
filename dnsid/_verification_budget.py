@@ -109,6 +109,18 @@ def verification_work_context(
     return context
 
 
+async def async_run_blocking(function: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
+    """Offload an atomic blocking operation and track it through cancellation."""
+    context = contextvars.copy_context()
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(context.run, lambda: function(*args, **kwargs))
+    pool.shutdown(wait=False)
+    track_work = _background_work.get()
+    if track_work is not None:
+        track_work(future)
+    return await async_wait_for_verification(future)
+
+
 async def async_wait_for_verification(future: Future[T]) -> T:
     """Await shared work without cancelling it; observe failures after cancellation."""
     waiter = asyncio.wrap_future(future)

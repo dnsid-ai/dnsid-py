@@ -33,13 +33,13 @@ fetching still uses workers.
 - [x] Implement native async TXT lookup (system DNS, configured DNS and JSON DoH).
 - [x] Implement native async key-set reads with shared parsing, TLS identity,
       redirect rules, SSRF protection, byte limits and verification deadlines.
+- [x] Implement async C2SP resource reads, complete scans, stream bundles and
+      recursive predecessor verification using the shared lifecycle verifier.
+- [x] Offload atomic checkpoint verification/advancement, including SQLite and
+      custom stores; retain sync-only source/fetcher/predecessor compatibility.
 
 ## Remaining, in dependency order
 
-- [ ] Implement async C2SP resource fetching and log verification.
-      Files: `dnsid/c2sp_tlog/resource_fetcher.py`, `reader.py`,
-      `stream_bundle.py`. Preserve checkpoint atomicity and rollback protection;
-      SQLite and custom stores must not block the event loop.
 - [ ] Replace the evidence leader worker with native async orchestration.
       File: `dnsid/manager.py`. Preserve post-signature fanout, deterministic
       failure precedence, shared futures and per-caller policy checks.
@@ -59,9 +59,11 @@ fetching still uses workers.
 
 Cold verification and injected synchronous HTTPS fetchers still use shared workers.
 Async-capable injected HTTPS fetchers are awaited for stale-status refreshes.
-Native async TXT and JWKS helpers are implemented but not yet used by cold
-verification. Async log capabilities are defined; their implementations remain
-synchronous.
+Native async TXT, JWKS and C2SP reader methods are implemented but not yet used
+by the manager's cold-verification orchestration. C2SP async methods use native
+resource reads when supported; sync-only adapters and atomic checkpoint-store
+operations use tracked workers. Sync and async reader methods share verified
+history caches and deterministic validation.
 Injected adapters must retain their synchronous methods; async-only injection is
 not supported. Injected async resources remain caller-owned and must support
 concurrent calls on the application's event loops.
