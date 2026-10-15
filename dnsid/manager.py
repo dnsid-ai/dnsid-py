@@ -51,6 +51,7 @@ from ._utils import (
 from .enums import DNSSECMode, DNSSECState, EventType, LogSignerRole, VerificationCode
 from .exceptions import ArgumentError, ValidationError, VerificationError
 from .interfaces import (
+    AsyncHTTPSFetcher,
     DNSResolver,
     HTTPSFetcher,
     IdentityCache,
@@ -105,7 +106,13 @@ class IdentityManagerDependencies:
     All fields default to None; the manager uses built-in defaults when omitted.
     Verification dependencies must be safe for concurrent use and honor the
     remaining verification budget. Blocking adapters run in workers even for
-    synchronous callers. Injected dependencies remain caller-owned.
+    synchronous callers. Optional AsyncDNSResolver, AsyncHTTPSFetcher and
+    AsyncLogReader capabilities supplement the existing synchronous interfaces;
+    adapters must also provide synchronous methods. AsyncHTTPSFetcher is used for
+    stale-status refreshes; cold evidence still runs in workers. Injected
+    dependencies remain caller-owned. Async adapters must support concurrent
+    calls on the event loops used by the application; the manager does not move
+    loop-bound clients between loops.
 
     Attributes:
         log_registry: Registry of log-method bindings.  Used to derive the
@@ -120,7 +127,8 @@ class IdentityManagerDependencies:
             preserves.  Inject a DNSSEC-aware resolver for ``VALIDATED`` or
             ``REQUIRED`` policy.
         https_fetcher: HTTPS fetcher used for JWKS and status endpoint
-            requests.  Omit to use the SDK's default transport.
+            requests. Omit to use the SDK's default transport. An implementation
+            of AsyncHTTPSFetcher is awaited during async stale-status refreshes.
         cache: Cache for verified identities.  Defaults to an in-memory cache.
         entity_key_provider: Accountable-entity key provider, used only for
             _dnsid identity record signing and entity lifecycle events.  Keep
@@ -1410,9 +1418,10 @@ class IdentityManager:
         """Verify without blocking the event loop; enforce the same policy as verify_domain.
 
         Fresh cache hits, shared waits and default stale-status refreshes need
-        no worker thread. Cold verification and injected synchronous fetchers
-        run in workers. Shared work has its own 30-second budget; caller
-        cancellation or deadlines stop only that caller's wait. Use ``aclose()``
+        no worker thread. Async-capable injected fetchers are also awaited for
+        stale-status refreshes. Cold verification and sync-only fetchers run in
+        workers. Shared work has its own 30-second budget; caller cancellation
+        or deadlines stop only that caller's wait. Use ``aclose()``
         or ``async with`` to drain background work before closing resources.
         """
         with self._verification_call():
@@ -1446,7 +1455,10 @@ class IdentityManager:
             if leader:
                 native = (
                     self._complete_async_status_refresh(domain, pending, future, cached)
-                    if cached is not None and self._https_fetcher is None else None
+                    if cached is not None and (
+                        self._https_fetcher is None
+                        or isinstance(self._https_fetcher, AsyncHTTPSFetcher)
+                    ) else None
                 )
                 try:
                     if native is not None:
@@ -1650,11 +1662,17 @@ class IdentityManager:
         if latest.last_status_check_at > cached.last_status_check_at:
             return latest
         with _status_fetch_boundary():
-            # shortcut: per-refresh clients; pool when managers have a single-event-loop contract.
-            status = await async_fetch_agent_status(
-                latest.record.su,
-                transport=make_ssrf_safe_async_transport(self._transport_config),
-            )
+            if isinstance(self._https_fetcher, AsyncHTTPSFetcher):
+                from ._https_client import _parse_agent_status_from_dict
+
+                raw, _ = await self._https_fetcher.async_fetch_strict_json(latest.record.su)
+                status = _parse_agent_status_from_dict(raw)
+            else:
+                # shortcut: per-refresh clients; pool with a single-event-loop contract.
+                status = await async_fetch_agent_status(
+                    latest.record.su,
+                    transport=make_ssrf_safe_async_transport(self._transport_config),
+                )
             status.validate()
         return self._cache_refreshed_status(domain, latest, status)
 

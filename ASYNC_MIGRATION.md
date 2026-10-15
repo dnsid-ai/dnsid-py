@@ -28,15 +28,14 @@ fetching still uses workers.
 - [x] Allow custom outbound transports in signed async clients, with explicit ownership.
 - [x] Add bounded A2A reads, retry-aware responses, KMS offload, and failure-path cleanup.
 - [x] Add a runnable async verification example and async quickstart.
+- [x] Define optional async DNS, HTTPS and log adapter contracts while retaining sync injection.
+- [x] Await async-capable injected HTTPS fetchers for stale-status refreshes.
+- [x] Implement native async TXT lookup (system DNS, configured DNS and JSON DoH).
+- [x] Implement native async key-set reads with shared parsing, TLS identity,
+      redirect rules, SSRF protection, byte limits and verification deadlines.
 
 ## Remaining, in dependency order
 
-- [ ] Define async DNS, HTTPS and log adapter contracts while retaining sync injection.
-      Files: `dnsid/interfaces.py`, `dnsid/manager.py`.
-- [ ] Implement native async TXT lookup and key-set reads.
-      Files: `dnsid/_default_resolver.py`, `dnsid/_https_client.py`.
-      Reuse the async safe transport; preserve DNSSEC state, redirect boundaries,
-      response byte limits, TLS identity and verification deadlines.
 - [ ] Implement async C2SP resource fetching and log verification.
       Files: `dnsid/c2sp_tlog/resource_fetcher.py`, `reader.py`,
       `stream_bundle.py`. Preserve checkpoint atomicity and rollback protection;
@@ -59,6 +58,13 @@ fetching still uses workers.
 ## Current limits
 
 Cold verification and injected synchronous HTTPS fetchers still use shared workers.
+Async-capable injected HTTPS fetchers are awaited for stale-status refreshes.
+Native async TXT and JWKS helpers are implemented but not yet used by cold
+verification. Async log capabilities are defined; their implementations remain
+synchronous.
+Injected adapters must retain their synchronous methods; async-only injection is
+not supported. Injected async resources remain caller-owned and must support
+concurrent calls on the application's event loops.
 Default stale-status refreshes use native async DNS and HTTPS. Each shared refresh
 owns and closes one async HTTP client; connections are not pooled across refreshes.
 Shared evidence has a separate 30-second budget. Caller deadlines or cancellation

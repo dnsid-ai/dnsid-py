@@ -48,8 +48,6 @@ def fetch_jwks(
     client is created and closed for this call. A supplied *transport* handles TLS
     and DNS routing, so *verify* is then ignored.
     """
-    from ._crypto import jwk_from_dict
-
     _assert_https_redirect(ku)
     owned_client = client is None
     if client is None:
@@ -82,28 +80,10 @@ def fetch_jwks(
                     )
             except VerificationError:
                 raise
-            except httpx.ConnectError as exc:
-                raise VerificationError(
-                    VerificationCode.TLS_ERROR,
-                    f"TLS/connection error fetching JWKS at {url!r}: {exc}",
-                    transient=SSRF_BLOCK_MARKER not in str(exc),
-                ) from exc
             except httpx.TransportError as exc:
-                raise VerificationError(
-                    VerificationCode.DNS_RESOLUTION,
-                    f"Network error fetching JWKS at {url!r}: {exc}",
-                    transient=True,
-                ) from exc
+                raise _jwks_transport_error(url, exc) from exc
 
-            try:
-                data: dict[str, Any] = json.loads(body)
-                keys = [jwk_from_dict(k) for k in data.get("keys", [])]
-            except Exception as exc:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID,
-                    f"JWKS response is not valid JSON for {url!r}",
-                ) from exc
-            return JWKS(keys=keys), tls_cert
+            return _parse_jwks_body(body, url), tls_cert
     finally:
         if owned_client:
             client.close()
@@ -111,6 +91,90 @@ def fetch_jwks(
     raise VerificationError(
         VerificationCode.TLS_ERROR,
         f"Too many redirects fetching JWKS at {ku!r}",
+    )
+
+
+@async_verification_operation
+async def async_fetch_jwks(
+    ku: str,
+    allowed_host: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    domain_boundary: bool = False,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[JWKS, TLSCertificate]:
+    """Fetch bounded key sets asynchronously with the synchronous HTTPS rules.
+
+    Redirects stay within the exact host or selected domain boundary. The
+    default transport enforces SSRF protection. A supplied client remains
+    caller-owned; otherwise this call closes its client, including on cancellation.
+    """
+    _assert_https_redirect(ku)
+    owned_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(
+            transport=transport if transport is not None else make_ssrf_safe_async_transport(),
+            follow_redirects=False, timeout=_TIMEOUT,
+        )
+    url = ku
+    try:
+        for _ in range(_MAX_REDIRECTS + 1):
+            try:
+                async with client.stream(
+                    "GET", url, follow_redirects=False, timeout=remaining_seconds(10.0),
+                ) as response:
+                    if response.is_redirect:
+                        location = urljoin(url, response.headers.get("location", ""))
+                        _assert_same_host_https_redirect(location, allowed_host, domain_boundary)
+                        url = location
+                        continue
+                    tls_cert = _extract_tls_cert(response)
+                    if response.status_code != 200:
+                        raise VerificationError(
+                            VerificationCode.TLS_ERROR,
+                            f"JWKS fetch returned HTTP {response.status_code} for {url!r}",
+                        )
+                    body = await _async_read_limited(
+                        response, _MAX_JWKS_BODY_BYTES, VerificationCode.RECORD_INVALID,
+                        f"JWKS response body too large for {url!r}",
+                    )
+            except httpx.TransportError as exc:
+                raise _jwks_transport_error(url, exc) from exc
+            return _parse_jwks_body(body, url), tls_cert
+    finally:
+        if owned_client:
+            await client.aclose()
+    raise VerificationError(
+        VerificationCode.TLS_ERROR,
+        f"Too many redirects fetching JWKS at {ku!r}",
+    )
+
+
+def _parse_jwks_body(body: bytes, url: str) -> JWKS:
+    from ._crypto import jwk_from_dict
+
+    try:
+        data: dict[str, Any] = json.loads(body)
+        keys = [jwk_from_dict(k) for k in data.get("keys", [])]
+    except Exception as exc:
+        raise VerificationError(
+            VerificationCode.RECORD_INVALID,
+            f"JWKS response is not valid JSON for {url!r}",
+        ) from exc
+    return JWKS(keys=keys)
+
+
+def _jwks_transport_error(url: str, exc: httpx.TransportError) -> VerificationError:
+    if isinstance(exc, httpx.ConnectError):
+        return VerificationError(
+            VerificationCode.TLS_ERROR,
+            f"TLS/connection error fetching JWKS at {url!r}: {exc}",
+            transient=SSRF_BLOCK_MARKER not in str(exc),
+        )
+    return VerificationError(
+        VerificationCode.DNS_RESOLUTION,
+        f"Network error fetching JWKS at {url!r}: {exc}",
+        transient=True,
     )
 
 
@@ -220,15 +284,10 @@ async def async_fetch_agent_status(
                             f"Status endpoint returned HTTP {response.status_code} for {url!r}",
                             transient=response.status_code >= 500,
                         )
-                    body = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        remaining_seconds()
-                        if len(body) + len(chunk) > _MAX_STATUS_BODY_BYTES:
-                            raise VerificationError(
-                                VerificationCode.STATUS_NOT_ACTIVE,
-                                f"Status response body too large for {url!r}",
-                            )
-                        body.extend(chunk)
+                    body = await _async_read_limited(
+                        response, _MAX_STATUS_BODY_BYTES, VerificationCode.STATUS_NOT_ACTIVE,
+                        f"Status response body too large for {url!r}",
+                    )
             except httpx.TransportError as exc:
                 raise _status_transport_error(url, exc) from exc
             return _parse_status_body(body, url)
@@ -331,6 +390,19 @@ def _read_limited(
         else response.iter_raw()
     )
     for chunk in chunks:
+        remaining_seconds()
+        if len(body) + len(chunk) > limit:
+            raise VerificationError(code, message)
+        body.extend(chunk)
+    return bytes(body)
+
+
+async def _async_read_limited(
+    response: httpx.Response, limit: int, code: VerificationCode, message: str,
+) -> bytes:
+    """Read decoded async response bytes without exceeding the supplied limit."""
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
         remaining_seconds()
         if len(body) + len(chunk) > limit:
             raise VerificationError(code, message)

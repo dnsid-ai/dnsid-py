@@ -84,7 +84,10 @@ method or trust root; configure a matching reader (see the
 Fresh identity-cache hits, coalesced waits, and default stale-status refreshes
 use no worker threads; policy and signature checks still run on every request.
 Status refreshes use native async DNS and SSRF-safe HTTPS. Cold verification
-and injected synchronous HTTPS fetchers still use workers.
+and injected synchronous HTTPS fetchers still use workers. Injected fetchers
+that also implement `AsyncHTTPSFetcher` are awaited for stale-status refreshes;
+keep their synchronous methods for cold verification and synchronous callers.
+Injected resources remain caller-owned.
 Shared evidence has its own 30-second budget. Caller cancellation or deadlines
 stop only that caller's wait. Reuse one manager for the application lifetime;
 use `async with manager` or `await manager.aclose()` at shutdown to drain work
