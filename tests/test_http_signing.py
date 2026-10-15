@@ -684,6 +684,19 @@ class TestStructuredFieldsParsing:
         with pytest.raises(VerificationError, match="duplicate parameter"):
             SignatureParams.parse('sig1=("@method");created=1;created=2')
 
+    @pytest.mark.parametrize("query,expected", [
+        ("~*", "%7E*"), ("%7e%2a", "%7E*"), ("a+b", "a%20b"), ("a%20b", "a%20b"),
+        ("%2B", "%2B"), ("", ""), ("%C3%A9", "%C3%A9"),
+    ])
+    def test_query_param_form_encoding(self, query, expected):
+        from dnsid.models import SignatureParams
+
+        params = SignatureParams.parse('sig1=("@query-param";name="q");created=1')
+        req = HttpRequest(method="GET", url=f"https://api.example/search?q={query}")
+        assert _build_signature_base(req, params).decode().splitlines()[0] == (
+            f'"@query-param";name="q": {expected}'
+        )
+
     def test_query_param_reserved_characters_vector(self):
         from dnsid.models import SignatureParams
 

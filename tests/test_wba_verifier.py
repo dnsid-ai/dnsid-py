@@ -9,6 +9,7 @@ import pytest
 from dnsid import (
     JWKS,
     HttpRequest,
+    RefreshingIdentityResolver,
     TLSCertificate,
     VerifiedDomain,
     WBAHttpSigner,
@@ -29,15 +30,16 @@ DOMAIN = "agent.example.com"
 @pytest.fixture
 def setup():
     provider = LocalKeyProvider.generate()
-    resolver = MagicMock()
+    resolver = MagicMock(spec=RefreshingIdentityResolver)
     now = datetime.datetime.now(datetime.UTC)
     resolver.verify_domain.return_value = VerifiedDomain(
-        domain=DOMAIN, record=MagicMock(v="dnsid-draft-01", ka=""),
+        domain=DOMAIN, record=MagicMock(v="dnsid-draft-01", ka="", ku=f"https://{DOMAIN}/jwks"),
         jwks=JWKS(keys=[provider.signing_key()]), signing_key=provider.signing_key(),
         tls_cert=TLSCertificate(), registry_status=MagicMock(), verified_at=now,
         dns_ttl=300, key_bound_at=now, last_status_check_at=now,
         dnssec_state=DNSSECState.UNKNOWN, log_reader=MagicMock(),
     )
+    resolver.refresh_domain.return_value = resolver.verify_domain.return_value
     directory_hook = MagicMock(side_effect=lambda response: response)
     fetched = []
 
@@ -67,11 +69,12 @@ def test_success_non_default_label_and_peer(setup):
 @pytest.mark.parametrize("variant", [WBAVariant.KEY_MISMATCH, WBAVariant.TAMPERED,
                                      WBAVariant.EXPIRED, WBAVariant.NO_SIG])
 def test_broken_requests(setup, variant):
-    provider, _, verifier, _, opts, _, _ = setup
+    provider, resolver, verifier, _, opts, _, _ = setup
     req = HttpRequest(method="POST", url="https://service.example/api", body=b"hello")
     WBAHttpSigner(provider, DOMAIN).sign(req, variant)
     with pytest.raises(VerificationError):
         verifier.verify_web_bot_auth_signed_request(req, opts)
+    resolver.refresh_domain.assert_not_called()
 
 
 @pytest.mark.parametrize("field,value", [
@@ -106,7 +109,7 @@ def test_ambiguous_complete_wba_signatures(setup):
                                        "thumbprint", "private", "status", "media", "depth",
                                        "size", "keys"])
 def test_invalid_directory(setup, mutation):
-    _, _, verifier, req, opts, hook, _ = setup
+    _, resolver, verifier, req, opts, hook, _ = setup
 
     def corrupt(response):
         if mutation == "signature":
@@ -142,6 +145,7 @@ def test_invalid_directory(setup, mutation):
     hook.side_effect = corrupt
     with pytest.raises(VerificationError):
         verifier.verify_web_bot_auth_signed_request(req, opts)
+    resolver.refresh_domain.assert_not_called()
 
 
 @pytest.mark.parametrize("reason", ["missing identity", "acceptance denied", "missing mtls peer"])
@@ -150,6 +154,7 @@ def test_dnsid_failure_never_falls_back(setup, reason):
     resolver.verify_domain.side_effect = VerificationError(VerificationCode.SIGNATURE_INVALID, reason)
     with pytest.raises(VerificationError, match=reason):
         verifier.verify_web_bot_auth_signed_request(req, opts)
+    resolver.refresh_domain.assert_not_called()
 
 
 def test_each_invocation_rechecks_acceptance_and_key_state(setup):
@@ -205,7 +210,7 @@ def test_expiry_during_network_work(setup):
 
     hook.side_effect = advance_clock
     with patch("dnsid.wba_verifier._now", return_value=now) as clock:
-        with pytest.raises(VerificationError, match="timestamps"):
+        with pytest.raises(VerificationError, match="timestamps|HTTP-stale"):
             verifier.verify_web_bot_auth_signed_request(req, opts)
 
 

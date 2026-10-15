@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from urllib.parse import urlsplit
+
+import httpx
 
 from ._utils import b64_std_encode, b64url_encode, jose_alg_to_http_sig_alg, normalize_fqdn
 
@@ -71,6 +74,19 @@ def _is_https_origin(uri: str) -> bool:
         host = f"[{host}]"
     port = f":{parsed.port}" if parsed.port not in (None, 443) else ""
     return bool(host) and uri.isascii() and uri == f"https://{host}{port}"
+
+
+def _wba_identifier(uri: str) -> str:
+    """Normalize a WBA URL per RFC 3986, excluding query and fragment."""
+    def normalize_escape(match: re.Match[str]) -> str:
+        char = chr(int(match[0][1:], 16))
+        return char if char in (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+        ) else match[0].upper()
+
+    uri = re.sub(r"%[0-9a-fA-F]{2}", normalize_escape, uri)
+    url = httpx.URL(uri).copy_with(query=None, fragment=None)
+    return str(url.copy_with(raw_path=url.raw_path or b"/"))
 
 
 @dataclass
@@ -148,6 +164,7 @@ class WBAHttpSigner:
         *,
         config: WebBotAuthConfig | None = None,
         signature_agent: str | None = None,
+        ku_url: str = "",
         label: str = DEFAULT_LABEL,
         expires_in_seconds: int | float | None = None,
     ) -> None:
@@ -162,6 +179,7 @@ class WBAHttpSigner:
                 at construction.
             signature_agent: Back-compat override for the directory URL placed
                 in Signature-Agent.
+            ku_url: Known local operational JWKS URL; rejects matching jwks_uri discovery.
             label: Signature label and Signature-Agent dictionary member name
                 (profile default: ``sig1``).
             expires_in_seconds: Back-compat override for the request signature
@@ -184,7 +202,12 @@ class WBAHttpSigner:
         try:
             parsed_agent = urlsplit(directory_url)
             parsed_agent.port
-        except ValueError as exc:
+            if (
+                self._config.signature_agent_type == "jwks_uri" and ku_url
+                and _wba_identifier(directory_url) == _wba_identifier(ku_url)
+            ):
+                raise ArgumentError("Web Bot Auth discovery must not identify local ku")
+        except (ValueError, httpx.InvalidURL) as exc:
             raise ArgumentError("invalid Web Bot Auth Signature-Agent URI") from exc
         if (
             parsed_agent.scheme != "https" or not parsed_agent.hostname
@@ -230,6 +253,7 @@ class WBAHttpSigner:
         Raises:
             ArgumentError: If the TTL is invalid, Signature-Agent is disabled,
                 the key is not Ed25519, or an additional component is unsupported.
+                Also raised if the signing key changes during signing.
                 Nested signing is not supported because signature fields are replaced.
         """
         import hashlib
@@ -243,7 +267,7 @@ class WBAHttpSigner:
         ttl = opts.ttl if opts.ttl is not None else self._expires_in
         _validate_ttl(ttl)
         ttl = int(ttl)
-        signing_key = self._key_provider.signing_key()
+        signing_key = JWK.from_dict(self._key_provider.signing_key().to_dict())
         signing_alg = signing_key.signature_alg()
         if signing_alg != "EdDSA":
             raise ArgumentError("Web Bot Auth signing requires Ed25519")
@@ -306,6 +330,8 @@ class WBAHttpSigner:
             sig_bytes = LocalKeyProvider.generate().sign(sig_base)
         else:
             sig_bytes = self._key_provider.sign(sig_base)
+            if not signing_key.verify(sig_base, sig_bytes):
+                raise ArgumentError("Web Bot Auth signing key changed during signing")
 
         req.set_header("signature-input", params.serialize())
         req.set_header("signature", f"{self._label}=:{b64_std_encode(sig_bytes)}:")
@@ -386,7 +412,10 @@ def serve_http_message_signatures_directory(
     ``application/http-message-signatures-directory+json`` media type and one
     HTTP Message Signature over ``"@authority";req``, ``content-type``,
     ``cache-control``, and ``content-digest`` with
-    ``tag="http-message-signatures-directory"``.
+    ``tag="http-message-signatures-directory"``. Signatures are backdated by
+    min(5, ttl - 1) seconds without extending their lifetime. Cache-Control caps
+    freshness at remaining validity and requires revalidation; disable CDN stale
+    serving, stale-while-revalidate, and stale-if-error for this endpoint.
 
     Args:
         req: The inbound directory request; its authority is covered by the
@@ -400,13 +429,14 @@ def serve_http_message_signatures_directory(
         A WBADirectoryResponse with status, headers, and JWKS body.
 
     Raises:
-        ArgumentError: If the signing key is not Ed25519.
+        ArgumentError: If the key is not Ed25519, changes during signing, or the
+            signature expires during signing.
     """
     import hashlib
     import json
 
     cfg = replace(config) if config is not None else WebBotAuthConfig()
-    signing_key = key_provider.signing_key()
+    signing_key = JWK.from_dict(key_provider.signing_key().to_dict())
     signing_alg = signing_key.signature_alg()
     if signing_alg != "EdDSA":
         raise ArgumentError("Web Bot Auth directory signing requires Ed25519")
@@ -415,10 +445,11 @@ def serve_http_message_signatures_directory(
     body = json.dumps({"keys": [directory_key]}, separators=(",", ":")).encode()
     digest = hashlib.sha256(body).digest()
     ttl = int(cfg.directory_signature_ttl)
+    backdate = min(5, ttl - 1)
 
     headers = {
         "content-type": WBA_DIRECTORY_MEDIA_TYPE,
-        "cache-control": f"max-age={ttl}",
+        "cache-control": f"max-age={ttl - backdate}, must-revalidate",
         "content-digest": f"sha-256=:{b64_std_encode(digest)}:",
     }
 
@@ -427,8 +458,8 @@ def serve_http_message_signatures_directory(
         label=DEFAULT_LABEL,
         key_id=signing_key.thumbprint(),
         alg=jose_alg_to_http_sig_alg(signing_alg),
-        created=now_ts,
-        expires=now_ts + ttl,
+        created=now_ts - backdate,
+        expires=now_ts - backdate + ttl,
         nonce=_generate_wba_nonce(),
         components=[
             "@authority;req",
@@ -442,6 +473,10 @@ def serve_http_message_signatures_directory(
     response = HttpRequest(method=req.method, url=req.url, headers=headers, body=body, status=200)
     sig_base = _build_signature_base(response, params, request_context=req)
     sig_bytes = key_provider.sign(sig_base)
+    if not signing_key.verify(sig_base, sig_bytes):
+        raise ArgumentError("Web Bot Auth directory signing key changed during signing")
+    if _now().timestamp() >= now_ts - backdate + ttl:
+        raise ArgumentError("directory signature expired during signing")
 
     headers["signature-input"] = params.serialize()
     headers["signature"] = f"{DEFAULT_LABEL}=:{b64_std_encode(sig_bytes)}:"

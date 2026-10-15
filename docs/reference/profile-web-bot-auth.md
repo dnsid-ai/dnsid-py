@@ -208,7 +208,7 @@ required for DNSid conformance.
 ### `WBAHttpSigner` constructor
 
 ```python
-WBAHttpSigner(key_provider: KeyProvider, domain: str, *, config: WebBotAuthConfig | None = None, signature_agent: str | None = None, label: str = DEFAULT_LABEL, expires_in_seconds: int | float | None = None) -> None
+WBAHttpSigner(key_provider: KeyProvider, domain: str, *, config: WebBotAuthConfig | None = None, signature_agent: str | None = None, ku_url: str = '', label: str = DEFAULT_LABEL, expires_in_seconds: int | float | None = None) -> None
 ```
 
 Initialize the signer for a local DNSid identity.
@@ -219,6 +219,7 @@ Initialize the signer for a local DNSid identity.
 - `domain` (`str`): The DNSid FQDN, used to derive the default directory URL.
 - `config` (`WebBotAuthConfig | None`): Optional `WebBotAuthConfig`, copied and validated at construction. — default `None`
 - `signature_agent` (`str | None`): Back-compat override for the directory URL placed in Signature-Agent. — default `None`
+- `ku_url` (`str`): Known local operational JWKS URL; rejects matching jwks_uri discovery. — default `''`
 - `label` (`str`): Signature label and Signature-Agent dictionary member name (profile default: ``sig1``). — default `DEFAULT_LABEL`
 - `expires_in_seconds` (`int | float | None`): Back-compat override for the request signature TTL. — default `None`
 
@@ -249,7 +250,7 @@ checked by the verifier, not a property of the signature bytes.
 
 **Raises:**
 
-- `ArgumentError`: If the TTL is invalid, Signature-Agent is disabled, the key is not Ed25519, or an additional component is unsupported. Nested signing is not supported because signature fields are replaced.
+- `ArgumentError`: If the TTL is invalid, Signature-Agent is disabled, the key is not Ed25519, or an additional component is unsupported. Also raised if the signing key changes during signing. Nested signing is not supported because signature fields are replaced.
 
 ## `WBAHttpVerifier`
 
@@ -264,12 +265,14 @@ validates Web PKI and pins connections to public DNS addresses. An injected
 transport is trusted infrastructure and MUST enforce the same constraints,
 on every connection, reject redirects, and honor remaining_seconds().
 Injected transports must preserve uncoded response bytes and fields, without
-transparent decompression. This verifier does not cache directories; injected
-transports must not reuse evidence without enforcing its original HTTP age
-and freshness deadline, even when Date/Age fields are absent. Cache attribution
-must bind the normalized resolved URL and thumbprint within the policy context.
-Newer proofs replace older keys by signed created time; failed refreshes must
-not evict evidence, extend freshness, or permit stale success.
+transparent decompression. Directories are fetched unconditionally with
+Cache-Control: no-cache on every invocation; injected caches must revalidate
+and must never serve stale evidence. Visible Date/Age and max-age bound the
+operation, including DNSid refresh and replay checks. Fresh zero-freshness
+responses can serve their acquiring invocation. No local cache is maintained.
+A verified key mismatch permits one DNSid refresh per domain per five seconds;
+concurrent retries are suppressed, failures consume the allowance, and at
+most 1024 active/cooldown domains are retained. No stale-key fallback is allowed.
 The default secure transport and its connection pool are reused until close().
 Call close() after all verification operations finish. Injected transports
 remain caller-owned and must support concurrent use when the verifier is
@@ -284,7 +287,7 @@ operation has a default 30-second cooperative deadline.
 ### `WBAHttpVerifier` constructor
 
 ```python
-WBAHttpVerifier(resolver: IdentityResolver, *, config: WebBotAuthConfig | None = None, transport: httpx.BaseTransport | None = None) -> None
+WBAHttpVerifier(resolver: RefreshingIdentityResolver, *, config: WebBotAuthConfig | None = None, transport: httpx.BaseTransport | None = None) -> None
 ```
 
 Set the resolver and transport; copy and validate the configuration.
@@ -408,7 +411,10 @@ The body is a JWKS object served with the
 ``application/http-message-signatures-directory+json`` media type and one
 HTTP Message Signature over ``"@authority";req``, ``content-type``,
 ``cache-control``, and ``content-digest`` with
-``tag="http-message-signatures-directory"``.
+``tag="http-message-signatures-directory"``. Signatures are backdated by
+min(5, ttl - 1) seconds without extending their lifetime. Cache-Control caps
+freshness at remaining validity and requires revalidation; disable CDN stale
+serving, stale-while-revalidate, and stale-if-error for this endpoint.
 
 **Arguments:**
 
@@ -422,4 +428,4 @@ HTTP Message Signature over ``"@authority";req``, ``content-type``,
 
 **Raises:**
 
-- `ArgumentError`: If the signing key is not Ed25519.
+- `ArgumentError`: If the key is not Ed25519, changes during signing, or the signature expires during signing.

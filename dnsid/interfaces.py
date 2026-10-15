@@ -69,6 +69,21 @@ class IdentityResolver(Protocol):
         ...
 
 
+@runtime_checkable
+class RefreshingIdentityResolver(IdentityResolver, Protocol):
+    """Identity resolver with full verification that bypasses cached identity results."""
+
+    def refresh_domain(
+        self, domain: str, peer_cert: TLSCertificate | None = None,
+    ) -> VerifiedDomain:
+        """Acquire fresh evidence with the same peer, acceptance, and freshness checks.
+
+        Revalidate injected resource caches; never fall back to cached identity
+        evidence after failure. Cached DNS answers retain their remaining TTL.
+        """
+        ...
+
+
 # ---------------------------------------------------------------------------
 # KeyProvider
 # ---------------------------------------------------------------------------
@@ -461,6 +476,7 @@ class HTTPSFetcher(ABC):
     Implementations MUST be safe for concurrent use: after the record
     signature is authenticated, verify_domain fetches the status endpoint on
     a helper thread while the runtime JWKS and lifecycle-log work proceed.
+    Revalidate any resource cache on each call, including explicit identity refresh.
 
     The built-in fetcher enforces strict HTTPS and rejects su/JWKS hosts that
     resolve to non-public addresses. The only exception is a hostname matching

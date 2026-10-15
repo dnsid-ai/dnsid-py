@@ -349,8 +349,8 @@ def test_future_creation_only_allows_request_skew(setup, monkeypatch, future):
 
     def advance(response):
         params = SignatureParams.parse(response.headers["signature-input"])
-        params.created += 1
-        params.expires += 1
+        params.created = int(now.timestamp()) + 1
+        params.expires = params.created + 300
         response.headers["signature-input"] = params.serialize()
         return _resign_directory(response, provider)
 

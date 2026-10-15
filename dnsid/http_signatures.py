@@ -638,7 +638,7 @@ def _generate_nonce() -> str:
 def _build_signature_base(
     req: HttpRequest, params: SignatureParams, request_context: HttpRequest | None = None
 ) -> bytes:
-    from urllib.parse import parse_qsl, quote, urlsplit
+    from urllib.parse import parse_qsl, quote, unquote_plus, urlsplit
 
     _validate_component_identifiers(
         params.components, request_context=req.status is not None or request_context is not None
@@ -683,9 +683,7 @@ def _build_signature_base(
             value = urlsplit(req.url).scheme.lower()
         elif name == "@query-param":
             selected_name = str(parameter_values["name"])
-            decoded_name = __import__("urllib.parse", fromlist=["unquote_plus"]).unquote_plus(
-                selected_name
-            )
+            decoded_name = unquote_plus(selected_name)
             matches = [
                 value
                 for key, value in parse_qsl(urlsplit(req.url).query, keep_blank_values=True)
@@ -696,7 +694,7 @@ def _build_signature_base(
                     VerificationCode.RECORD_INVALID,
                     "@query-param selected parameter must be present exactly once",
                 )
-            value = quote(matches[0], safe="-._~")
+            value = quote(matches[0], safe="*-._").replace("~", "%7E")
         elif name == "@status":
             if type(response.status) is not int or not 100 <= response.status <= 599:
                 raise VerificationError(

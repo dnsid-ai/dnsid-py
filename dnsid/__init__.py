@@ -127,6 +127,7 @@ from .interfaces import (
     Log,
     LogReader,
     NoopLogReader,
+    RefreshingIdentityResolver,
 )
 from .jose import JoseConfig, JoseProfile
 from .local_key_provider import LocalKeyProvider
@@ -334,6 +335,7 @@ __all__ = [
     # Interfaces
     "AbstractRegistryClient",
     "IdentityResolver",
+    "RefreshingIdentityResolver",
     "KeyProvider",
     "Log",
     "LogReader",
