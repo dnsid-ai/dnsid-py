@@ -8,6 +8,8 @@ from collections import Counter
 from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from dnsid import (
     JWKS,
     DnsidConfig,
@@ -167,10 +169,12 @@ def _counting_future(expected_waiters: int):
     return CountingFuture, ready
 
 
-def test_32_cold_calls_share_all_reusable_verification(ec_pair):
+@pytest.mark.parametrize("ttl", [0, 300])
+def test_32_cold_calls_share_all_reusable_verification(ec_pair, ttl):
     manager, resolver, counters, domain, fetch_jwks, fetch_status, _ = _manager_fixture(
         ec_pair
     )
+    resolver.records[f"_dnsid.{domain}"].ttl = ttl
     resolver.started = threading.Event()
     resolver.release = threading.Event()
     future_type, all_waiters = _counting_future(31)
@@ -189,8 +193,10 @@ def test_32_cold_calls_share_all_reusable_verification(ec_pair):
     manager.close()
     assert not errors
     assert len(results) == 32
+    acquisitions = 32 if ttl == 0 else 1
+    assert len({id(result) for result in results}) == acquisitions
     assert counters == Counter(
-        dns=1, ek=1, ku=1, status=1, bilateral=1, continuity=1
+        dict.fromkeys(("dns", "ek", "ku", "status", "bilateral", "continuity"), acquisitions)
     )
 
 

@@ -55,7 +55,8 @@ def fetch_jwks(
     try:
         for _ in range(_MAX_REDIRECTS + 1):
             try:
-                with client.stream("GET", url, follow_redirects=False,
+                with client.stream("GET", url, headers={"Cache-Control": "no-cache"},
+                                   follow_redirects=False,
                                    timeout=remaining_seconds(10.0)) as response:
                     if response.is_redirect:
                         location = urljoin(url, response.headers.get("location", ""))
@@ -139,7 +140,7 @@ def fetch_agent_status(
                 with client.stream(
                     "GET",
                     url,
-                    headers={"Accept": "application/json"},
+                    headers={"Accept": "application/json", "Cache-Control": "no-cache"},
                     follow_redirects=False,
                     timeout=remaining_seconds(10.0),
                 ) as response:
@@ -251,10 +252,15 @@ def _read_limited(
     limit: int,
     code: VerificationCode,
     message: str,
+    *, decode_content: bool = True,
 ) -> bytes:
-    """Read at most *limit* decoded bytes without buffering an oversized body."""
+    """Read bounded content bytes, optionally preserving the received coding."""
     body = bytearray()
-    for chunk in response.iter_bytes():
+    chunks = (
+        response.iter_bytes() if decode_content or response.is_stream_consumed
+        else response.iter_raw()
+    )
+    for chunk in chunks:
         remaining_seconds()
         if len(body) + len(chunk) > limit:
             raise VerificationError(code, message)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -45,6 +46,30 @@ def _sig_valid(signer: WBAHttpSigner, req: HttpRequest) -> bool:
     prefix = f"{params.label}=:"
     raw = b64_std_decode(req.get_header("signature")[len(prefix) : -1])
     return signer._key_provider.signing_key().verify(sig_base, raw)
+
+
+@pytest.mark.parametrize("directory", [False, True])
+@pytest.mark.parametrize("mutate_advertised_key", [False, True])
+def test_rotation_between_key_selection_and_signing_fails_closed(directory, mutate_advertised_key):
+    provider, replacement = LocalKeyProvider.generate(), LocalKeyProvider.generate()
+    advertised = provider.signing_key()
+    rotating = MagicMock(wraps=provider)
+    rotating.signing_key.return_value = advertised
+
+    def sign(payload):
+        if mutate_advertised_key:
+            advertised._raw = replacement.signing_key().to_dict()
+        return replacement.sign(payload)
+
+    rotating.sign.side_effect = sign
+    req = _req()
+    with pytest.raises(ArgumentError, match="key changed during signing"):
+        if directory:
+            serve_http_message_signatures_directory(req, rotating)
+        else:
+            WBAHttpSigner(rotating, DOMAIN).sign(req)
+    assert not req.has_header("signature")
+    assert not req.has_header("signature-input")
 
 
 def test_active_is_wba_compliant_and_valid():
@@ -116,13 +141,14 @@ def test_ttl_override_via_options():
     assert params.expires == params.created + 120
 
 
-def test_signature_agent_suppressed_via_options():
+def test_signature_agent_cannot_be_suppressed():
     signer, req = _signer(), _req()
-    signer.sign(req, options=WebBotAuthSigningOptions(signature_agent=False))
-    assert req.get_header("signature-agent") == ""
-    params = SignatureParams.parse(req.get_header("signature-input"))
-    assert all(not c.startswith("signature-agent") for c in params.components)
-    assert _sig_valid(signer, req)
+    before = req.headers.copy()
+    with pytest.raises(ArgumentError, match="requires Signature-Agent"):
+        signer.sign(req, options=WebBotAuthSigningOptions(signature_agent=False))
+    assert req.headers == before
+    with pytest.raises(ArgumentError, match="requires Signature-Agent"):
+        WebBotAuthConfig(include_signature_agent=False)
 
 
 def test_preserves_other_signature_agent_members():
@@ -152,6 +178,14 @@ def test_unknown_additional_component_rejected():
         signer.sign(req, options=WebBotAuthSigningOptions(additional_components=["Bad-Header"]))
 
 
+@pytest.mark.parametrize("component", ['signature;key="inner"', 'signature-input;key="inner"'])
+def test_nested_signing_is_not_supported(component):
+    signer, req = _signer(), _req()
+    signer.sign(req)
+    with pytest.raises(ArgumentError, match="nested signing"):
+        signer.sign(req, options=WebBotAuthSigningOptions(additional_components=[component]))
+
+
 def test_directory_response_is_signed_and_typed():
     from dnsid._utils import b64_std_decode as _b64d
 
@@ -165,7 +199,7 @@ def test_directory_response_is_signed_and_typed():
 
     assert res.status == 200
     assert res.headers["content-type"] == WBA_DIRECTORY_MEDIA_TYPE
-    assert res.headers["cache-control"] == "max-age=300"
+    assert res.headers["cache-control"] == "max-age=295, must-revalidate"
 
     import json as _json
 
@@ -203,15 +237,16 @@ def test_signature_agent_must_be_https_uri():
         WBAHttpSigner(LocalKeyProvider.generate(), DOMAIN, signature_agent=DOMAIN)
 
 
-def test_directory_discovery_emits_origin_and_explicit_type():
+@pytest.mark.parametrize("origin", ["https://bots.example", "https://bots.example:8443"])
+def test_directory_discovery_emits_origin_and_explicit_type(origin):
     signer = WBAHttpSigner(
         LocalKeyProvider.generate(),
         DOMAIN,
-        config=WebBotAuthConfig(directory_url="https://bots.example/dir"),
+        config=WebBotAuthConfig(directory_url=origin),
     )
     req = _req()
     signer.sign(req)
-    assert req.get_header("signature-agent") == 'sig1="https://bots.example";type=directory'
+    assert req.get_header("signature-agent") == f'sig1="{origin}";type=directory'
 
 
 def test_jwks_uri_discovery_keeps_direct_endpoint():

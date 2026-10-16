@@ -89,7 +89,9 @@ class SafeC2spResourceFetcher:
         timeout = remaining_seconds(self._timeout_seconds)
         deadline = self._clock() + timeout
         try:
-            with self._client.stream("GET", url, timeout=timeout) as response:
+            with self._client.stream(
+                "GET", url, headers={"Cache-Control": "no-cache"}, timeout=timeout,
+            ) as response:
                 if response.is_redirect:
                     raise C2spTlogTransportError(
                         f"C2SP resource redirect rejected for {url}",

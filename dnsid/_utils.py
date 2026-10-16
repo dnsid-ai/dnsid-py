@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import datetime
 import re
+
+
+def _parse_ka_duration(ka: str) -> datetime.timedelta:
+    return datetime.timedelta(days={"24h": 1, "7d": 7, "30d": 30, "90d": 90}[ka])
+
 
 # ---------------------------------------------------------------------------
 # Algorithm mappings

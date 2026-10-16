@@ -127,6 +127,7 @@ from .interfaces import (
     Log,
     LogReader,
     NoopLogReader,
+    RefreshingIdentityResolver,
 )
 from .jose import JoseConfig, JoseProfile
 from .local_key_provider import LocalKeyProvider
@@ -215,6 +216,7 @@ from .wba_signer import (
     WebBotAuthSigningOptions,
     serve_http_message_signatures_directory,
 )
+from .wba_verifier import WBAHttpVerifier, WebBotAuthVerificationOptions
 from .web_bot_auth import (
     BotAuthConfig,
     BotIdentity,
@@ -333,6 +335,7 @@ __all__ = [
     # Interfaces
     "AbstractRegistryClient",
     "IdentityResolver",
+    "RefreshingIdentityResolver",
     "KeyProvider",
     "Log",
     "LogReader",
@@ -355,6 +358,8 @@ __all__ = [
     "publish_allowed_version",
     # Web Bot Auth profile
     "WBAHttpSigner",
+    "WBAHttpVerifier",
+    "WebBotAuthVerificationOptions",
     "WBAVariant",
     "WBADirectoryResponse",
     "WebBotAuthConfig",

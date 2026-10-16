@@ -184,7 +184,94 @@ signed = http_sig.create_signed_http_request(req)
 vd = http_sig.verify_signed_http_request(signed)
 ```
 
-### Web bot authentication
+### Web Bot Auth (RFC 9421)
+
+Sign and verify DNSid WBA requests, including signed-directory discovery:
+
+```python
+from dnsid import (
+    HttpRequest, WBAHttpSigner, WBAHttpVerifier, WebBotAuthVerificationOptions,
+)
+
+request = HttpRequest(method="GET", url="https://target.example/api")
+WBAHttpSigner(key_provider, "agent.example").sign(request)
+verifier = WBAHttpVerifier(manager)
+try:
+    identity = verifier.verify_web_bot_auth_signed_request(
+        request,
+        WebBotAuthVerificationOptions(signer_domain="agent.example"),
+    )
+finally:
+    verifier.close()
+```
+
+The verifier requires a `RefreshingIdentityResolver` (implemented by
+`IdentityManager`), not local signing keys. It verifies
+both signatures, binds the directory key to the current DNSid `ku` signing key, and
+applies the resolver's entity acceptance on each invocation. Supply `peer_cert`
+in the options for the current application peer when `fl=mtls` applies; the
+directory endpoint's certificate is not a substitute. Reuse the verifier across
+requests to reuse its secure connection pool, then call `close()` at shutdown
+once in-flight verifications finish. Injected transports remain caller-owned.
+
+Discovery uses public-address-only HTTPS and rejects all redirects, including
+same-host redirects. The complete operation has a default 30-second deadline;
+`timeout` can lower it. Directories are fetched with `Cache-Control: no-cache`
+on every invocation; injected caches must revalidate and cannot serve stale evidence.
+For one-time semantics,
+supply an atomic `replay_policy`
+callback (see the [API reference](https://docs.dnsid.ai/reference/py/profile-web-bot-auth/)).
+Without it, time validity limits reuse but does not detect it. Applications must
+decide whether the covered components are sufficient: WBA requires `@authority`,
+not `@method` or `@target-uri`. For operation binding, sign additional components
+with `WebBotAuthSigningOptions.additional_components` and require them with
+`WebBotAuthVerificationOptions.required_components`. The verifier checks exact
+component coverage before discovery; its default adds no requirements.
+
+Directories must be uncoded; any `Content-Encoding` field is rejected before
+reading. Injected discovery transports must preserve bytes and enforce HTTPS,
+public-address routing, and original HTTP freshness if they reuse evidence.
+The verifier checks visible `Date`/`Age` metadata and rechecks positive `max-age`
+deadlines before return, including after identity refresh and replay callbacks.
+Fresh `no-store`, `no-cache`, and `max-age=0` responses can serve their acquiring
+invocation; HTTP-stale evidence cannot.
+
+This is the narrower DNSid WBA profile targeting published
+`draft-ietf-webbotauth-httpsig-protocol-00`, including its directory format,
+not a claim of general WBA or partner interoperability. A covered `Signature-Agent`
+is mandatory, even with trusted caller discovery. Compatibility flags
+`include_signature_agent=False` and `signature_agent=False` now raise `ArgumentError`.
+For `directory`, configure an ASCII HTTPS origin without a path (including `/`),
+query, fragment, or credentials; use `jwks_uri` for a direct endpoint. Directory
+signatures cannot have future `created` timestamps, even within clock skew.
+Nested signing is unsupported. Only the current DNSid operational key is accepted;
+rotation can invalidate outstanding old-key requests without an overlap period.
+After both signatures verify, a current-key mismatch permits one full identity
+refresh per domain per five seconds. Concurrent retries are suppressed; failed
+attempts consume the allowance. Refresh never bypasses acceptance or revocation.
+
+WBA discovery must not identify the live `ku` endpoint, including query/fragment
+variants. Supply `ku_url` to `WBAHttpSigner` when locally known to reject invalid
+`jwks_uri` configuration before signing. Verification checks authenticated `ku`.
+Directory serving backdates signatures by `min(5, ttl - 1)` seconds and emits signed
+`max-age=N, must-revalidate`, with at most 295 seconds at the default TTL. Disable
+all CDN stale-serving overrides, `stale-while-revalidate`, and `stale-if-error`.
+
+Use the shared managed rotation/recovery workflow and pause request/directory
+signing during rotation; do not publish overlapping live `ku` keys. Disable
+signing and use revocation/reissuance for suspected key compromise. Cache and
+publication delays can delay new-key acceptance; short TTLs do not revoke a key.
+Unrestricted WBA signing-key access also authorizes `KEY_ROTATION`, not just
+crawler requests. Keeping `ek` off the signing fleet does not remove that authority.
+Dedicated WBA-key delegation requires a separate security design before broad
+multi-node deployment.
+
+### JWT bot bearer authentication
+
+The legacy `WebBotAuthProfile` name is retained for compatibility. It implements
+JWT bearer authentication, not RFC 9421 Web Bot Auth. Its request and client
+helpers reject existing `Authorization` fields before token creation, including
+empty values and client default credentials.
 
 Authenticate outbound bot/agent HTTP requests with DNSid-issued JWTs, and
 verify inbound bot identity from the `Authorization: Bearer` header.
@@ -288,7 +375,9 @@ dnsid/
 ├── registry_client.py   # RegistryClient — operator-side registry workflows
 ├── config_loading.py    # load_environment / load_file / load_cli_directory → merge → construct
 ├── c2sp_tlog/           # C2SP tile-log LogReader binding (lr=c2sp-tlog:...)
-├── web_bot_auth.py      # WebBotAuthProfile — web bot/agent HTTP authentication
+├── web_bot_auth.py      # Legacy WebBotAuthProfile — JWT bot bearer authentication
+├── wba_signer.py        # RFC 9421 WBA signing and directory serving
+├── wba_verifier.py      # DNSid WBA request and directory verification
 ├── _crypto.py           # JWK thumbprint (RFC 7638) and signature verification
 ├── _https_client.py     # HTTPS fetching with redirect enforcement and TLS cert capture
 ├── _default_resolver.py # Default DNS resolver (DoH or system via dnspython)
@@ -415,9 +504,9 @@ registry = create_dnsid_managed_verification_registry()
 ```
 
 It selects SDK-embedded reviewed trust only for exact canonical `public`
-references to `https://log.dev.dnsid.ai` or `https://log.dnsid.ai`; unknown scopes
-and prefixes fail closed. Both managed logs prefer verified signed stream bundles
-with bounded raw-scan fallback. The generic factory never selects these roots.
+references to `https://log.dev.dnsid.ai`, `https://log.dnsid.ai`, or
+`https://log.partners.dnsid.ai`; unknown scopes and prefixes fail closed. Every
+managed log prefers verified signed stream bundles with bounded raw-scan fallback. The generic factory never selects these roots.
 
 Both factories use a restart-ephemeral in-memory checkpoint store
 by default; inject a durable `CheckpointStore` when rollback protection must
@@ -718,7 +807,7 @@ chose:
 
 - DNS TXT lookup of `_dnsid.<domain>` through your system resolver (no hardcoded resolver)
 - HTTPS GET to the JWKS and status URLs published in that TXT record
-- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dev.dnsid.ai` (C2SP transparency log, bundled public trust roots), cloud KMS endpoints
+- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dev.dnsid.ai` / `log.partners.dnsid.ai` (C2SP transparency log, bundled public trust roots), cloud KMS endpoints
 - No telemetry, usage reporting, update checks, or crash reporting
 
 **Logging.** None today. A standard-library `logging` logger under the `dnsid` namespace is declared for future

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 
 from ._utils import (
     PERMITTED_KA_VALUES,
+    _parse_ka_duration,
     is_domain_name,
     is_valid_tag_name,
     is_valid_tag_value,
@@ -1218,6 +1219,8 @@ class VerifiedDomain:
         """Return the earliest of all cache validity bounds.
 
         Candidates: DNS TTL, ku and ek TLS cert NotAfter, and key age (if ka set).
+        Fresh zero-TTL DNS evidence is valid only in its acquiring operation;
+        this cache-reuse deadline does not determine acquisition validity.
         """
         candidates: list[datetime.datetime] = []
 
@@ -1239,17 +1242,33 @@ class VerifiedDomain:
             candidates.append(self.record_signing_tls_cert.not_after)
 
         # Key age bound: signing key rejected after keyBoundAt + ka duration.
-        if self.record.ka and self.key_bound_at != _ZERO_TIME:
-            ka_map = {
-                "24h": datetime.timedelta(hours=24),
-                "7d": datetime.timedelta(days=7),
-                "30d": datetime.timedelta(days=30),
-                "90d": datetime.timedelta(days=90),
-            }
-            if self.record.ka in ka_map:
-                candidates.append(self.key_bound_at + ka_map[self.record.ka])
+        if self.record.ka in PERMITTED_KA_VALUES and self.key_bound_at != _ZERO_TIME:
+            candidates.append(self.key_bound_at + _parse_ka_duration(self.record.ka))
 
         return min(candidates)
+
+    def _require_fresh_evidence(
+        self, now: datetime.datetime, *, fresh_dns_lookup: bool = False,
+    ) -> None:
+        from .enums import VerificationCode
+        from .exceptions import VerificationError
+
+        code = None
+        for cert in (self.tls_cert, self.record_signing_tls_cert):
+            if cert is not None and cert.not_after != _ZERO_TIME and now >= cert.not_after:
+                code = VerificationCode.TLS_ERROR
+        if self.record.ka and now >= self.key_bound_at + _parse_ka_duration(self.record.ka):
+            code = VerificationCode.KEY_AGE_EXCEEDED
+        dns_expiry = self.dns_expires_at or (
+            self.verified_at + datetime.timedelta(seconds=self.dns_ttl)
+        )
+        if code is None and not (fresh_dns_lookup and self.dns_ttl == 0) and now >= dns_expiry:
+            code = VerificationCode.DNS_RESOLUTION
+        if code is not None:
+            raise VerificationError(
+                code, "identity evidence expired during verification",
+                transient=code == VerificationCode.DNS_RESOLUTION,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1732,20 +1751,21 @@ class SignatureParams:
 
 @dataclass
 class HttpRequest:
-    """An HTTP request for use with create_signed_http_request / verify_signed_http_request."""
+    """Buffered HTTP message for request and response signature construction."""
 
     method: str
     url: str
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes | None = None
+    #: Actual response status for response signature bases; absent on requests.
+    status: int | None = None
 
     def get_header(self, name: str) -> str:
-        """Case-insensitive header lookup; returns empty string if absent."""
+        """Combine matching field lines in order; return empty string if absent."""
         lower = name.lower()
-        for k, v in self.headers.items():
-            if k.lower() == lower:
-                return v
-        return ""
+        return ", ".join(
+            value.strip(" \t") for key, value in self.headers.items() if key.lower() == lower
+        )
 
     def has_header(self, name: str) -> bool:
         """Return True if the header is present (case-insensitive)."""

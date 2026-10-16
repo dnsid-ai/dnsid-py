@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 from ._https_client import _create_https_client
 from ._utils import (
+    _parse_ka_duration,
     b64url_decode_strict,
     normalize_fqdn,
 )
@@ -1384,12 +1385,26 @@ class IdentityManager:
         return self._verify(domain, peer_cert, acceptance=True)
 
     @verification_operation
+    def refresh_domain(
+        self, domain: str, peer_cert: TLSCertificate | None = None,
+    ) -> VerifiedDomain:
+        """Fully verify fresh identity evidence, bypassing the cached identity result.
+
+        Concurrent full acquisitions share network work, not status-only work.
+        Each caller enforces its current peer, acceptance, and final freshness.
+        Failure never falls back to cached evidence or extends its lifetime.
+        Injected resource fetchers must revalidate their caches.
+        """
+        return self._verify(domain, peer_cert, acceptance=True, refresh=True)
+
+    @verification_operation
     def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
         """Internal protocol-only verification for registry publication confirmation."""
         return self._verify(domain, None, acceptance=False)
 
     def _verify(
-        self, domain: str, peer_cert: TLSCertificate | None, *, acceptance: bool
+        self, domain: str, peer_cert: TLSCertificate | None, *, acceptance: bool,
+        refresh: bool = False,
     ) -> VerifiedDomain:
         """Shared per-invocation verification boundary.
 
@@ -1397,7 +1412,11 @@ class IdentityManager:
         there is no public bypass.
         """
         domain = normalize_fqdn(domain)
-        result = self._reusable_verification(domain)
+        result = (
+            self._coalesce(domain, self._verification_futures,
+                           lambda: self._verify_domain_uncached(domain))
+            if refresh else self._reusable_verification(domain)
+        )
         # mTLS binds the current peer, not reusable identity evidence.
         _enforce_mtls_policy(result.record, domain, peer_cert)
         if acceptance:
@@ -1439,7 +1458,11 @@ class IdentityManager:
             future = full_future if full_future is not None else status_future
             assert future is not None
             result = wait_for_verification(future)
-            return self._verify_domain_uncached(domain) if result.dns_ttl == 0 else result
+            if result.dns_ttl != 0:
+                return result
+            return self._coalesce(
+                domain, self._verification_futures, lambda: self._verify_domain_uncached(domain)
+            )
 
         cached = self._cache.get(domain)
         if cached is not None:
@@ -1464,20 +1487,29 @@ class IdentityManager:
         pending: dict[str, Future[VerifiedDomain]],
         work: Callable[[], VerifiedDomain],
     ) -> VerifiedDomain:
-        with self._coordination_lock:
-            future = pending.get(domain)
-            leader = future is None
-            if future is None:
-                future = Future()
-                pending[domain] = future
-        if not leader:
+        while True:
+            with self._coordination_lock:
+                future = pending.get(domain)
+                if future is None:
+                    future = Future()
+                    pending[domain] = future
+                    break
             result = wait_for_verification(future)
-            return self._verify_domain_uncached(domain) if result.dns_ttl == 0 else result
+            if result.dns_ttl != 0:
+                return result
+            # Zero-TTL evidence belongs only to its acquiring invocation.
+            with self._coordination_lock:
+                if pending.get(domain) is future:
+                    del pending[domain]
 
         try:
             result = work()
             remaining_seconds()
         except BaseException as exc:
+            if (isinstance(exc, VerificationError)
+                    and exc.code == VerificationCode.STATUS_NOT_ACTIVE):
+                with self._coordination_lock:
+                    self._cache.evict(domain)
             future.set_exception(exc)
             raise
         else:
@@ -1516,7 +1548,16 @@ class IdentityManager:
         refreshed.registry_status = status
         refreshed.last_status_check_at = _now()
         self._require_fresh_evidence(refreshed)
-        self._cache.put(domain, refreshed)
+        with self._coordination_lock:
+            current = self._cache.get(domain)
+            if current is None:
+                raise VerificationError(
+                    VerificationCode.STATUS_UNAVAILABLE,
+                    "identity invalidated during status refresh", transient=True,
+                )
+            if current != latest:
+                return current
+            self._cache.put(domain, refreshed)
         return refreshed
 
     def _verify_domain_uncached(self, domain: str) -> VerifiedDomain:
@@ -1641,8 +1682,11 @@ class IdentityManager:
             record_signing_tls_cert=ek_tls_cert,
         )
         self._require_fresh_evidence(result, fresh_dns_lookup=True)
-        if dns_ttl > 0:
-            self._cache.put(domain, result)
+        with self._coordination_lock:
+            if dns_ttl > 0:
+                self._cache.put(domain, result)
+            else:
+                self._cache.evict(domain)
         return result
 
     def _verify_identity_evidence(
@@ -1735,28 +1779,11 @@ class IdentityManager:
         self, result: VerifiedDomain, *, fresh_dns_lookup: bool = False
     ) -> None:
         remaining_seconds()
-        now = _now()
-        code = None
-        for cert in (result.tls_cert, result.record_signing_tls_cert):
-            # A cert whose expiry is unknown (transport did not expose the
-            # peer certificate) carries no freshness bound, matching
-            # VerifiedDomain.expires_at.
-            if cert is not None and cert.not_after != _ZERO_TIME and now >= cert.not_after:
-                code = VerificationCode.TLS_ERROR
-        if result.record.ka and now >= result.key_bound_at + _parse_ka_duration(result.record.ka):
-            code = VerificationCode.KEY_AGE_EXCEEDED
-        dns_expiry = result.dns_expires_at or (
-            result.verified_at + datetime.timedelta(seconds=result.dns_ttl)
-        )
-        if code is None and not (fresh_dns_lookup and result.dns_ttl == 0) and now >= dns_expiry:
-            code = VerificationCode.DNS_RESOLUTION
-        if code is not None:
+        try:
+            result._require_fresh_evidence(_now(), fresh_dns_lookup=fresh_dns_lookup)
+        except VerificationError:
             self._cache.evict(result.domain)
-            raise VerificationError(
-                code,
-                "identity evidence expired during verification",
-                transient=code == VerificationCode.DNS_RESOLUTION,
-            )
+            raise
 
     def verify_log_evidence(
         self,
@@ -2381,16 +2408,6 @@ def _require_log_method(log_reader: LogReader, name: str) -> Any:
             f"log method does not support {name} required by draft 01 verification",
         )
     return method
-
-
-def _parse_ka_duration(ka: str) -> datetime.timedelta:
-    mapping = {
-        "24h": datetime.timedelta(hours=24),
-        "7d": datetime.timedelta(days=7),
-        "30d": datetime.timedelta(days=30),
-        "90d": datetime.timedelta(days=90),
-    }
-    return mapping[ka]
 
 
 class _PrivateCache(IdentityCache):

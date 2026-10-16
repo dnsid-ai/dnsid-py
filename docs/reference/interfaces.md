@@ -44,6 +44,27 @@ Verify the DNSid identity record for *domain*.
 
 - `VerificationError`: If any verification step fails.
 
+## `RefreshingIdentityResolver`
+
+```python
+from dnsid import RefreshingIdentityResolver
+```
+
+*Bases:* `IdentityResolver`, `Protocol`
+
+Identity resolver with full verification that bypasses cached identity results.
+
+### `refresh_domain`
+
+```python
+RefreshingIdentityResolver.refresh_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Acquire fresh evidence with the same peer, acceptance, and freshness checks.
+
+Revalidate injected resource caches; never fall back to cached identity
+evidence after failure. Cached DNS answers retain their remaining TTL.
+
 ## `KeyProvider`
 
 ```python
@@ -471,6 +492,7 @@ IdentityManager uses a default implementation backed by TransportConfig.
 Implementations MUST be safe for concurrent use: after the record
 signature is authenticated, verify_domain fetches the status endpoint on
 a helper thread while the runtime JWKS and lifecycle-log work proceed.
+Revalidate any resource cache on each call, including explicit identity refresh.
 
 The built-in fetcher enforces strict HTTPS and rejects su/JWKS hosts that
 resolve to non-public addresses. The only exception is a hostname matching

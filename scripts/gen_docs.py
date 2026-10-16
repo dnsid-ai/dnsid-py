@@ -252,6 +252,8 @@ PAGES: list[dict] = [
             "BotIdentity",
             "VerifiedBotRequest",
             "WBAHttpSigner",
+            "WBAHttpVerifier",
+            "WebBotAuthVerificationOptions",
             "WBAVariant",
             "WBADirectoryResponse",
             "WebBotAuthConfig",
@@ -348,6 +350,7 @@ PAGES: list[dict] = [
         ),
         "names": [
             "IdentityResolver",
+            "RefreshingIdentityResolver",
             "KeyProvider",
             "Log",
             "LogReader",

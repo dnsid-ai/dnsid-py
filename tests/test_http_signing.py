@@ -348,7 +348,7 @@ class TestVerifySignedHttpRequest:
         signed, verifier, mock_vd = self._sign_and_get_verifier(ec_pair, ec_provider, body=b"")
         signed.body = None
         with patch.object(verifier._resolver, "verify_domain", return_value=mock_vd):
-            with pytest.raises(VerificationError, match="request has no body"):
+            with pytest.raises(VerificationError, match="requires supplied content"):
                 verifier.verify_signed_http_request(signed)
 
     def test_expired_signature_raises(self, ec_pair, ec_provider):
@@ -683,6 +683,19 @@ class TestStructuredFieldsParsing:
 
         with pytest.raises(VerificationError, match="duplicate parameter"):
             SignatureParams.parse('sig1=("@method");created=1;created=2')
+
+    @pytest.mark.parametrize("query,expected", [
+        ("~*", "%7E*"), ("%7e%2a", "%7E*"), ("a+b", "a%20b"), ("a%20b", "a%20b"),
+        ("%2B", "%2B"), ("", ""), ("%C3%A9", "%C3%A9"),
+    ])
+    def test_query_param_form_encoding(self, query, expected):
+        from dnsid.models import SignatureParams
+
+        params = SignatureParams.parse('sig1=("@query-param";name="q");created=1')
+        req = HttpRequest(method="GET", url=f"https://api.example/search?q={query}")
+        assert _build_signature_base(req, params).decode().splitlines()[0] == (
+            f'"@query-param";name="q": {expected}'
+        )
 
     def test_query_param_reserved_characters_vector(self):
         from dnsid.models import SignatureParams

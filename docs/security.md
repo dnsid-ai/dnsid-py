@@ -31,7 +31,7 @@ Security properties enforced by the SDK's verification path (not configurable of
 DNSid has two key planes with different rotation behavior:
 
 - **Operational keys (`ku`)** sign application-layer artifacts such as JOSE JWTs,
-  JWS payloads, HTTP Message Signatures, and Web Bot Auth tokens. The live
+  JWS payloads, HTTP Message Signatures, and JWT bot bearer tokens. The live
   draft-01 `ku` JWKS published by `IdentityManager.get_key_set()` contains only
   the current operational key.
 - **Accountable-entity keys (`ek`)** sign the DNSid TXT record and lifecycle
