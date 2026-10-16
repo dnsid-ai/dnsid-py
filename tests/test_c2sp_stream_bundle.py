@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -334,7 +333,9 @@ def test_portable_stream_bundle_rejects_untrusted_signer():
         verify_c2sp_stream_bundle(vector["bundle"].encode(), options)
 
 
-def _seed_old_checkpoint(vector: dict, options: C2spStreamBundleVerifierOptions) -> bytes:
+def _seed_old_checkpoint(
+    vector: dict, options: C2spStreamBundleVerifierOptions, *, root: bytes | None = None
+) -> bytes:
     bundle = json.loads(vector["bundle"])
     first_entry = b64url_decode_strict(bundle["events"][0]["entry"])
     old_root = leaf_hash(first_entry)
@@ -342,7 +343,7 @@ def _seed_old_checkpoint(vector: dict, options: C2spStreamBundleVerifierOptions)
         TrustedCheckpoint(
             origin="log.example",
             tree_size=1,
-            root_hash=old_root,
+            root_hash=old_root if root is None else root,
             witness_time=datetime.datetime.fromtimestamp(
                 vector["trust"]["now"] - 120, tz=datetime.UTC
             ),
@@ -406,10 +407,7 @@ def test_fetched_bundle_uses_complete_scan_for_missing_consistency() -> None:
 
     def verify(raw_entries, *, require_bundle=False, trusted_root=None):
         options = _options(vector)
-        _seed_old_checkpoint(vector, options)
-        if trusted_root is not None:
-            stored = options.checkpoint_store.get(reference.origin)
-            options.checkpoint_store.put(replace(stored, root_hash=trusted_root))
+        _seed_old_checkpoint(vector, options, root=trusted_root)
         fallback = Fallback(raw_entries)
         source = _FetchedStreamBundleSource(
             Fetcher(),
@@ -465,8 +463,12 @@ def test_portable_stream_bundle_growth_requires_consistency_source():
     vector = _vector()
     options = _options(vector)
     _seed_old_checkpoint(vector, options)
-    with pytest.raises(C2spTlogError, match="requires a consistency-proof source"):
+    stored = options.checkpoint_store.get("log.example")
+    with pytest.raises(C2spTlogError) as caught:
         verify_c2sp_stream_bundle(vector["bundle"].encode(), options)
+    assert caught.value.condition == "consistency_unavailable"
+    assert not getattr(caught.value, "transient", False)
+    assert options.checkpoint_store.get("log.example") == stored
 
 
 @pytest.mark.parametrize("trusted_size,category", [
@@ -512,3 +514,65 @@ def test_portable_stream_bundle_growth_verifies_injected_consistency_proof():
 
     options.consistency_source = Source()
     verify_c2sp_stream_bundle(vector["bundle"].encode(), options)
+
+
+@pytest.mark.parametrize("proof", [None, [None], [True], [b"short"], [bytearray(32)], []])
+def test_malformed_supplied_consistency_is_not_missing_evidence(proof):
+    vector = _vector()
+    options = _options(vector)
+    _seed_old_checkpoint(vector, options)
+    stored = options.checkpoint_store.get("log.example")
+
+    class Source:
+        calls = 0
+
+        def fetch_consistency_proof(self, reference, from_size, to_size):
+            self.calls += 1
+            return proof
+
+    options.consistency_source = Source()
+    with pytest.raises(C2spCheckpointConsistencyError) as caught:
+        verify_c2sp_stream_bundle(vector["bundle"].encode(), options)
+    assert caught.value.category == "LOG_INCONSISTENT"
+    assert options.consistency_source.calls == 1
+    assert options.checkpoint_store.get("log.example") == stored
+
+
+@pytest.mark.parametrize("transient", [False, True])
+def test_consistency_retrieval_failure_preserves_cause_and_retry_classification(transient):
+    vector = _vector()
+    options = _options(vector)
+    _seed_old_checkpoint(vector, options)
+    stored = options.checkpoint_store.get("log.example")
+    cause = OSError("injected proof retrieval failure")
+    failure = C2spTlogTransportError("proof unavailable", transient=transient, cause=cause)
+
+    class Source:
+        def fetch_consistency_proof(self, reference, from_size, to_size):
+            raise failure
+
+    options.consistency_source = Source()
+    with pytest.raises(C2spTlogTransportError) as caught:
+        verify_c2sp_stream_bundle(vector["bundle"].encode(), options)
+    assert caught.value is failure
+    assert caught.value.__cause__ is cause
+    assert caught.value.transient == transient
+    assert options.checkpoint_store.get("log.example") == stored
+
+
+def test_consistency_proof_can_extend_a_trusted_empty_tree():
+    vector = _vector()
+    options = _options(vector)
+    options.checkpoint_store.put(TrustedCheckpoint(
+        "log.example", 0, merkle_root_from_entries([]),
+        datetime.datetime.fromtimestamp(vector["trust"]["now"] - 120, tz=datetime.UTC),
+    ))
+
+    class Source:
+        def fetch_consistency_proof(self, reference, from_size, to_size):
+            assert from_size == 0
+            return []
+
+    options.consistency_source = Source()
+    verify_c2sp_stream_bundle(vector["bundle"].encode(), options)
+    assert options.checkpoint_store.get("log.example").tree_size == 2

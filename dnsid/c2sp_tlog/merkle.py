@@ -57,10 +57,17 @@ def verify_consistency(
     proof: list[bytes],
 ) -> bool:
     """Verify an RFC 6962 consistency proof between two checkpoints."""
-    if old_size < 1 or old_size > new_size:
+    if (
+        type(old_size) is not int or type(new_size) is not int
+        or old_size < 0 or old_size > new_size
+        or type(old_root) is not bytes or len(old_root) != 32
+        or type(new_root) is not bytes or len(new_root) != 32
+        or not isinstance(proof, list)
+        or any(type(node) is not bytes or len(node) != 32 for node in proof)
+    ):
         return False
-    if len(old_root) != 32 or len(new_root) != 32 or any(len(node) != 32 for node in proof):
-        return False
+    if old_size == 0:
+        return not proof and old_root == sha256() and (new_size > 0 or new_root == old_root)
     if old_size == new_size:
         return not proof and old_root == new_root
 

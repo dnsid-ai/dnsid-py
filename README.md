@@ -517,6 +517,41 @@ policy parsing, custom source construction, registration, and checkpoint-store
 injection remain available
 for advanced deployments.
 
+For durable trust, initialize a protected SQLite namespace **once**, separately
+from application startup:
+
+```python
+from dnsid.c2sp_tlog import SQLiteCheckpointStore
+
+SQLiteCheckpointStore("/protected/dnsid-trust.db", create=True)  # provisioning only
+```
+
+Open it on startup without `create=True`. Inject the opened store through
+`C2spTlogVerificationOptions(trusted_checkpoint_store=store, ...)` or
+`DnsidManagedVerificationOptions(trusted_checkpoint_store=store)`, then inject
+the registry into `IdentityManagerDependencies(log_registry=registry)`.
+Deployment files and SDK environment variables do not configure storage.
+
+SQLite requires a local persistent filesystem with working locks and sync
+semantics. Missing or corrupt storage fails closed. Schema 2 records an origin
+inventory; schema 1 is rejected without modification, not silently migrated.
+Retain old namespaces and signed evidence outside service backups. Never restore
+an older baseline or initialize an empty replacement to bypass continuity.
+For upgrade/recovery, fence consumers and follow the independently authorized,
+exact-state procedure in `SQLiteCheckpointStore.rebaseline` before switching
+namespaces. Operator names and audit references do not authenticate authorization.
+
+Checkpoint failures expose stable `category` values through `VerificationError`.
+Its typed `__cause__` retains continuity diagnostics or the storage failure.
+An uncertain SQLite commit reports `indeterminate=True`, with
+`reconciled_checkpoint` or `reconciliation_error`; it never reports success.
+Stop and reconcile before retrying recovery. Cancellation is cooperative through
+the invocation budget: it prevents publication when observed before commit.
+SQLite commit itself is synchronous and cannot be abandoned; a cancellation
+reported after commit may leave the replacement installed. Read back trust before
+resuming. See [checkpoint implementation checks](docs/checkpoint-continuity.md)
+for tested behavior and deployment-owned recovery requirements.
+
 The reader authenticates checkpoints against the pinned log and witness keys
 (with anti-rollback via a checkpoint store), verifies Merkle inclusion, and
 for records using `dnsid-draft-01` or pre-RFC `DNSid1` verifies the logged

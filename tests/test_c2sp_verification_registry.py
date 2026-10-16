@@ -148,14 +148,17 @@ def test_factory_fetches_policy_with_same_resource_fetcher() -> None:
     assert reader._options.transport is fetcher
 
 
-def test_factory_applies_limits_freshness_skew_and_shared_store() -> None:
+@pytest.mark.parametrize("durable", [False, True])
+def test_factory_applies_limits_freshness_skew_and_shared_store(tmp_path, durable) -> None:
+    from dnsid.c2sp_tlog import SQLiteCheckpointStore
     limits = C2spScanLimits(
         max_tree_size=12,
         max_checkpoint_bytes=100,
         max_entry_bundle_bytes=200,
         max_total_entry_bytes=300,
     )
-    store = InMemoryCheckpointStore()
+    store = (SQLiteCheckpointStore(tmp_path / "trust.db", create=True)
+             if durable else InMemoryCheckpointStore())
     registry = create_c2sp_tlog_verification_registry(
         C2spTlogVerificationOptions(
             policy_document=_policy_document(),
@@ -346,10 +349,12 @@ def test_scan_limits_require_strict_positive_runtime_integers() -> None:
             C2spScanLimits(**kwargs)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("trusted_size", [None, 1, 2])
 def test_factory_registry_verifies_identity_from_standard_c2sp_resources(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, trusted_size,
 ) -> None:
     """Exercise factory -> IdentityManager using checkpoint and entry-bundle bytes."""
+    from dnsid.c2sp_tlog import C2spCheckpointConsistencyError, TrustedCheckpoint
     domain = "agent.example.com"
     lr = "c2sp-tlog:public:https://log.example#instance_AAAAAAAAAAAAAAAAAAAAAA"
     now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
@@ -429,10 +434,16 @@ def test_factory_registry_verifies_identity_from_standard_c2sp_resources(
             self.calls.append((url, max_bytes))
             return self.resources[url]
 
+    store = InMemoryCheckpointStore()
+    trusted = None
+    if trusted_size is not None:
+        trusted = TrustedCheckpoint("log.example", trusted_size, bytes(32), now)
+        store.put(trusted)
     registry = create_c2sp_tlog_verification_registry(
         C2spTlogVerificationOptions(
             policy_document=policy,
             resource_fetcher=ResourceFetcher(),
+            trusted_checkpoint_store=store,
             checkpoint_freshness_ms=5 * 60 * 1000,
             max_clock_skew_ms=1_000,
         )
@@ -468,10 +479,28 @@ def test_factory_registry_verifies_identity_from_standard_c2sp_resources(
         IdentityManagerDependencies(dns_resolver=resolver, log_registry=registry)
     )
 
-    verified = manager.verify_domain(domain)
-    assert verified.domain == domain
-    assert verified.jwks.keys == [operational_key]
-    assert verified.record_signing_jwks.keys == [entity_key]
+    try:
+        if trusted is not None:
+            with pytest.raises(VerificationError) as caught:
+                manager.verify_domain(domain)
+            assert caught.value.category == ("LOG_FORK" if trusted_size == 1 else "LOG_ROLLBACK")
+            assert not caught.value.transient
+            diagnostic = caught.value.__cause__
+            assert isinstance(diagnostic, C2spCheckpointConsistencyError)
+            assert diagnostic.origin == "log.example"
+            assert diagnostic.trusted_tree_size == trusted_size
+            assert diagnostic.observed_tree_size == 1
+            assert diagnostic.trusted_root_hash == trusted.root_hash
+            assert diagnostic.observed_root_hash == root
+            diagnostic.trusted_root_hash = b"changed diagnostic"
+            assert store.get("log.example") == trusted
+        else:
+            verified = manager.verify_domain(domain)
+            assert verified.domain == domain
+            assert verified.jwks.keys == [operational_key]
+            assert verified.record_signing_jwks.keys == [entity_key]
+    finally:
+        manager.close()
 
 
 def _policy_key(

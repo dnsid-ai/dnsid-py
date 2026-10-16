@@ -3,7 +3,7 @@
 import datetime
 import os
 import sqlite3
-import time
+import threading
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import replace
 from multiprocessing import get_context
@@ -20,16 +20,22 @@ from dnsid.c2sp_tlog import (
 
 BASE = TrustedCheckpoint("log.example", 1, b"a" * 32, datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC))
 NEXT = replace(BASE, tree_size=2, root_hash=b"b" * 32)
+_start = None
+
+
+def _set_start(barrier):
+    global _start
+    _start = barrier
 
 
 def _competing_advance(args):
     path, root = args
     store = SQLiteCheckpointStore(path)
+    _start.wait(timeout=10)
 
     def verify(stored):
         if stored != BASE:
             raise ValueError("another fork already advanced")
-        time.sleep(0.01)  # Exposes a split read/verify/write transaction.
 
     try:
         store.verify_and_advance(replace(NEXT, root_hash=bytes([root]) * 32), verify)
@@ -38,15 +44,29 @@ def _competing_advance(args):
         return False
 
 
-def _crash_before_commit(path):
+def _crash_during_replacement(path, published):
     store = SQLiteCheckpointStore(path)
-    write = store._write
+    if published:
+        connect = sqlite3.connect
 
-    def crash(connection, checkpoint):
-        write(connection, checkpoint)
-        os._exit(17)
+        class CrashConnection(sqlite3.Connection):
+            def commit(self):
+                super().commit()
+                if self.total_changes:
+                    os._exit(17)
 
-    store._write = crash
+        def crashing_connect(*args, **kwargs):
+            return connect(*args, **kwargs, factory=CrashConnection)
+
+        sqlite3.connect = crashing_connect
+    else:
+        write = store._write
+
+        def crash(connection, checkpoint):
+            write(connection, checkpoint)
+            os._exit(17)
+
+        store._write = crash
     store.put(NEXT)
 
 
@@ -115,12 +135,16 @@ def test_corrupt_store_fails_closed(tmp_path, data):
 @pytest.mark.parametrize("column,value", [
     ("tree_size", -1), ("tree_size", "invalid"), ("root_hash", b"short"),
     ("witness_time", "not a time"), ("witness_time", "2026-01-01"),
+    ("witness_time", "20260101T000000+00:00"), ("tree_size", 1.5),
+    ("root_hash", "a" * 32), ("origin", ""),
 ])
 def test_invalid_persisted_checkpoint_fails_closed(store, tmp_path, column, value):
     with sqlite3.connect(tmp_path / "trust.db") as connection:
         connection.execute(f"UPDATE checkpoints SET {column} = ?", (value,))
-    with pytest.raises(C2spCheckpointStoreError, match="invalid persisted checkpoint"):
+    with pytest.raises(C2spCheckpointStoreError):
         store.get(BASE.origin)
+    with pytest.raises(C2spCheckpointStoreError):
+        SQLiteCheckpointStore(tmp_path / "trust.db")
 
 
 def test_rejected_verification_does_not_advance(store):
@@ -147,8 +171,10 @@ def test_sqlite_write_failure_does_not_advance(store, tmp_path):
 @pytest.mark.parametrize("executor", ["threads", "processes"])
 def test_competing_forks_cannot_both_succeed(store, tmp_path, executor):
     pool_type = ThreadPoolExecutor if executor == "threads" else ProcessPoolExecutor
-    kwargs = {} if executor == "threads" else {"mp_context": get_context("spawn")}
-    with pool_type(max_workers=4, **kwargs) as pool:
+    context = get_context("spawn")
+    barrier = threading.Barrier(4) if executor == "threads" else context.Barrier(4)
+    kwargs = {} if executor == "threads" else {"mp_context": context}
+    with pool_type(max_workers=4, initializer=_set_start, initargs=(barrier,), **kwargs) as pool:
         results = list(pool.map(_competing_advance, [(str(tmp_path / "trust.db"), n) for n in range(8)]))
     assert sum(results) == 1
     trusted = store.get(BASE.origin)
@@ -156,8 +182,11 @@ def test_competing_forks_cannot_both_succeed(store, tmp_path, executor):
     assert trusted.root_hash == bytes([results.index(True)]) * 32
 
 
-def test_process_death_before_commit_preserves_old_trust(store, tmp_path):
-    process = get_context("spawn").Process(target=_crash_before_commit, args=(str(tmp_path / "trust.db"),))
+@pytest.mark.parametrize("published", [False, True])
+def test_process_death_leaves_complete_old_or_new_trust(store, tmp_path, published):
+    process = get_context("spawn").Process(
+        target=_crash_during_replacement, args=(str(tmp_path / "trust.db"), published)
+    )
     process.start()
     process.join(timeout=10)
     if process.is_alive():
@@ -166,7 +195,7 @@ def test_process_death_before_commit_preserves_old_trust(store, tmp_path):
         pytest.fail("crash worker hung")
     assert process.exitcode == 17
     process.close()
-    assert SQLiteCheckpointStore(tmp_path / "trust.db").get(BASE.origin) == BASE
+    assert SQLiteCheckpointStore(tmp_path / "trust.db").get(BASE.origin) == (NEXT if published else BASE)
 
 
 def test_rebaseline_requires_reviewed_state_and_records_both_checkpoints(store, tmp_path):
@@ -207,3 +236,53 @@ def test_failed_rebaseline_rolls_back_audit_and_trust(store, tmp_path):
     assert store.get(BASE.origin) == BASE
     with sqlite3.connect(tmp_path / "trust.db") as connection:
         assert connection.execute("SELECT count(*) FROM rebaselines").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("table", ["checkpoints", "origins"])
+def test_missing_trust_component_is_not_an_unseen_origin(store, tmp_path, table):
+    with sqlite3.connect(tmp_path / "trust.db") as connection:
+        connection.execute(f"DELETE FROM {table}")
+    with pytest.raises(C2spCheckpointStoreError):
+        store.get(BASE.origin)
+    with pytest.raises(C2spCheckpointStoreError):
+        store.put(NEXT)
+    with pytest.raises(C2spCheckpointStoreError):
+        SQLiteCheckpointStore(tmp_path / "trust.db")
+    with sqlite3.connect(tmp_path / "trust.db") as connection:
+        assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+
+
+def test_previous_schema_is_rejected_without_modifying_storage(store, tmp_path):
+    with sqlite3.connect(tmp_path / "trust.db") as connection:
+        connection.execute("PRAGMA user_version = 1")
+    with pytest.raises(C2spCheckpointStoreError):
+        SQLiteCheckpointStore(tmp_path / "trust.db")
+    with sqlite3.connect(tmp_path / "trust.db") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("SELECT root_hash FROM checkpoints").fetchone()[0] == BASE.root_hash
+
+
+def test_rebaseline_requires_exact_witness_time_and_does_not_retry(store, tmp_path):
+    changed = replace(BASE, witness_time=BASE.witness_time + datetime.timedelta(seconds=1))
+    store.put(changed)
+    with pytest.raises(C2spCheckpointStoreError):
+        store.rebaseline(NEXT, expected=BASE, authorized_by="owner", evidence="incident-123")
+    assert store.get(BASE.origin) == changed
+    with sqlite3.connect(tmp_path / "trust.db") as connection:
+        assert connection.execute("SELECT count(*) FROM rebaselines").fetchone()[0] == 0
+
+
+def test_rebaseline_readback_failure_does_not_claim_previous_state(store, tmp_path, monkeypatch):
+    cause = C2spCheckpointStoreError("injected read-back failure")
+
+    def unavailable(origin):
+        raise cause
+
+    monkeypatch.setattr(store, "get", unavailable)
+    with pytest.raises(C2spCheckpointStoreError) as caught:
+        store.rebaseline(NEXT, expected=BASE, authorized_by="owner", evidence="incident-123")
+    assert caught.value.indeterminate
+    assert caught.value.reconciliation_error is cause
+    assert SQLiteCheckpointStore(tmp_path / "trust.db").get(BASE.origin) == NEXT
+    with sqlite3.connect(tmp_path / "trust.db") as connection:
+        assert connection.execute("SELECT count(*) FROM rebaselines").fetchone()[0] == 1

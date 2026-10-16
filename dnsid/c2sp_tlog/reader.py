@@ -56,7 +56,7 @@ from .policy import (
 from .proof import TlogProofV1, verify_c2sp_tlog_proof
 from .resource_fetcher import C2spBoundedResourceFetcher
 from .signed_note import SignedNoteKey
-from .stream_bundle import _FetchedStreamBundleSource
+from .stream_bundle import _FetchedStreamBundleSource, _verified_complete_scan_entries
 from .stream_source import (
     C2spScanLimits,
     C2spTlogSource,
@@ -690,7 +690,7 @@ class C2spTlogReader(LogReader):
             raise _log_error(
                 "C2SP event timestamp requires an accepted timestamped witness quorum"
             )
-        _assert_complete_scan(evidence)
+        _verified_complete_scan_entries(evidence)
         self._enforce_append_only_consistency(
             evidence, policy_result.checkpoint_witness_time
         )
@@ -900,7 +900,7 @@ class C2spTlogReader(LogReader):
                 "C2SP lifecycle timestamps require an accepted timestamped witness quorum",
                 C2spLifecycleErrorCategory.INVALID_EVIDENCE,
             )
-        _assert_complete_scan(evidence)
+        _verified_complete_scan_entries(evidence)
         self._enforce_append_only_consistency(
             evidence, policy_result.checkpoint_witness_time
         )
@@ -1188,18 +1188,17 @@ class C2spTlogReader(LogReader):
                     trusted=stored,
                     observed=candidate,
                 )
-            if stored.tree_size >= 1:
-                prefix_root = merkle_root_from_entries(
-                    [e.data for e in entries[: stored.tree_size]]
+            prefix_root = merkle_root_from_entries(
+                [e.data for e in entries[: stored.tree_size]]
+            )
+            if prefix_root != stored.root_hash:
+                raise C2spCheckpointConsistencyError(
+                    "C2SP checkpoint is not consistent with the trusted "
+                    "checkpoint: the trusted tree is not a prefix (fork)",
+                    category=C2spLifecycleErrorCategory.LOG_INCONSISTENT,
+                    trusted=stored,
+                    observed=candidate,
                 )
-                if prefix_root != stored.root_hash:
-                    raise C2spCheckpointConsistencyError(
-                        "C2SP checkpoint is not consistent with the trusted "
-                        "checkpoint: the trusted tree is not a prefix (fork)",
-                        category=C2spLifecycleErrorCategory.LOG_INCONSISTENT,
-                        trusted=stored,
-                        observed=candidate,
-                    )
 
         self._options.checkpoint_store.verify_and_advance(candidate, _verify)
 
@@ -1281,27 +1280,6 @@ def _stitched_event_refs(
             category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
         )
     return [*migration.prior_event_refs, *current]
-
-
-def _assert_complete_scan(evidence: StreamEvidence) -> None:
-    entries = sorted(evidence.entries, key=lambda e: e.index)
-    if len(entries) != evidence.checkpoint.tree_size:
-        raise C2spTlogVerificationError(
-            "complete C2SP scan length does not match checkpoint tree size",
-            category=C2spLifecycleErrorCategory.INCOMPLETE_STREAM,
-        )
-    for index, entry in enumerate(entries):
-        if entry.index != index:
-            raise C2spTlogVerificationError(
-                "complete C2SP scan must contain every index exactly once",
-                category=C2spLifecycleErrorCategory.INCOMPLETE_STREAM,
-            )
-    root = merkle_root_from_entries([entry.data for entry in entries])
-    if root != evidence.checkpoint.root_hash:
-        raise C2spTlogVerificationError(
-            "scanned C2SP entries do not match checkpoint root",
-            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
-        )
 
 
 def _stitch_migration_history(
