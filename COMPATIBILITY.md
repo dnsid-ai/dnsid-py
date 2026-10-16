@@ -24,7 +24,7 @@ These are installed automatically with `pip install dnsid`:
 |---|---|---|
 | [idna](https://pypi.org/project/idna/) | ≥ 3.6 | IDNA A-label normalisation (`normalize_fqdn`) |
 | [httpx](https://pypi.org/project/httpx/) | ≥ 0.27 | HTTP client for JWKS, status endpoint fetches, and DoH queries |
-| [dnspython](https://pypi.org/project/dnspython/) | ≥ 2.6 | System DNS resolver (TXT record lookup with DNSSEC awareness) |
+| [dnspython](https://pypi.org/project/dnspython/) | ≥ 2.8 | System DNS resolver (TXT record lookup with DNSSEC awareness) |
 | [cryptography](https://pypi.org/project/cryptography/) | ≥ 42.0 | JWK thumbprint, ECDSA/EdDSA signature verification and signing |
 | [http-sf](https://pypi.org/project/http-sf/) | ≥ 1.3.0, < 2 | HTTP Structured Fields parsing and serialization |
 
