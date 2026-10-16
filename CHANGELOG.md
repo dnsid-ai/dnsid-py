@@ -1,4 +1,17 @@
 
+## [0.27.0] - 2026-10-16
+
+### Bug Fixes
+
+- fix: align Web Bot Auth with published WG draft 00 ([#67](https://github.com/dnsid-ai/dnsid-py/pull/67))
+- fix: harden WBA directory timing and rotation verification ([#69](https://github.com/dnsid-ai/dnsid-py/pull/69))
+- fix: raise dnspython minimum to 2.8 ([#72](https://github.com/dnsid-ai/dnsid-py/pull/72))
+
+### Features
+
+- feat: add the partner log to the managed verification catalog ([#34](https://github.com/dnsid-ai/dnsid-py/pull/34))
+
+
 ## [0.26.0] - 2026-10-14
 
 ### Bug Fixes
