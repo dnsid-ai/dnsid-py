@@ -90,8 +90,8 @@ class C2spCheckpointConsistencyError(C2spTlogVerificationError):
         self.origin = trusted.origin
         self.trusted_tree_size = trusted.tree_size
         self.observed_tree_size = observed.tree_size
-        self.trusted_root_hash = trusted.root_hash
-        self.observed_root_hash = observed.root_hash
+        self.trusted_root_hash = bytes(trusted.root_hash)
+        self.observed_root_hash = bytes(observed.root_hash)
 
 
 class C2spCheckpointStoreError(C2spTlogError):
@@ -102,6 +102,18 @@ class C2spCheckpointStoreError(C2spTlogError):
     """
 
     category = C2spLifecycleErrorCategory.CHECKPOINT_STORE_ERROR
+
+    def __init__(self, message: str, *, indeterminate: bool = False) -> None:
+        """Report uncertain commit outcomes separately from pre-publication failures.
+
+        After an uncertain commit, ``reconciled_checkpoint`` is a fresh read,
+        unless ``reconciliation_error`` records why read-back also failed.
+        Neither a successful read nor a failed read authorizes retry or recovery.
+        """
+        super().__init__(message)
+        self.indeterminate = indeterminate
+        self.reconciled_checkpoint: TrustedCheckpoint | None = None
+        self.reconciliation_error: BaseException | None = None
 
 
 class C2spTlogTransportError(C2spTlogError):

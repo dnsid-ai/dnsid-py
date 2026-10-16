@@ -98,6 +98,18 @@ Trusted storage is unavailable, corrupt, or changed during recovery.
 Fails closed as non-transient ``LOG_ERROR`` at the LogReader boundary.
 Restore storage or investigate before retrying; never substitute empty trust.
 
+### `C2spCheckpointStoreError` constructor
+
+```python
+C2spCheckpointStoreError(message: str, *, indeterminate: bool = False) -> None
+```
+
+Report uncertain commit outcomes separately from pre-publication failures.
+
+After an uncertain commit, ``reconciled_checkpoint`` is a fresh read,
+unless ``reconciliation_error`` records why read-back also failed.
+Neither a successful read nor a failed read authorizes retry or recovery.
+
 ## `C2spConsistencyProofSource`
 
 ```python
@@ -667,7 +679,7 @@ from dnsid.c2sp_tlog import CheckpointStore
 
 *Bases:* `ABC`
 
-Durable record of the highest trusted checkpoint per origin.
+Record of the highest trusted checkpoint per origin.
 
 Implementations MUST be safe for concurrent use.  Consistency enforcement
 and advancement MUST be atomic per origin (see `verify_and_advance`):
@@ -705,6 +717,11 @@ Atomically check consistency and advance the trusted checkpoint.
 Under the per-origin lock: load the trusted checkpoint, call *verify*
 with it (which MUST raise if *candidate* is a rollback or fork of that
 trusted state), then record *candidate* if it advances the tree.
+Implementations must validate inputs and stored records, return immutable
+snapshots, and check the invocation budget before publication and while
+waiting for locks. Storage failures raise C2spCheckpointStoreError;
+callback failures retain their original type and cause.
+
 Holding the lock across verify and advance serializes concurrent
 verifications of one origin, so an equivocating log cannot get two
 forked extensions accepted against the same trusted checkpoint.
@@ -741,9 +758,9 @@ from dnsid.c2sp_tlog import InMemoryCheckpointStore
 
 Process-lifetime trusted-checkpoint store (the default).
 
-Resists rollback and fork *within a process*.  It does NOT survive a
-restart: afterward the first checkpoint for an origin is trusted on first
-contact, so a rollback served post-restart would be accepted.  A verifier
+Resists rollback and fork only while this same store instance is retained.
+Creating a new store or registry loses remembered trust even without a
+process restart; the next checkpoint is trusted on first contact. A verifier
 that must resist cross-restart rollback MUST inject a durable
 ``CheckpointStore`` such as `SQLiteCheckpointStore`. The SDK does not
 emit a runtime warning when this in-memory default is selected; production
@@ -763,7 +780,7 @@ Create an empty store with no trusted checkpoints.
 InMemoryCheckpointStore.get(origin: str) -> TrustedCheckpoint | None
 ```
 
-Return the trusted checkpoint for *origin*, or None if unseen.
+Return the immutable trusted checkpoint for *origin*, or None if unseen.
 
 ### `put`
 
@@ -771,7 +788,7 @@ Return the trusted checkpoint for *origin*, or None if unseen.
 InMemoryCheckpointStore.put(checkpoint: TrustedCheckpoint) -> None
 ```
 
-Record *checkpoint* if it advances its origin, without verifying.
+Seed advancing state without proof checks; reject equal-size conflicts.
 
 ### `verify_and_advance`
 
@@ -850,21 +867,24 @@ from dnsid.c2sp_tlog import SQLiteCheckpointStore
 
 Durable checkpoint store shared by threads and processes.
 
-SQLite transactions serialize verification and advancement and commit before
-success. Uses rollback journaling with ``synchronous=EXTRA`` and enables
-``fullfsync`` where SQLite supports it. Use a local persistent filesystem
-with working SQLite locks and sync semantics, not a network filesystem.
+Requires a local persistent filesystem with working SQLite locks and sync
+semantics, not a network filesystem. Uses rollback journaling,
+``synchronous=EXTRA`` and ``fullfsync``. Success follows durable commit.
+SQLite owns locks for the entire transaction; lock age never permits theft.
 
-Open an existing store by default; ``create=True`` exclusively initializes a
-NEW file. Never automatically recreate a missing/corrupt store on startup:
-losing the database loses the trust history. An empty store still uses first
-contact trust; seed an independently authenticated checkpoint with ``put``
-if that is unsuitable. ``put`` does not authorize lowering a trusted size.
+Open existing storage by default; ``create=True`` exclusively initializes a
+NEW namespace. Missing, corrupt, or unsupported storage is never recreated.
+Schema 2 keeps a separate origin inventory to detect missing checkpoint rows.
+Removing both the inventory and its data, or replacing the entire database,
+requires independently controlled evidence to detect. Schema 1 is unsupported:
+retain it and use fenced, authorized recovery into a new namespace.
 
-Transactions lock the whole database, including during the verification
-callback. Callbacks must not re-enter this store. Operations wait up to five
-seconds for contention, then fail closed. No connection is retained between
-calls and no explicit close is needed.
+Transactions lock the database during the callback, which must not re-enter
+the store. Lock waits stop at five seconds or the invocation budget, whichever
+is earlier. Budget cancellation is checked before commit, not by abandoning a
+queued write. An uncertain commit raises C2spCheckpointStoreError with
+``indeterminate=True`` and a fresh read-back or reconciliation error.
+No connection is retained and no explicit close is needed.
 
 ### `SQLiteCheckpointStore` constructor
 
@@ -872,16 +892,16 @@ calls and no explicit close is needed.
 SQLiteCheckpointStore(path: Path | str, *, create: bool = False) -> None
 ```
 
-Open or explicitly initialize persistent trust state.
+Open existing trust or explicitly initialize a new protected namespace.
 
 **Arguments:**
 
 - `path` (`Path | str`): Database path in an existing, access-controlled directory.
-- `create` (`bool`): Exclusively create a new database; fails if it exists. — default `False`
+- `create` (`bool`): Exclusively initialize a new database; fail if it exists. — default `False`
 
 **Raises:**
 
-- `C2spCheckpointStoreError`: Creation/opening or schema validation fails.
+- `C2spCheckpointStoreError`: Initialization, opening or validation failed.
 
 ### `get`
 
@@ -889,7 +909,7 @@ Open or explicitly initialize persistent trust state.
 SQLiteCheckpointStore.get(origin: str) -> TrustedCheckpoint | None
 ```
 
-Read the trusted checkpoint; storage failures never become first contact.
+Read trusted state; storage failures never become first contact.
 
 ### `put`
 
@@ -897,10 +917,7 @@ Read the trusted checkpoint; storage failures never become first contact.
 SQLiteCheckpointStore.put(checkpoint: TrustedCheckpoint) -> None
 ```
 
-Seed externally authenticated state if its size advances (or equals) trust.
-
-Bypasses proof verification. A smaller size is ignored; an equal-size
-conflicting root is rejected. Use ``rebaseline`` to explicitly reset trust.
+Seed advancing authenticated state; ignore smaller sizes, reject forks.
 
 ### `verify_and_advance`
 
@@ -908,7 +925,7 @@ conflicting root is rejected. Use ``rebaseline`` to explicitly reset trust.
 SQLiteCheckpointStore.verify_and_advance(candidate: TrustedCheckpoint, verify: Callable[[TrustedCheckpoint | None], None]) -> None
 ```
 
-Verify and durably advance in one transaction, rolling back on failure.
+Verify and durably advance under one transaction and invocation budget.
 
 ### `rebaseline`
 
@@ -916,28 +933,36 @@ Verify and durably advance in one transaction, rolling back on failure.
 SQLiteCheckpointStore.rebaseline(checkpoint: TrustedCheckpoint, *, expected: TrustedCheckpoint, authorized_by: str, evidence: str) -> None
 ```
 
-Explicitly replace trust after independently authorized operator recovery.
+Replace only the reviewed tuple, never automatically retrying recovery.
 
-NEVER call automatically on verification failure. This method records the
-operator's assertion of authorization; it cannot authenticate a person or
-recovery evidence. The caller must do that independently beforehand.
+This method does NOT authenticate an operator or authorize rollback. Before
+calling, fence and drain all affected writers; externally archive signed
+checkpoints, witness/proof evidence and incident logs; authenticate recovery
+authority independently of the failing log; retain approval for the exact
+old/replacement tuples and trust policy, reason and authorization time.
+Independently verify replacement signatures, quorum and freshness against
+that approval. ``evidence`` references this retained authorization/archive;
+``authorized_by`` identifies its approver, not an SDK authentication check.
+
+Both tuples and the references are committed in the same transaction as
+replacement. On ANY failure stop for reconciliation, not reload/retry.
+Read-back is required before success. Keep the external archive protected
+from database rollback, including approval recorded BEFORE replacement and
+its reconciled outcome afterward. Discard affected caches/verified objects,
+rebuild readers and complete fresh identity/lifecycle verification before
+resuming; checkpoint recovery does not repair lost lifecycle history.
 
 **Arguments:**
 
-- `checkpoint` (`TrustedCheckpoint`): Independently authenticated replacement checkpoint.
-- `expected` (`TrustedCheckpoint`): Exact previous checkpoint reviewed by the operator. A concurrent change aborts the reset rather than overwriting it.
-- `authorized_by` (`str`): Nonempty identity of the authorizing incident/security owner.
-- `evidence` (`str`): Nonempty incident/evidence reference justifying this trust change.
+- `checkpoint` (`TrustedCheckpoint`): Independently verified, authorized replacement.
+- `expected` (`TrustedCheckpoint`): Exact reviewed old tuple, including witnessed time.
+- `authorized_by` (`str`): Approver identity from the external authorization.
+- `evidence` (`str`): Reference to retained authorization and signed evidence.
 
 **Raises:**
 
-- `ValueError`: Invalid checkpoint, origin mismatch, or missing audit fields.
-- `C2spCheckpointStoreError`: Stored state changed or persistence failed.
-
-The previous and replacement checkpoints, authorization, evidence reference,
-and UTC time are appended to the ``rebaselines`` SQL table in the SAME
-transaction as the replacement. Preserve an external incident archive too:
-someone with filesystem write access can alter this database and its audit.
+- `ValueError`: Invalid checkpoint or missing audit reference.
+- `C2spCheckpointStoreError`: Stale expected state, storage or read-back failure.
 
 ## `SafeC2spResourceFetcher`
 

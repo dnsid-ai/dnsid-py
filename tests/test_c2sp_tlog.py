@@ -585,7 +585,8 @@ class TestEndToEndReader:
             reader.rebuild_history(self.DOMAIN)
         assert exc_info.value.code is VerificationCode.LOG_ERROR
         assert exc_info.value.transient is False
-        assert exc_info.value.category == C2spLifecycleErrorCategory.INCOMPLETE_STREAM
+        assert exc_info.value.category == C2spLifecycleErrorCategory.INVALID_EVIDENCE
+        assert reader._options.checkpoint_store.get(reader.parsed.origin) is None
         assert isinstance(exc_info.value.__cause__, C2spTlogVerificationError)
 
     def test_incomplete_source_has_stable_category(self):
