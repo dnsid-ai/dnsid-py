@@ -1,0 +1,6 @@
+log.partners.dnsid.ai
+172
+y3xMdHEx09sStext7f/UPgTNmsWMGNU7yDp5Shm8kCI=
+
+— log.partners.dnsid.ai 8BQ+CRMFbhOkNcJqgUvgZSpW/6d7icG9lZAk/j3tCjOjM49iw9Xd2jv6WXwT1ufzMXTg8ohFs7ZCF2coZNJ3JCTcMwE=
+— witness.partners.dnsid.ai/w1 oRXrZwAAAABq0jsCpgAjUujcMCU4Rm0bqJEyEzumLoPGOiv6wgMccyZWSsP880folYLO28aEYT7chSs45Y5dgwwSZbLMOQkr3DBcDw==

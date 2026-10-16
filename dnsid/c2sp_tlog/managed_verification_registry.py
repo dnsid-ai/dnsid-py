@@ -41,19 +41,17 @@ _PRODUCTION_TRUST_PROFILE = (
     b'AbKj/zrAfK04/NM07Zj7kxP2YXbM5neT8ym6juXC2PXG"\n  ]\n}'
 )
 
-# The partner environment's log. Its log and bundle keys were checked against
-# the signing keys' public halves, obtained out of band, and its witness key
-# against the reviewed partner witness policy; the log's own discovery
-# endpoints are not what the pins rest on.
+# Matches the reviewed service profile in Identity-Digital/dnsid#2639;
+# the log's discovery endpoints are not trust anchors.
 _PARTNERS_TRUST_PROFILE = (
     b'{\n  "version": 1,\n  "scope": "public",\n'
     b'  "log_prefix": "https://log.partners.dnsid.ai",\n  "tlog_policy": "'
-    b"log log.partners.dnsid.ai+52d6a7c3+ASsAuEkXpM63Qh2yh0q7DvueHqITfWGvcpWCOQfaDz5m\\n"
+    b"log log.partners.dnsid.ai+f0143e09+Ae5vrTVQUr0h2GKbeHq70ml37N+uVBsU4NpZD4qMqAu1\\n"
     b"witness dnsid-witness-1 "
     b"witness.partners.dnsid.ai/w1+a115eb67+BB0avWVeSelUBk2w8FtTbT+orf2i826q9VemA0jaXxg4\\n"
     b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
-    b'    "dnsid-stream-bundle+b12677d8+'
-    b'AWOB3PQPuFoGK66bqsFRcNh4n4q2DaAcauBijHymUUWH"\n  ]\n}'
+    b'    "dnsid-stream-bundle+b1e0b597+'
+    b'AQt9ol4cfwPHxdH4NHNRidsAvU2bYE7KVItOlBG/bsaZ"\n  ]\n}'
 )
 
 

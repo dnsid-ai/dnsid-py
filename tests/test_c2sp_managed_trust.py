@@ -8,8 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from dnsid._crypto import jwk_from_dict
+from dnsid._utils import b64url_decode_strict
 from dnsid.c2sp_tlog import (
     C2spResourceFetchGuarantees,
+    C2spStreamBundleVerifierOptions,
     C2spTlogError,
     C2spTlogReader,
     DnsidManagedVerificationOptions,
@@ -21,6 +24,7 @@ from dnsid.c2sp_tlog import (
     parse_c2sp_tlog_trust_profile,
     parse_checkpoint,
     parse_signed_note_verifier_key,
+    verify_c2sp_stream_bundle,
 )
 from dnsid.c2sp_tlog.managed_verification_registry import (
     _DEVELOPMENT_TRUST_PROFILE,
@@ -53,13 +57,13 @@ class _Fetcher:
         return C2spResourceFetchGuarantees(True, True, True, True, True)
 
 
-_PARTNERS_POLICY = b"""log log.partners.dnsid.ai+52d6a7c3+ASsAuEkXpM63Qh2yh0q7DvueHqITfWGvcpWCOQfaDz5m
+_PARTNERS_POLICY = b"""log log.partners.dnsid.ai+f0143e09+Ae5vrTVQUr0h2GKbeHq70ml37N+uVBsU4NpZD4qMqAu1
 witness dnsid-witness-1 witness.partners.dnsid.ai/w1+a115eb67+BB0avWVeSelUBk2w8FtTbT+orf2i826q9VemA0jaXxg4
 quorum dnsid-witness-1
 """
-_PARTNERS_BUNDLE_KEY = "dnsid-stream-bundle+b12677d8+AWOB3PQPuFoGK66bqsFRcNh4n4q2DaAcauBijHymUUWH"
-# The size-1 checkpoint https://log.partners.dnsid.ai served on 2026-09-28.
-_PARTNERS_CHECKPOINT = Path(__file__).parent / "vectors" / "c2sp-partners-checkpoint-size1.txt"
+_PARTNERS_BUNDLE_KEY = "dnsid-stream-bundle+b1e0b597+AQt9ol4cfwPHxdH4NHNRidsAvU2bYE7KVItOlBG/bsaZ"
+# Live checkpoint captured on 2026-10-16, signed by the log and its witness.
+_PARTNERS_CHECKPOINT = Path(__file__).parent / "vectors" / "c2sp-partners-checkpoint.txt"
 
 
 def test_development_catalog_entry_is_exact_trust_profile() -> None:
@@ -114,8 +118,31 @@ def test_partners_policy_verifies_partner_log_checkpoint() -> None:
         "public",
         now_ms=time.time() * 1000,
     )
-    assert checkpoint.tree_size == 1
+    assert checkpoint.tree_size == 172
     assert len(result.accepted_witness_timestamps) == 1
+
+
+def test_partners_profile_verifies_partner_stream_bundle() -> None:
+    # Reviewed service fixture from Identity-Digital/dnsid#2639, captured 2026-10-02.
+    data = (Path(__file__).parent / "vectors" / "c2sp-partners-stream-bundle.json").read_bytes()
+    bundle = json.loads(data)
+    issuance = json.loads(b64url_decode_strict(bundle["events"][0]["entry"]))
+    result = verify_c2sp_stream_bundle(
+        data,
+        C2spStreamBundleVerifierOptions(
+            policy_bytes=_PARTNERS_POLICY,
+            bundle_keys=[parse_signed_note_verifier_key(_PARTNERS_BUNDLE_KEY)],
+            entity_key=jwk_from_dict(issuance["ek"]),
+            checkpoint_freshness_ms=600_000,
+            max_bundle_lifetime_ms=600_000,
+            max_bundle_bytes=128 * 1024,
+            max_events=16,
+            now=lambda: bundle["expires"] - 60,
+        ),
+    )
+    assert result.bundle_signer_kid == "dnsid-stream-bundle+b1e0b597"
+    assert result.logged_state == "ACTIVE"
+    assert len(result.events) == 1
 
 
 def test_managed_registry_implements_selection_vectors() -> None:
