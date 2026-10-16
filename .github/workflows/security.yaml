@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   python:
-    uses: dnsid-ai/github-actions/.github/workflows/security-python.yml@cacfffc9456cb52046a30c2f4d060808aca00784 # main, 2026-10-09
+    uses: dnsid-ai/github-actions/.github/workflows/security-python.yml@main
     permissions:
       contents: read # check out the code
       security-events: write # required by the called workflow's jobs
