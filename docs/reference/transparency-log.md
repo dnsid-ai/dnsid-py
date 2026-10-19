@@ -427,6 +427,14 @@ lifecycle history of its domain.
 - `C2spTlogParseError`: If *ref* or the entry bytes are malformed.
 - `VerificationError`: With ``VerificationCode.LOG_ERROR`` if the proof, checkpoint policy, timestamp, or lifecycle authorization checks fail.
 
+### `recover_issuance`
+
+```python
+C2spTlogReader.recover_issuance(domain: str, entity_key: JWK) -> tuple[bytes, LogRef]
+```
+
+Recover exact ISSUANCE bytes from complete, inclusion-verified history.
+
 ### `rebuild_history`
 
 ```python

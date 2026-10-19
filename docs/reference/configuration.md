@@ -113,6 +113,14 @@ fetches the signed record.su endpoint.
 
 - `registry_url` (`str`): Registry base URL. ``""`` (absent) lets the RegistryClient constructor default to ``DEFAULT_REGISTRY_URL``.
 
+## `ManagedRegistrationConfig`
+
+```python
+from dnsid import ManagedRegistrationConfig
+```
+
+Setup-only expected accountability and independently selected bootstrap URL.
+
 ## `PublicationConfig`
 
 ```python
@@ -150,6 +158,14 @@ variant.
 - `policy_document` (`bytes | None`): Independently trusted C2SP ``tlog-policy`` bytes.
 - `policy_url` (`str | None`): Independently trusted C2SP ``tlog-policy`` HTTPS URL.
 
+## `KeyGenerationConfig`
+
+```python
+from dnsid import KeyGenerationConfig
+```
+
+Recoverable key-generation selection, scoped to one named operation.
+
 ## `KeySource`
 
 ```python
@@ -169,6 +185,7 @@ wins over ``key_store_path``; ``entity_key_path`` is independent.
 - `key_store_path` (`str | None`): :meth:`LocalKeyProvider.load` key-store file; used only without ``cli_directory``.
 - `provider` (`str | None`): Known provider name: file, aws-kms, google-kms, or azure-key-vault.
 - `key_ref` (`str | None`): Stable existing operational key reference.
+- `generation` (`KeyGenerationConfig | None`): Stable generation locator and algorithm; used only by managed registration.
 - `settings` (`dict[str, Any] | None`): Non-secret provider settings; authentication uses ambient credentials.
 
 ## `load_environment`

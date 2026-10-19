@@ -80,9 +80,11 @@ from .aws_kms_key_provider import (
     BotoKmsFacade as BotoKmsFacade,
 )
 from .config_loading import (
+    KeyGenerationConfig,
     KeySource,
     LoadedConfig,
     LogTrust,
+    ManagedRegistrationConfig,
     construct_identity_manager,
     identity_manager_from_dnsid,
     identity_manager_from_environment,
@@ -131,6 +133,13 @@ from .interfaces import (
 )
 from .jose import JoseConfig, JoseProfile
 from .local_key_provider import LocalKeyProvider
+from .managed_issuance import ManagedIssuanceState, issue_managed_identity
+from .managed_registration import (
+    FileRegistrationStore,
+    ManagedRegistrationError,
+    ManagedRegistrationResult,
+    register_managed_identity,
+)
 from .manager import (
     ApplicationSigningPauseHook,
     IdentityManager,
@@ -317,9 +326,17 @@ __all__ = [
     "VerifiedOIDCSubject",
     # Key management
     "LocalKeyProvider",
+    "ManagedIssuanceState",
+    "issue_managed_identity",
+    "ManagedRegistrationConfig",
+    "FileRegistrationStore",
+    "ManagedRegistrationError",
+    "ManagedRegistrationResult",
+    "register_managed_identity",
     # Configuration loading
     "LoadedConfig",
     "LogTrust",
+    "KeyGenerationConfig",
     "KeySource",
     "load_environment",
     "load_file",

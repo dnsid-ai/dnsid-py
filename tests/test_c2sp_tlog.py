@@ -443,6 +443,17 @@ class TestEndToEndReader:
         assert isinstance(history[0], IssuanceEvent)
         assert history[0].domain == self.DOMAIN
 
+    def test_recover_issuance_returns_exact_included_entry(self):
+        reader, _ = self._build_log()
+        history = reader.rebuild_history(self.DOMAIN)
+        entry, ref = reader.recover_issuance(self.DOMAIN, history[0].entity_key)
+        assert str(ref) == f"{self.LR}@0"
+        parsed = json.loads(entry)
+        assert parsed["type"] == "ISSUANCE"
+        assert parsed["fqdn"] == self.DOMAIN
+        assert parsed["sigs"]["ae"] and parsed["sigs"]["op"]
+        assert entry == reader._load_complete_history(self.DOMAIN).current_stream_events[0].data
+
     def test_read_event_requires_proofed_entry_in_bundle_backed_history(self):
         from types import SimpleNamespace
         from unittest.mock import patch
