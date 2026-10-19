@@ -243,10 +243,12 @@ Identifies the failure category in VerificationError.
 
 Values:
 
-* DNS_RESOLUTION — DNS lookup failed (network error or NXDOMAIN);
+* DNS_RESOLUTION — DNS lookup failed (timeout, network error, or SERVFAIL);
   transient.
 * DNSSEC_FAILED — DNSSEC validation attempted and failed; permanent.
-* RECORD_INVALID — wrong number of TXT records, or record
+* RECORD_NOT_FOUND — no TXT record (NXDOMAIN or NOERROR/NODATA); non-transient.
+  Later verification may succeed after publication.
+* RECORD_INVALID — multiple TXT records, or record
   parse/validation failure; permanent.
 * SIGNATURE_INVALID — no JWKS key could verify the sg tag; permanent.
 * TLS_ERROR — TLS certificate error or disallowed redirect; permanent.
@@ -271,6 +273,7 @@ Values:
 - `STATUS_UNAVAILABLE` = `auto()`
 - `LOG_ERROR` = `auto()`
 - `COUNTERPARTY_NOT_ACCEPTED` = `auto()`
+- `RECORD_NOT_FOUND` = `auto()`
 
 ## `AgentState`
 

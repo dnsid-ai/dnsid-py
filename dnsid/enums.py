@@ -48,10 +48,12 @@ class VerificationCode(Enum):
 
     Values:
 
-    * DNS_RESOLUTION — DNS lookup failed (network error or NXDOMAIN);
+    * DNS_RESOLUTION — DNS lookup failed (timeout, network error, or SERVFAIL);
       transient.
     * DNSSEC_FAILED — DNSSEC validation attempted and failed; permanent.
-    * RECORD_INVALID — wrong number of TXT records, or record
+    * RECORD_NOT_FOUND — no TXT record (NXDOMAIN or NOERROR/NODATA); non-transient.
+      Later verification may succeed after publication.
+    * RECORD_INVALID — multiple TXT records, or record
       parse/validation failure; permanent.
     * SIGNATURE_INVALID — no JWKS key could verify the sg tag; permanent.
     * TLS_ERROR — TLS certificate error or disallowed redirect; permanent.
@@ -65,9 +67,9 @@ class VerificationCode(Enum):
       denied a protocol-valid identity; permanent.
     """
 
-    DNS_RESOLUTION = auto()  # DNS lookup failed (network error or NXDOMAIN). Transient.
+    DNS_RESOLUTION = auto()  # Timeout, network error, or ordinary SERVFAIL. Transient.
     DNSSEC_FAILED = auto()  # DNSSEC attempted and failed. Permanent.
-    RECORD_INVALID = auto()  # Wrong number of TXT records or parse/validation failure. Permanent.
+    RECORD_INVALID = auto()  # Multiple TXT records or parse/validation failure. Permanent.
     SIGNATURE_INVALID = auto()  # No JWKS key could verify the sg tag. Permanent.
     TLS_ERROR = auto()  # TLS cert error or disallowed redirect. Permanent.
     KEY_AGE_EXCEEDED = auto()  # Signing key older than ka tag permits. Permanent.
@@ -75,6 +77,7 @@ class VerificationCode(Enum):
     STATUS_UNAVAILABLE = auto()  # su endpoint unreachable (transport failure). Transient.
     LOG_ERROR = auto()  # Log unreachable (Transient) or proof failed (Permanent).
     COUNTERPARTY_NOT_ACCEPTED = auto()  # Configured policy denied verified counterparty. Permanent.
+    RECORD_NOT_FOUND = auto()  # NXDOMAIN or NOERROR/NODATA. Non-transient, not a blacklist.
 
 
 class AgentState(StrEnum):

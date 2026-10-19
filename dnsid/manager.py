@@ -24,6 +24,9 @@ from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+import dns.exception
+import dns.resolver
+
 from ._verification_budget import (
     remaining_seconds,
     run_concurrently,
@@ -1567,7 +1570,20 @@ class IdentityManager:
 
         # -- Step 1: Fetch and parse the _dnsid TXT record ----------------
         dns_acquired_at = _now()  # Lookup start conservatively bounds response acquisition.
-        records, dnssec_state = self._dns_resolver.fetch_txt(f"_dnsid.{domain}")
+        try:
+            records, dnssec_state = self._dns_resolver.fetch_txt(f"_dnsid.{domain}")
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            records, dnssec_state = [], DNSSECState.UNKNOWN
+        except dns.exception.ValidationFailure:
+            records, dnssec_state = [], DNSSECState.FAILED
+        except VerificationError:
+            raise
+        except Exception as exc:
+            raise VerificationError(
+                VerificationCode.DNS_RESOLUTION,
+                f"DNS lookup failed for {domain!r}: {exc}",
+                transient=True,
+            ) from exc
 
         if not isinstance(dnssec_state, DNSSECState):
             raise VerificationError(
@@ -1590,6 +1606,11 @@ class IdentityManager:
             raise VerificationError(
                 VerificationCode.DNSSEC_FAILED,
                 f"DNSSEC required but state is {dnssec_state.name}",
+            )
+        if not records:
+            raise VerificationError(
+                VerificationCode.RECORD_NOT_FOUND,
+                "no _dnsid TXT record found",
             )
         if len(records) != 1:
             raise VerificationError(
