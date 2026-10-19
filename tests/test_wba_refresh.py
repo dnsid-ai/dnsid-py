@@ -321,7 +321,8 @@ def test_manager_refresh_enforces_current_peer(ec_pair, peer):
 
 
 @pytest.mark.parametrize("resource", ["jwks", "status", "log"])
-def test_identity_resource_transports_revalidate(resource):
+@pytest.mark.parametrize("revalidate", [False, True])
+def test_identity_resource_transports_revalidate(resource, revalidate):
     from dnsid._https_client import fetch_agent_status, fetch_jwks
     from tests.test_c2sp_resource_fetcher import _mock_fetcher
 
@@ -340,7 +341,9 @@ def test_identity_resource_transports_revalidate(resource):
         fetcher.fetch_bounded(url, 1024)
         fetcher.close()
     elif resource == "jwks":
-        fetch_jwks(url, DOMAIN, transport=transport)
+        fetch_jwks(url, DOMAIN, transport=transport, revalidate=revalidate)
     else:
-        fetch_agent_status(url, transport=transport)
-    assert requests[0].headers["cache-control"] == "no-cache"
+        fetch_agent_status(url, transport=transport, revalidate=revalidate)
+    assert requests[0].headers.get("cache-control") == (
+        "no-cache" if revalidate or resource == "log" else None
+    )

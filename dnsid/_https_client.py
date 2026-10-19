@@ -37,6 +37,7 @@ def fetch_jwks(
     transport: httpx.BaseTransport | None = None,
     domain_boundary: bool = False,
     client: httpx.Client | None = None,
+    *, revalidate: bool = False,
 ) -> tuple[JWKS, TLSCertificate]:
     """Fetch a bounded JWKS with redirects pinned to a host or domain boundary.
 
@@ -55,9 +56,12 @@ def fetch_jwks(
     try:
         for _ in range(_MAX_REDIRECTS + 1):
             try:
-                with client.stream("GET", url, headers={"Cache-Control": "no-cache"},
-                                   follow_redirects=False,
-                                   timeout=remaining_seconds(10.0)) as response:
+                with client.stream(
+                    "GET", url,
+                    headers={"Cache-Control": "no-cache"} if revalidate else {},
+                    follow_redirects=False,
+                    timeout=remaining_seconds(10.0),
+                ) as response:
                     if response.is_redirect:
                         location = urljoin(url, response.headers.get("location", ""))
                         _assert_same_host_https_redirect(location, allowed_host, domain_boundary)
@@ -122,6 +126,7 @@ def fetch_agent_status(
     verify: _Verify = True,
     transport: httpx.BaseTransport | None = None,
     client: httpx.Client | None = None,
+    *, revalidate: bool = False,
 ) -> AgentStatus:
     """Fetch and parse the bounded agent status endpoint over strict HTTPS.
 
@@ -140,7 +145,10 @@ def fetch_agent_status(
                 with client.stream(
                     "GET",
                     url,
-                    headers={"Accept": "application/json", "Cache-Control": "no-cache"},
+                    headers={
+                        "Accept": "application/json",
+                        **({"Cache-Control": "no-cache"} if revalidate else {}),
+                    },
                     follow_redirects=False,
                     timeout=remaining_seconds(10.0),
                 ) as response:

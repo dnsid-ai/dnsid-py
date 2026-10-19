@@ -1041,7 +1041,9 @@ class TestVerifyDomain:
         ku_uri = f"https://{target}/.well-known/jwks.json"
 
         class FlaglessFetcher(HTTPSFetcher):
-            def fetch_strict_json(self, url, allowed_host=None, domain_boundary=False):
+            def fetch_strict_json(
+                self, url, allowed_host=None, domain_boundary=False, *, revalidate=False,
+            ):
                 if url == ku_uri:
                     return {"keys": [ku_jwk._raw]}, tls_cert
                 if url.endswith("/status"):
