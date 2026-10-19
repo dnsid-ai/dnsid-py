@@ -26,6 +26,8 @@ conventional_commits = false
 filter_unconventional = false
 split_commits = false
 commit_preprocessors = [
+  # This breaking PR was merged as fix: without the ! marker.
+  { pattern = "\\Afix: enforce checkpoint continuity and trusted storage contracts \\(#73\\)(\\n|\\z)", replace = "fix!: enforce checkpoint continuity and trusted storage contracts (#73)${1}" },
   { pattern = "Merge pull request #(\\d+) from [^\\n]+\\n\\n(.*)", replace = "${2} ([#${1}](https://github.com/dnsid-ai/dnsid-py/pull/${1}))" },
   { pattern = "\\A([^\\n]+) \\(#(\\d+)\\)(\\n|\\z)", replace = "${1} ([#${2}](https://github.com/dnsid-ai/dnsid-py/pull/${2}))${3}" },
 ]
