@@ -84,7 +84,7 @@ _SIG_MEMBERS = frozenset({"alg", "kid", "value"})
 
 
 class _MissingC2spConsistencyEvidenceError(C2spTlogVerificationError):
-    pass
+    condition = "consistency_unavailable"
 
 
 @dataclass
@@ -568,12 +568,19 @@ def _verify_and_advance_checkpoint(
 def _verified_complete_scan_entries(evidence: C2spStreamEvidence) -> list[IndexedEntry]:
     if not evidence.complete:
         raise C2spTlogVerificationError(
-            "stream bundle consistency fallback requires a complete raw scan"
+            "stream bundle consistency fallback requires a complete raw scan",
+            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
+        )
+    if any(type(entry.index) is not int or entry.index < 0 for entry in evidence.entries):
+        raise C2spTlogVerificationError(
+            "complete raw scan contains an invalid index",
+            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
         )
     entries = sorted(evidence.entries, key=lambda entry: entry.index)
     if len(entries) != evidence.checkpoint.tree_size:
         raise C2spTlogVerificationError(
-            "complete raw scan length does not match its checkpoint"
+            "complete raw scan length does not match its checkpoint",
+            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
         )
     _verify_checkpoint_prefix(entries, evidence.checkpoint, "raw scan")
     return entries
@@ -589,11 +596,13 @@ def _verify_checkpoint_prefix(
         entry.index != index for index, entry in enumerate(prefix)
     ):
         raise C2spTlogVerificationError(
-            f"complete scan does not contain the {name} checkpoint prefix"
+            f"complete scan does not contain the {name} checkpoint prefix",
+            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
         )
     if merkle_root_from_entries([entry.data for entry in prefix]) != checkpoint.root_hash:
         raise C2spTlogVerificationError(
-            f"complete scan prefix does not match the {name} checkpoint"
+            f"complete scan prefix does not match the {name} checkpoint",
+            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
         )
 
 

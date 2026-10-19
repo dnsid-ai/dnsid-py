@@ -517,6 +517,24 @@ policy parsing, custom source construction, registration, and checkpoint-store
 injection remain available
 for advanced deployments.
 
+The SDK supplies only in-memory checkpoint storage, matching the Go and TypeScript
+SDKs. Reuse the same registry/store to retain observed trust. Applications that
+need cross-restart protection implement the `CheckpointStore` interface and inject
+it through `C2spTlogVerificationOptions(trusted_checkpoint_store=store, ...)` or
+`DnsidManagedVerificationOptions(trusted_checkpoint_store=store)`, then inject the
+registry into `IdentityManagerDependencies(log_registry=registry)`. Deployment
+files and SDK environment variables do not configure storage.
+
+Checkpoint failures expose stable `category` values through `VerificationError`.
+Its typed `__cause__` retains continuity diagnostics or the storage failure.
+Cancellation is cooperative through the invocation budget and prevents publication
+when observed beforehand. Custom stores must preserve atomicity and cancellation,
+fail closed on lost or corrupt state, and acknowledge durable writes only after
+commit. A failed write may already have published; reconcile actual stored state
+before recovery. Recovery requires independently authenticated authorization,
+retained signed evidence, and fresh verification, not an automatic trust reset.
+See [checkpoint implementation checks](docs/checkpoint-continuity.md).
+
 The reader authenticates checkpoints against the pinned log and witness keys
 (with anti-rollback via a checkpoint store), verifies Merkle inclusion, and
 for records using `dnsid-draft-01` or pre-RFC `DNSid1` verifies the logged

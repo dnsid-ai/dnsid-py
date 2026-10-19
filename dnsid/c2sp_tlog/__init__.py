@@ -118,7 +118,6 @@ from .signed_note import (
     verify_checkpoint_signature,
     verify_note_signature,
 )
-from .sqlite_checkpoint_store import SQLiteCheckpointStore
 from .stream_bundle import (
     C2spStreamBundleVerifierOptions,
     VerifiedC2spStreamBundle,
@@ -220,7 +219,6 @@ __all__ = [
     "C2spStreamBundleVerifierOptions",
     "IndexedEntry",
     "InMemoryCheckpointStore",
-    "SQLiteCheckpointStore",
     "NoteSignature",
     "ParsedC2spTlogLr",
     "C2spChain",

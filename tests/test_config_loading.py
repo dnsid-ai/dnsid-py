@@ -877,3 +877,52 @@ def test_cli_root_pointer_resolves_to_per_identity_config(tmp_path):
     leaf_loaded = load_cli_directory(domain_dir)
     assert leaf_loaded.dnsid.identity.log_ref == loaded.dnsid.identity.log_ref
     assert leaf_loaded.key_source.cli_directory == str(domain_dir)
+
+
+@pytest.mark.parametrize("member", ["checkpointStorePath", "trustedCheckpointStore", "create", "recovery"])
+def test_checkpoint_storage_is_not_deployment_file_configuration(tmp_path, member):
+    with pytest.raises(ArgumentError, match="unknown member"):
+        load_file(_write_file(tmp_path, {"logTrust": {"managed": True, member: "x"}}))
+    assert load_environment({"DNSID_CHECKPOINT_STORE_PATH": "/not/read"}) == LoadedConfig()
+
+
+@pytest.mark.parametrize("managed", [False, True])
+def test_construct_keeps_code_injected_registry(monkeypatch, managed):
+    from dnsid.c2sp_tlog import (
+        C2spCheckpointStoreError,
+        C2spTlogVerificationOptions,
+        DnsidManagedVerificationOptions,
+        InMemoryCheckpointStore,
+        create_c2sp_tlog_verification_registry,
+        create_dnsid_managed_verification_registry,
+    )
+
+    store = InMemoryCheckpointStore()
+    if managed:
+        registry = create_dnsid_managed_verification_registry(
+            DnsidManagedVerificationOptions(trusted_checkpoint_store=store)
+        )
+        lr = "c2sp-tlog:public:https://log.dev.dnsid.ai#instance_AAAAAAAAAAAAAAAAAAAAAA"
+    else:
+        registry = create_c2sp_tlog_verification_registry(C2spTlogVerificationOptions(
+            policy_document=_policy_document(), trusted_checkpoint_store=store,
+        ))
+        lr = "c2sp-tlog:public:https://log.example#instance_AAAAAAAAAAAAAAAAAAAAAA"
+    loaded = LoadedConfig(log_trust=LogTrust(policy_url="must-not-be-fetched"))
+    manager = construct_identity_manager(
+        loaded, deps=IdentityManagerDependencies(log_registry=registry)
+    )
+    assert manager._log_registry is registry
+    assert registry.new_reader(lr)._options.checkpoint_store is store
+    # A failing injected store must not be replaced by the loader or either factory.
+    failure = C2spCheckpointStoreError("injected storage failure")
+
+    def unavailable(origin):
+        raise failure
+
+    monkeypatch.setattr(store, "get", unavailable)
+    with pytest.raises(C2spCheckpointStoreError) as caught:
+        registry.new_reader(lr)._options.checkpoint_store.get("log.example")
+    assert caught.value is failure
+    assert caught.value.category == "CHECKPOINT_STORE_ERROR"
+    manager.close()

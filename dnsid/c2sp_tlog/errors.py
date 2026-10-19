@@ -90,8 +90,8 @@ class C2spCheckpointConsistencyError(C2spTlogVerificationError):
         self.origin = trusted.origin
         self.trusted_tree_size = trusted.tree_size
         self.observed_tree_size = observed.tree_size
-        self.trusted_root_hash = trusted.root_hash
-        self.observed_root_hash = observed.root_hash
+        self.trusted_root_hash = bytes(trusted.root_hash)
+        self.observed_root_hash = bytes(observed.root_hash)
 
 
 class C2spCheckpointStoreError(C2spTlogError):
