@@ -2127,23 +2127,22 @@ class TestAppendOnlyConsistency(TestEndToEndReader):
         (1, False, "LOG_FORK"),
         (1, True, "LOG_INCONSISTENT"),
     ])
-    def test_durable_reader_rejects_and_classifies_after_restart(
-        self, tmp_path, trusted_size, growing, category
+    def test_shared_store_rejects_and_classifies_conflicts(
+        self, trusted_size, growing, category
     ):
         from dnsid.c2sp_tlog import (
             C2spCheckpointConsistencyError,
-            SQLiteCheckpointStore,
+            InMemoryCheckpointStore,
             TrustedCheckpoint,
         )
         from dnsid.enums import VerificationCode
         from dnsid.exceptions import VerificationError
 
         reader, ts = self._build_log((lambda entry: [entry]) if growing else None)
-        path = tmp_path / "trust.db"
-        store = SQLiteCheckpointStore(path, create=True)
+        store = InMemoryCheckpointStore()
         trusted = TrustedCheckpoint(reader.parsed.origin, trusted_size, bytes(32), ts)
         store.put(trusted)
-        reader._options.checkpoint_store = SQLiteCheckpointStore(path)
+        reader._options.checkpoint_store = store
         with pytest.raises(VerificationError) as caught:
             reader.rebuild_history(self.DOMAIN)
         error = caught.value
@@ -2160,30 +2159,34 @@ class TestAppendOnlyConsistency(TestEndToEndReader):
         assert detail.observed_root_hash != detail.trusted_root_hash
         assert store.get(trusted.origin) == trusted
 
-    def test_durable_reader_accepts_same_checkpoint_after_restart(self, tmp_path):
-        from dnsid.c2sp_tlog import SQLiteCheckpointStore
-
-        reader, _ = self._build_log()
-        path = tmp_path / "trust.db"
-        reader._options.checkpoint_store = SQLiteCheckpointStore(path, create=True)
-        reader.rebuild_history(self.DOMAIN)
-        reader._options.checkpoint_store = SQLiteCheckpointStore(path)
-        again = self._second_reader_sharing_store(reader)
-        assert len(again.rebuild_history(self.DOMAIN)) == 1
-
-    def test_storage_failure_is_not_transport_or_first_contact(self, tmp_path):
-        from dnsid.c2sp_tlog import SQLiteCheckpointStore
+    @pytest.mark.parametrize("published", [False, True])
+    def test_storage_failure_is_not_transport_or_first_contact(self, published):
+        from dnsid.c2sp_tlog import C2spCheckpointStoreError, InMemoryCheckpointStore
         from dnsid.exceptions import VerificationError
 
+        cause = OSError("injected storage failure")
+
+        class FailingStore(InMemoryCheckpointStore):
+            failing = True
+
+            def verify_and_advance(self, candidate, verify):
+                if not self.failing or published:
+                    super().verify_and_advance(candidate, verify)
+                if self.failing:
+                    raise C2spCheckpointStoreError("storage failed") from cause
+
         reader, _ = self._build_log()
-        path = tmp_path / "trust.db"
-        reader._options.checkpoint_store = SQLiteCheckpointStore(path, create=True)
-        path.unlink()
+        store = FailingStore()
+        reader._options.checkpoint_store = store
         with pytest.raises(VerificationError) as caught:
             reader.rebuild_history(self.DOMAIN)
         assert caught.value.category == "CHECKPOINT_STORE_ERROR"
         assert not caught.value.transient
-        assert not path.exists()
+        assert caught.value.__cause__.__cause__ is cause
+        assert (store.get(reader.parsed.origin) is not None) == published
+        # A failed acknowledgment need not undo publication. Reload actual state.
+        store.failing = False
+        assert len(self._second_reader_sharing_store(reader).rebuild_history(self.DOMAIN)) == 1
 
 
 class TestCheckpointStoreAtomicity:

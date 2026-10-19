@@ -98,18 +98,6 @@ Trusted storage is unavailable, corrupt, or changed during recovery.
 Fails closed as non-transient ``LOG_ERROR`` at the LogReader boundary.
 Restore storage or investigate before retrying; never substitute empty trust.
 
-### `C2spCheckpointStoreError` constructor
-
-```python
-C2spCheckpointStoreError(message: str, *, indeterminate: bool = False) -> None
-```
-
-Report uncertain commit outcomes separately from pre-publication failures.
-
-After an uncertain commit, ``reconciled_checkpoint`` is a fresh read,
-unless ``reconciliation_error`` records why read-back also failed.
-Neither a successful read nor a failed read authorizes retry or recovery.
-
 ## `C2spConsistencyProofSource`
 
 ```python
@@ -761,10 +749,9 @@ Process-lifetime trusted-checkpoint store (the default).
 Resists rollback and fork only while this same store instance is retained.
 Creating a new store or registry loses remembered trust even without a
 process restart; the next checkpoint is trusted on first contact. A verifier
-that must resist cross-restart rollback MUST inject a durable
-``CheckpointStore`` such as `SQLiteCheckpointStore`. The SDK does not
-emit a runtime warning when this in-memory default is selected; production
-deployments must explicitly configure and monitor persistent trust storage.
+that must resist cross-restart rollback MUST inject a deployment-provided
+durable ``CheckpointStore``; the SDK supplies only in-memory storage. It does
+not emit a runtime warning when this default is selected.
 
 ### `InMemoryCheckpointStore` constructor
 
@@ -856,113 +843,6 @@ PreparedC2spTlogEvent.missing_signatures() -> list[C2spSignerRole]
 ```
 
 Roles still absent from the envelope's sigs object.
-
-## `SQLiteCheckpointStore`
-
-```python
-from dnsid.c2sp_tlog import SQLiteCheckpointStore
-```
-
-*Bases:* `CheckpointStore`
-
-Durable checkpoint store shared by threads and processes.
-
-Requires a local persistent filesystem with working SQLite locks and sync
-semantics, not a network filesystem. Uses rollback journaling,
-``synchronous=EXTRA`` and ``fullfsync``. Success follows durable commit.
-SQLite owns locks for the entire transaction; lock age never permits theft.
-
-Open existing storage by default; ``create=True`` exclusively initializes a
-NEW namespace. Missing, corrupt, or unsupported storage is never recreated.
-Schema 2 keeps a separate origin inventory to detect missing checkpoint rows.
-Removing both the inventory and its data, or replacing the entire database,
-requires independently controlled evidence to detect. Schema 1 is unsupported:
-retain it and use fenced, authorized recovery into a new namespace.
-
-Transactions lock the database during the callback, which must not re-enter
-the store. Lock waits stop at five seconds or the invocation budget, whichever
-is earlier. Budget cancellation is checked before commit, not by abandoning a
-queued write. An uncertain commit raises C2spCheckpointStoreError with
-``indeterminate=True`` and a fresh read-back or reconciliation error.
-No connection is retained and no explicit close is needed.
-
-### `SQLiteCheckpointStore` constructor
-
-```python
-SQLiteCheckpointStore(path: Path | str, *, create: bool = False) -> None
-```
-
-Open existing trust or explicitly initialize a new protected namespace.
-
-**Arguments:**
-
-- `path` (`Path | str`): Database path in an existing, access-controlled directory.
-- `create` (`bool`): Exclusively initialize a new database; fail if it exists. — default `False`
-
-**Raises:**
-
-- `C2spCheckpointStoreError`: Initialization, opening or validation failed.
-
-### `get`
-
-```python
-SQLiteCheckpointStore.get(origin: str) -> TrustedCheckpoint | None
-```
-
-Read trusted state; storage failures never become first contact.
-
-### `put`
-
-```python
-SQLiteCheckpointStore.put(checkpoint: TrustedCheckpoint) -> None
-```
-
-Seed advancing authenticated state; ignore smaller sizes, reject forks.
-
-### `verify_and_advance`
-
-```python
-SQLiteCheckpointStore.verify_and_advance(candidate: TrustedCheckpoint, verify: Callable[[TrustedCheckpoint | None], None]) -> None
-```
-
-Verify and durably advance under one transaction and invocation budget.
-
-### `rebaseline`
-
-```python
-SQLiteCheckpointStore.rebaseline(checkpoint: TrustedCheckpoint, *, expected: TrustedCheckpoint, authorized_by: str, evidence: str) -> None
-```
-
-Replace only the reviewed tuple, never automatically retrying recovery.
-
-This method does NOT authenticate an operator or authorize rollback. Before
-calling, fence and drain all affected writers; externally archive signed
-checkpoints, witness/proof evidence and incident logs; authenticate recovery
-authority independently of the failing log; retain approval for the exact
-old/replacement tuples and trust policy, reason and authorization time.
-Independently verify replacement signatures, quorum and freshness against
-that approval. ``evidence`` references this retained authorization/archive;
-``authorized_by`` identifies its approver, not an SDK authentication check.
-
-Both tuples and the references are committed in the same transaction as
-replacement. On ANY failure stop for reconciliation, not reload/retry.
-Read-back is required before success. Keep the external archive protected
-from database rollback, including approval recorded BEFORE replacement and
-its reconciled outcome afterward. Discard affected caches/verified objects,
-rebuild readers and complete fresh identity/lifecycle verification before
-resuming; checkpoint recovery does not repair lost lifecycle history.
-
-**Arguments:**
-
-- `checkpoint` (`TrustedCheckpoint`): Independently verified, authorized replacement.
-- `expected` (`TrustedCheckpoint`): Exact reviewed old tuple, including witnessed time.
-- `authorized_by` (`str`): Approver identity from the external authorization.
-- `evidence` (`str`): Reference to retained authorization and signed evidence.
-
-**Raises:**
-
-- `ValueError`: Invalid checkpoint or missing audit reference.
-- `C2spCheckpointStoreError`: Stale expected state, storage or read-back failure.
 
 ## `SafeC2spResourceFetcher`
 

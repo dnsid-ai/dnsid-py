@@ -148,17 +148,14 @@ def test_factory_fetches_policy_with_same_resource_fetcher() -> None:
     assert reader._options.transport is fetcher
 
 
-@pytest.mark.parametrize("durable", [False, True])
-def test_factory_applies_limits_freshness_skew_and_shared_store(tmp_path, durable) -> None:
-    from dnsid.c2sp_tlog import SQLiteCheckpointStore
+def test_factory_applies_limits_freshness_skew_and_shared_store() -> None:
     limits = C2spScanLimits(
         max_tree_size=12,
         max_checkpoint_bytes=100,
         max_entry_bundle_bytes=200,
         max_total_entry_bytes=300,
     )
-    store = (SQLiteCheckpointStore(tmp_path / "trust.db", create=True)
-             if durable else InMemoryCheckpointStore())
+    store = InMemoryCheckpointStore()
     registry = create_c2sp_tlog_verification_registry(
         C2spTlogVerificationOptions(
             policy_document=_policy_document(),

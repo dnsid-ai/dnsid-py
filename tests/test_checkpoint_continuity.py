@@ -1,7 +1,6 @@
-"""Native continuity checks through signed public readers and both stores."""
+"""Native continuity checks through signed public readers and in-memory storage."""
 
 import datetime
-import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, replace
@@ -10,9 +9,7 @@ import pytest
 
 from dnsid._verification_budget import BudgetExhausted, verification_budget
 from dnsid.c2sp_tlog import (
-    C2spCheckpointStoreError,
     InMemoryCheckpointStore,
-    SQLiteCheckpointStore,
     TrustedCheckpoint,
 )
 from dnsid.c2sp_tlog.merkle import merkle_root_from_entries
@@ -23,10 +20,9 @@ BASE = TrustedCheckpoint("log.example", 0, merkle_root_from_entries([]),
                          datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC))
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-def store(request, tmp_path):
-    result = (InMemoryCheckpointStore() if request.param == "memory"
-              else SQLiteCheckpointStore(tmp_path / "trust.db", create=True))
+@pytest.fixture
+def store():
+    result = InMemoryCheckpointStore()
     result.put(BASE)
     return result
 
@@ -171,28 +167,15 @@ def test_public_reader_cancellation_while_waiting_does_not_queue_publication(sto
     reader = _reader(store)
     waiting = threading.Event()
     cancel = threading.Event()
-    if isinstance(store, InMemoryCheckpointStore):
-        lock = store._lock_for(BASE.origin)
-        lock.acquire()
-        original = store._lock_for
+    lock = store._lock_for(BASE.origin)
+    lock.acquire()
+    original = store._lock_for
 
-        def lock_for(origin):
-            waiting.set()
-            return original(origin)
+    def lock_for(origin):
+        waiting.set()
+        return original(origin)
 
-        monkeypatch.setattr(store, "_lock_for", lock_for)
-        release = lock.release
-    else:
-        connection = sqlite3.connect(store._path)
-        connection.execute("BEGIN IMMEDIATE")
-        original = store._begin
-
-        def begin(connection, write):
-            waiting.set()
-            original(connection, write)
-
-        monkeypatch.setattr(store, "_begin", begin)
-        release = connection.close
+    monkeypatch.setattr(store, "_lock_for", lock_for)
 
     def verify():
         with verification_budget(cancelled=cancel):
@@ -206,114 +189,5 @@ def test_public_reader_cancellation_while_waiting_does_not_queue_publication(sto
             with pytest.raises(BudgetExhausted):
                 future.result(timeout=5)
     finally:
-        release()
+        lock.release()
     assert store.get(BASE.origin) == BASE
-
-
-@pytest.mark.parametrize("operation", ["verification", "rebaseline"])
-def test_cancellation_after_sqlite_staging_rolls_back(tmp_path, monkeypatch, operation):
-    store = SQLiteCheckpointStore(tmp_path / "trust.db", create=True)
-    store.put(BASE)
-    reader = _reader(store)
-    cancel = threading.Event()
-    write = store._write
-
-    def staged(connection, checkpoint):
-        write(connection, checkpoint)
-        cancel.set()
-
-    monkeypatch.setattr(store, "_write", staged)
-    with pytest.raises(BudgetExhausted), verification_budget(cancelled=cancel):
-        if operation == "verification":
-            reader.rebuild_history(_ReaderFixture.DOMAIN)
-        else:
-            store.rebaseline(
-                replace(BASE, tree_size=1), expected=BASE,
-                authorized_by="owner", evidence="independent-authorization-123",
-            )
-    assert store.get(BASE.origin) == BASE
-    with sqlite3.connect(store._path) as connection:
-        assert connection.execute("SELECT count(*) FROM rebaselines").fetchone()[0] == 0
-
-
-@pytest.mark.parametrize("published", [False, True])
-@pytest.mark.parametrize("operation", ["verification", "rebaseline"])
-@pytest.mark.parametrize("readback_fails", [False, True])
-def test_uncertain_commit_fails_and_reconciles(
-    tmp_path, monkeypatch, published, operation, readback_fails,
-):
-    store = SQLiteCheckpointStore(tmp_path / "trust.db", create=True)
-    store.put(BASE)
-    reader = _reader(store)
-    connect = sqlite3.connect
-    cause = sqlite3.OperationalError("injected commit acknowledgment failure")
-    readback_cause = sqlite3.OperationalError("injected reconciliation failure")
-    ack_failed = False
-
-    class FaultConnection(sqlite3.Connection):
-        def commit(self):
-            nonlocal ack_failed
-            if self.in_transaction and self.total_changes:
-                if published:
-                    super().commit()
-                ack_failed = True
-                raise cause
-            super().commit()
-
-    def faulty(*args, **kwargs):
-        if ack_failed and readback_fails:
-            raise readback_cause
-        return connect(*args, **kwargs, factory=FaultConnection)
-
-    monkeypatch.setattr(sqlite3, "connect", faulty)
-    if operation == "verification":
-        with pytest.raises(VerificationError) as caught:
-            reader.rebuild_history(_ReaderFixture.DOMAIN)
-        error = caught.value
-        assert error.category == "CHECKPOINT_STORE_ERROR"
-        assert not error.transient
-        detail = error.__cause__
-    else:
-        with pytest.raises(C2spCheckpointStoreError) as caught:
-            store.rebaseline(
-                replace(BASE, tree_size=1), expected=BASE,
-                authorized_by="owner", evidence="independent-authorization-123",
-            )
-        detail = caught.value
-    assert isinstance(detail, C2spCheckpointStoreError)
-    assert detail.__cause__ is cause
-    assert detail.indeterminate
-    monkeypatch.setattr(sqlite3, "connect", connect)
-    if readback_fails:
-        assert isinstance(detail.reconciliation_error, C2spCheckpointStoreError)
-        assert detail.reconciliation_error.__cause__ is readback_cause
-    else:
-        assert detail.reconciliation_error is None
-        assert detail.reconciled_checkpoint == store.get(BASE.origin)
-    assert store.get(BASE.origin).tree_size == (1 if published else 0)
-    if operation == "rebaseline":
-        with connect(store._path) as connection:
-            assert connection.execute("SELECT count(*) FROM rebaselines").fetchone()[0] == int(published)
-
-
-def test_public_reader_cancelled_during_acknowledged_commit_reads_back_new_trust(tmp_path, monkeypatch):
-    store = SQLiteCheckpointStore(tmp_path / "trust.db", create=True)
-    store.put(BASE)
-    reader = _reader(store)
-    connect = sqlite3.connect
-    cancel = threading.Event()
-
-    class CancellingConnection(sqlite3.Connection):
-        def commit(self):
-            super().commit()
-            if self.total_changes:
-                cancel.set()
-
-    def cancelling(*args, **kwargs):
-        return connect(*args, **kwargs, factory=CancellingConnection)
-
-    monkeypatch.setattr(sqlite3, "connect", cancelling)
-    with pytest.raises(BudgetExhausted), verification_budget(cancelled=cancel):
-        reader.rebuild_history(_ReaderFixture.DOMAIN)
-    # Publication completed synchronously; cancellation does not restore old trust.
-    assert store.get(BASE.origin).tree_size == 1

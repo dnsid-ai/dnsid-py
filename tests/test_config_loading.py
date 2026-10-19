@@ -887,18 +887,17 @@ def test_checkpoint_storage_is_not_deployment_file_configuration(tmp_path, membe
 
 
 @pytest.mark.parametrize("managed", [False, True])
-def test_construct_keeps_code_injected_durable_registry(tmp_path, managed):
+def test_construct_keeps_code_injected_registry(monkeypatch, managed):
     from dnsid.c2sp_tlog import (
         C2spCheckpointStoreError,
         C2spTlogVerificationOptions,
         DnsidManagedVerificationOptions,
-        SQLiteCheckpointStore,
+        InMemoryCheckpointStore,
         create_c2sp_tlog_verification_registry,
         create_dnsid_managed_verification_registry,
     )
 
-    path = tmp_path / "trust.db"
-    store = SQLiteCheckpointStore(path, create=True)
+    store = InMemoryCheckpointStore()
     if managed:
         registry = create_dnsid_managed_verification_registry(
             DnsidManagedVerificationOptions(trusted_checkpoint_store=store)
@@ -915,10 +914,15 @@ def test_construct_keeps_code_injected_durable_registry(tmp_path, managed):
     )
     assert manager._log_registry is registry
     assert registry.new_reader(lr)._options.checkpoint_store is store
-    # Missing durable state must not be replaced by the loader or either factory.
-    path.unlink()
+    # A failing injected store must not be replaced by the loader or either factory.
+    failure = C2spCheckpointStoreError("injected storage failure")
+
+    def unavailable(origin):
+        raise failure
+
+    monkeypatch.setattr(store, "get", unavailable)
     with pytest.raises(C2spCheckpointStoreError) as caught:
         registry.new_reader(lr)._options.checkpoint_store.get("log.example")
+    assert caught.value is failure
     assert caught.value.category == "CHECKPOINT_STORE_ERROR"
-    assert not path.exists()
     manager.close()

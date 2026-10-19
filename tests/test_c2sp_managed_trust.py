@@ -160,13 +160,9 @@ def test_managed_registry_implements_selection_vectors() -> None:
         )
 
 
-@pytest.mark.parametrize("durable", [False, True])
-def test_managed_registry_shares_infrastructure_and_fixed_defaults(tmp_path, durable) -> None:
-    from dnsid.c2sp_tlog import SQLiteCheckpointStore
-
+def test_managed_registry_shares_infrastructure_and_fixed_defaults() -> None:
     fetcher = _Fetcher()
-    store = (SQLiteCheckpointStore(tmp_path / "trust.db", create=True)
-             if durable else InMemoryCheckpointStore())
+    store = InMemoryCheckpointStore()
     registry = create_dnsid_managed_verification_registry(
         DnsidManagedVerificationOptions(fetcher, store)
     )

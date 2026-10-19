@@ -18,7 +18,7 @@ from dnsid.c2sp_tlog import (
     C2spTlogTransportError,
     Checkpoint,
     IndexedEntry,
-    SQLiteCheckpointStore,
+    InMemoryCheckpointStore,
     StreamEvidence,
     TrustedCheckpoint,
     VerifiedC2spStreamBundle,
@@ -474,16 +474,15 @@ def test_portable_stream_bundle_growth_requires_consistency_source():
 @pytest.mark.parametrize("trusted_size,category", [
     (3, "LOG_ROLLBACK"), (2, "LOG_FORK"), (1, "LOG_INCONSISTENT"),
 ])
-def test_bundle_classifies_durable_checkpoint_conflicts(tmp_path, trusted_size, category):
+def test_bundle_classifies_checkpoint_conflicts(trusted_size, category):
     vector = _vector()
     options = _options(vector)
-    path = tmp_path / "trust.db"
-    store = SQLiteCheckpointStore(path, create=True)
+    store = InMemoryCheckpointStore()
     trusted = TrustedCheckpoint(
         "log.example", trusted_size, bytes(32), datetime.datetime.now(datetime.UTC)
     )
     store.put(trusted)
-    options.checkpoint_store = SQLiteCheckpointStore(path)
+    options.checkpoint_store = store
 
     class InvalidProof:
         def fetch_consistency_proof(self, reference, from_size, to_size):

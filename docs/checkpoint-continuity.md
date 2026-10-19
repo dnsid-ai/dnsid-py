@@ -1,25 +1,17 @@
 # Checkpoint continuity implementation checks
 
-## Revisions and authority
+## Storage scope
 
-- SDK baseline: `ccf3d1b889b464b7259d6d1dfccc3992f160afb2`.
-- Compliance checkout: `cc4605597442f6177c05c3083ef73418ef170bba`.
-- Implementation and checks include the uncommitted SDK changes on that baseline.
-- Authority: the checked-out compliance design documents
-  `docs/sdk-design/11-c2sp-tlog-binding.md`, `12-configuration-loading.md`, and
-  `conformance/README.md`. No default-branch documents or shared expectations were substituted.
+The SDK supplies only `InMemoryCheckpointStore`, matching the Go and TypeScript
+SDKs. The `CheckpointStore` interface remains available for deployment-provided
+storage. There is no built-in durable adapter or administrative recovery API.
 
-## Existing behavior retained
+Remembered trust lasts only as long as the same store instance. Restarting or
+recreating a registry/store loses that trust, even within the same process.
+Independent signature, witness, and freshness checks still apply, but they do
+not restore the lost continuity baseline.
 
-Typed rollback, equal-size fork, inconsistency and storage errors already crossed
-reader wrappers through `VerificationError.category` and its typed `__cause__`.
-Verification callbacks already serialized continuity and advancement against the
-exact current tuple, without a split load/write. Bundle fallback caught only the
-missing-consistency condition, not invalid supplied proofs or retrieval failures.
-Generic and managed factories already shared code-injected stores; configuration
-loaders already rejected unknown file members and ignored unknown environment variables.
-
-## Corrections
+## Verification behavior
 
 - Reader scans and bundle fallback share one candidate-prefix validator. Missing,
   duplicate, non-integer or negative indexes and candidate-root mismatches are
@@ -28,67 +20,59 @@ loaders already rejected unknown file members and ignored unknown environment va
 - Malformed supplied consistency proofs reject as inconsistent evidence rather
   than leaking a type error. Empty-tree proofs are checked explicitly. Missing
   capability has the machine-readable `condition="consistency_unavailable"`.
-- Memory and SQLite stores share validation and immutable UTC snapshots. Memory
-  seeding no longer overwrites an equal-size conflicting root. Diagnostic roots
-  are immutable byte strings.
-- Both stores check the verification budget while waiting and before publication.
-  SQLite also checks after staging writes. No background write is abandoned.
-- SQLite schema 2 retains a separate origin inventory, validates existing records
-  and database integrity, and rejects missing components instead of treating them
-  as first contact. Opening schema 1 fails without modifying it; no automatic
-  upgrade or empty-store replacement is provided.
-- SQLite commit-acknowledgment errors report an indeterminate outcome and attempt
-  read-back. Both the original cause and a failed reconciliation remain inspectable.
-- Administrative replacement retains exact-state preconditions and transactional
-  audit records, now requires read-back before success, and documents external
-  authorization/evidence requirements. It never reloads and retries stale approval.
+  Only missing consistency evidence permits consistency-related raw fallback.
+- The memory store validates inputs and retains immutable UTC snapshots. Seeding
+  cannot overwrite an equal-size conflicting root. Diagnostic roots are immutable
+  byte strings.
+- Verification and advancement run under the same per-origin lock against the
+  exact current tuple. Conflicting extensions cannot both replace the same state.
+- Lock waits and publication check the shared verification budget. Pre-publication
+  cancellation does not leave a background write queued.
+- Typed rollback, fork, inconsistency, and storage errors cross reader wrappers
+  through `VerificationError.category` and its typed `__cause__`. Storage failure
+  never authorizes substituting empty trust.
+- Generic and managed factories share code-injected stores. Configuration loaders
+  preserve injected registries, reject checkpoint-storage file members, and ignore
+  unknown environment variables rather than treating them as persistence settings.
 
-## Executed checks
+## Native regression coverage
 
-- `.venv/bin/pytest -q`: **1,915 passed**, eight expected local-key safety warnings.
-- `.venv/bin/ruff check .`: passed.
-- `.venv/bin/mypy dnsid`: passed, 48 source files.
-- `.venv/bin/python scripts/gen_docs.py`: regenerated API reference.
-- Single-SDK compliance entrypoint with exported `SDK_ID=py` and
-  `SDK_DIR=/Users/benjamin.guidarelli/dnsid-py`:
-  `ci/run-one.sh "$SDK_ID" "$SDK_DIR" /tmp/checkpoint-compliance.md`.
-  Report inspected: **347 PASS, 11 REJ, no FAIL, XFAIL or MISSING** across 358 cases.
-  Checkpoint continuity: **15/15**, including one XPASS.
-  The entrypoint also checked fixture reproducibility and 33 event-identity checks;
-  its unit phase ran 40 tests with four skips (three all-SDK checkpoint-adapter
-  self-checks and the Go-only core-refresh test).
-
-Native regressions exercise signed public readers and portable-bundle verification,
+Tests exercise signed public readers and portable-bundle verification,
 IdentityManager rollback/fork propagation with injected discovery transports,
-conflicting concurrent readers, memory/SQLite validation, cancellation and budget
-expiry, staged-write rollback, uncertain commit/read-back failures, thread/process
-contention, process death before and after commit, corruption, missing trust,
-explicit initialization, stale witnessed-time recovery approval and audit retention.
-Race tests use barriers/events rather than sleeps to schedule competing verifiers.
-Generic/managed durable-store injection and loader rejection are also tested.
+conflicting concurrent readers, input validation, immutable snapshots,
+cancellation, budget expiry, and canceled lock waits. Injected storage failures
+exercise both pre-publication failure and failure after publication; later
+verification reloads actual state instead of assuming a failed acknowledgment
+restored the previous checkpoint. Generic and managed registry/store injection
+and loader rejection remain tested.
 
-## Coordination and limits
+The shared signed checkpoint vectors use in-memory stores. They do not establish
+durable-storage, crash, cross-process locking, or administrative-recovery guarantees.
 
-The Python marker for `checkpoint-scan-missing-leaf` is stale. Remove its entry
-from `harness/generate_c2sp_fixtures.py` (`bugs["scan-missing-leaf"]["py"]`), then
-regenerate `fixtures/c2sp-checkpoint-continuity.yaml` in a coordinated compliance
-change. Neither shared file was changed here.
+## Validation
 
-Use a protected local filesystem with working SQLite locks and sync semantics.
-Native fault injection and process termination are not physical power-loss or
-filesystem certification. SQLite commits cannot be interrupted cooperatively:
-late cancellation can report failure after a known successful publication. Read
-back trust before resuming; never assume failure restored the old checkpoint.
-If reconciliation also fails, leave consumers fenced until storage can be read.
+After removing the built-in durable adapter:
+
+- `.venv/bin/pytest -q`: **1,847 passed**, eight expected local-key safety warnings.
+- `.venv/bin/ruff check .`: passed.
+- `.venv/bin/mypy dnsid`: passed, 47 source files.
+- `.venv/bin/python scripts/gen_docs.py`: regenerated API reference.
+
+The cross-SDK compliance harness and live interoperability were not rerun.
+
+## Deployment-owned persistence and recovery
+
+Applications requiring cross-restart rollback protection implement and inject a
+durable `CheckpointStore`. Such adapters must preserve the same validation,
+snapshot isolation, atomic verification/advancement, and cancellation contract,
+explicitly initialize new namespaces, fail closed on lost or corrupt existing
+state, and acknowledge success only after durable commit. Deployment-specific
+crash, contention, corruption, and uncertain-commit tests are required.
 
 Recovery authorization, fencing across deployments, signed-evidence archival,
-backup rollback detection, cache invalidation and fresh lifecycle verification
-remain deployment responsibilities, not authenticated by SDK audit arguments.
-Schema-1 stores need a fenced, reviewed transition to a separately initialized
-namespace; retain the old namespace and evidence. Never delete trust to obtain
-first-contact behavior. New in-memory store instances also lose remembered trust,
-even within the same process.
-
-No live interoperability, hardware durability, all-SDK matrix or complete
-IdentityManager failure-matrix claim is made. Shared checkpoint vectors alone do
-not establish cancellation, durable-storage, concurrency or recovery coverage.
+backup rollback detection, cache invalidation, and fresh lifecycle verification
+remain deployment responsibilities. A storage write failure may occur after
+publication; reconcile actual state before recovery. Never delete trust or
+replace it with an empty store to bypass a continuity failure. See
+[security operations](security.md#authorized-re-baseline-procedure) for the
+deployment-owned recovery procedure.

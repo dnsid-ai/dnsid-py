@@ -123,10 +123,9 @@ class InMemoryCheckpointStore(CheckpointStore):
     Resists rollback and fork only while this same store instance is retained.
     Creating a new store or registry loses remembered trust even without a
     process restart; the next checkpoint is trusted on first contact. A verifier
-    that must resist cross-restart rollback MUST inject a durable
-    ``CheckpointStore`` such as :class:`SQLiteCheckpointStore`. The SDK does not
-    emit a runtime warning when this in-memory default is selected; production
-    deployments must explicitly configure and monitor persistent trust storage.
+    that must resist cross-restart rollback MUST inject a deployment-provided
+    durable ``CheckpointStore``; the SDK supplies only in-memory storage. It does
+    not emit a runtime warning when this default is selected.
     """
 
     def __init__(self) -> None:

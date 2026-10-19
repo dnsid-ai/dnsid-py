@@ -103,18 +103,6 @@ class C2spCheckpointStoreError(C2spTlogError):
 
     category = C2spLifecycleErrorCategory.CHECKPOINT_STORE_ERROR
 
-    def __init__(self, message: str, *, indeterminate: bool = False) -> None:
-        """Report uncertain commit outcomes separately from pre-publication failures.
-
-        After an uncertain commit, ``reconciled_checkpoint`` is a fresh read,
-        unless ``reconciliation_error`` records why read-back also failed.
-        Neither a successful read nor a failed read authorizes retry or recovery.
-        """
-        super().__init__(message)
-        self.indeterminate = indeterminate
-        self.reconciled_checkpoint: TrustedCheckpoint | None = None
-        self.reconciliation_error: BaseException | None = None
-
 
 class C2spTlogTransportError(C2spTlogError):
     """Raised when fetching C2SP verification resources fails.
