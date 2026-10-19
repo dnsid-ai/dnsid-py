@@ -470,7 +470,12 @@ DNSResolver.fetch_txt(name: str) -> tuple[list[TXTRecord], DNSSECState]
 Fetch TXT records for *name* (normalized FQDN, no trailing dot).
 
 Implementations MUST treat *name* as an absolute name — no search-domain
-expansion.  Returns the record set and the DNSSEC validation state.
+expansion. Returns the record set and the DNSSEC validation state.
+NXDOMAIN and NOERROR/NODATA return an empty set with the response's
+state, or UNKNOWN if unavailable. Normalize runtime not-found exceptions.
+Known DNSSEC validation failures return FAILED; timeouts, network
+failures, and ordinary SERVFAIL raise a transient DNS_RESOLUTION error.
+Verification applies DNSSEC policy before classifying record absence.
 
 ## `HTTPSFetcher`
 

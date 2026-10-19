@@ -58,6 +58,7 @@ Errors:
     ArgumentError     — invalid caller-supplied argument
 
 Enumerations:
+    VerificationCode includes RECORD_NOT_FOUND for non-transient TXT absence.
     DNSSECState, DNSSECMode, VerificationCode, AgentState, RevocationReason,
     RegistryRevocationReason, EventType
 """

@@ -8,6 +8,12 @@ import pytest
 import dnsid
 
 
+def test_record_not_found_code_is_public():
+    from dnsid import VerificationCode
+
+    assert VerificationCode.RECORD_NOT_FOUND.name == "RECORD_NOT_FOUND"
+
+
 def test_all_names_are_accessible():
     """Every name in dnsid.__all__ must be an attribute of the dnsid package."""
     missing = [name for name in dnsid.__all__ if not hasattr(dnsid, name)]

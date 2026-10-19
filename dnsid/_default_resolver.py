@@ -78,6 +78,8 @@ class DefaultDNSResolver(DNSResolver):
             return [], DNSSECState.UNKNOWN
         except dns.resolver.NoAnswer:
             return [], DNSSECState.UNKNOWN
+        except dns.exception.ValidationFailure:
+            return [], DNSSECState.FAILED
         except dns.exception.Timeout as exc:
             raise VerificationError(
                 VerificationCode.DNS_RESOLUTION,
@@ -152,7 +154,7 @@ class DefaultDNSResolver(DNSResolver):
         data: dict[str, Any] = resp.json()
 
         status = data.get("Status", 0)
-        if status != 0:
+        if status not in (0, 3):
             raise VerificationError(
                 VerificationCode.DNS_RESOLUTION,
                 f"DoH query returned DNS status {status} for {name!r}",
@@ -164,6 +166,9 @@ class DefaultDNSResolver(DNSResolver):
             if self._dns_server.startswith("https://") and data.get("AD")
             else DNSSECState.UNKNOWN
         )
+
+        if status == 3:  # NXDOMAIN retains the response's DNSSEC state.
+            return [], dnssec_state
 
         txt_records: list[TXTRecord] = []
         for answer in data.get("Answer", []):
@@ -207,6 +212,9 @@ class DefaultDNSResolver(DNSResolver):
 
         except dns.resolver.NoAnswer:
             return [], DNSSECState.UNKNOWN
+
+        except dns.exception.ValidationFailure:
+            return [], DNSSECState.FAILED
 
         except dns.resolver.NoNameservers as exc:
             # NoNameservers covers SERVFAIL; treat conservatively as transient.
