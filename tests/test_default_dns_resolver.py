@@ -52,6 +52,25 @@ def test_insecure_doh_ad_response_is_unknown():
     assert state == DNSSECState.UNKNOWN
 
 
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize(
+    ("ttl_fields", "expected_ttl"), [({}, 0), ({"TTL": 0}, 0), ({"TTL": 60}, 60)]
+)
+def test_doh_txt_ttl_does_not_invent_freshness(scheme, ttl_fields, expected_ttl):
+    resolver = DefaultDNSResolver(f"{scheme}://resolver.example")
+    response = _doh_response({
+        "Status": 0,
+        "Answer": [{"type": 16, "data": '"v=DNSid1"', **ttl_fields}],
+    })
+
+    with patch("httpx.Client.stream", return_value=response):
+        records, _state = resolver.fetch_txt("_dnsid.example.com")
+
+    assert len(records) == 1
+    assert records[0].strings == [b"v=DNSid1"]
+    assert records[0].ttl == expected_ttl
+
+
 def test_doh_no_ad_response_is_unknown():
     resolver = DefaultDNSResolver("https://resolver.example")
     response = _doh_response({"Status": 0, "AD": False, "Answer": []})
