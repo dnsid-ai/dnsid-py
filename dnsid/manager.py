@@ -210,6 +210,7 @@ class IdentityManager:
         )
         self._coordination_lock = threading.Lock()
         self._verification_futures: dict[str, Future[VerifiedDomain]] = {}
+        self._refresh_futures: dict[str, Future[VerifiedDomain]] = {}
         self._status_futures: dict[str, Future[VerifiedDomain]] = {}
 
         # Derive the local log binding when a registry is available.  The
@@ -1393,7 +1394,7 @@ class IdentityManager:
     ) -> VerifiedDomain:
         """Fully verify fresh identity evidence, bypassing the cached identity result.
 
-        Concurrent full acquisitions share network work, not status-only work.
+        Concurrent explicit refreshes share network work, not ordinary lookups.
         Each caller enforces its current peer, acceptance, and final freshness.
         Failure never falls back to cached evidence or extends its lifetime.
         Injected resource fetchers must revalidate their caches.
@@ -1416,8 +1417,8 @@ class IdentityManager:
         """
         domain = normalize_fqdn(domain)
         result = (
-            self._coalesce(domain, self._verification_futures,
-                           lambda: self._verify_domain_uncached(domain))
+            self._coalesce(domain, self._refresh_futures,
+                           lambda: self._refresh_identity(domain))
             if refresh else self._reusable_verification(domain)
         )
         # mTLS binds the current peer, not reusable identity evidence.
@@ -1455,7 +1456,9 @@ class IdentityManager:
     def _reusable_verification(self, domain: str) -> VerifiedDomain:
         """Return reusable verified evidence, coalescing same-domain network work."""
         with self._coordination_lock:
-            full_future = self._verification_futures.get(domain)
+            full_future = (
+                self._refresh_futures.get(domain) or self._verification_futures.get(domain)
+            )
             status_future = self._status_futures.get(domain)
         if full_future is not None or status_future is not None:
             future = full_future if full_future is not None else status_future
@@ -1492,7 +1495,10 @@ class IdentityManager:
     ) -> VerifiedDomain:
         while True:
             with self._coordination_lock:
-                future = pending.get(domain)
+                future = (
+                    self._refresh_futures.get(domain)
+                    if pending is self._verification_futures else None
+                ) or pending.get(domain)
                 if future is None:
                     future = Future()
                     pending[domain] = future
@@ -1522,6 +1528,18 @@ class IdentityManager:
             with self._coordination_lock:
                 if pending.get(domain) is future:
                     del pending[domain]
+
+    def _refresh_identity(self, domain: str) -> VerifiedDomain:
+        # Finish older lookups before refreshing so they cannot restore old evidence.
+        with self._coordination_lock:
+            previous = self._verification_futures.get(domain)
+        if previous is not None:
+            try:
+                wait_for_verification(previous)
+            except VerificationError:
+                pass  # The refresh must acquire its own evidence even if the lookup failed.
+        remaining_seconds()
+        return self._verify_domain_uncached(domain, revalidate=True)
 
     def _refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
         import copy
@@ -1563,7 +1581,9 @@ class IdentityManager:
             self._cache.put(domain, refreshed)
         return refreshed
 
-    def _verify_domain_uncached(self, domain: str) -> VerifiedDomain:
+    def _verify_domain_uncached(
+        self, domain: str, *, revalidate: bool = False,
+    ) -> VerifiedDomain:
         from ._utils import b64url_decode_strict
 
         dnssec_mode = self._config.verification.dnssec_mode
@@ -1650,7 +1670,8 @@ class IdentityManager:
         # -- Step 2: Fetch ek and authenticate the TXT record -------------
         ek_allowed_host = _ek_pinning_host(record.gi, record.ek)
         ek_jwks, ek_tls_cert = self._fetch_key_set(
-            record.ek, allowed_host=ek_allowed_host, domain_boundary=True
+            record.ek, allowed_host=ek_allowed_host, domain_boundary=True,
+            revalidate=revalidate,
         )
         signing_key = ek_jwks.current_record_signing_key(record.v)
 
@@ -1681,8 +1702,10 @@ class IdentityManager:
         # cancels the sibling and error precedence is fixed (identity > status
         # > cancellation). Both must succeed before any result is built.
         (jwks, tls_cert, log_reader, key_bound_at), status = run_concurrently(
-            lambda: self._verify_identity_evidence(domain, record, ek_jwks, signing_key),
-            lambda: self._fetch_active_status(record.su),
+            lambda: self._verify_identity_evidence(
+                domain, record, ek_jwks, signing_key, revalidate=revalidate
+            ),
+            lambda: self._fetch_active_status(record.su, revalidate=revalidate),
         )
 
         result = VerifiedDomain(
@@ -1711,7 +1734,8 @@ class IdentityManager:
         return result
 
     def _verify_identity_evidence(
-        self, domain: str, record: DnsIdTxtRecord, ek_jwks: JWKS, signing_key: Any
+        self, domain: str, record: DnsIdTxtRecord, ek_jwks: JWKS, signing_key: Any,
+        *, revalidate: bool = False,
     ) -> tuple[JWKS, Any, LogReader, datetime.datetime]:
         """Post-sg identity branch: ku fetch, two-key separation, lifecycle binding, key age."""
         from ._utils import parse_ledger_ref
@@ -1737,7 +1761,7 @@ class IdentityManager:
         # verify_bilateral_binding would have raised anyway.
         preload = getattr(log_reader, "preload_history", None)
         (jwks, tls_cert), _ = run_concurrently(
-            lambda: self._fetch_key_set(record.ku, allowed_host=domain),
+            lambda: self._fetch_key_set(record.ku, allowed_host=domain, revalidate=revalidate),
             (lambda: preload(domain, signing_key)) if callable(preload) else lambda: None,
         )
         operational_key = jwks.current_operational_signing_key(record.v)
@@ -1785,9 +1809,9 @@ class IdentityManager:
         # (e.g. verify_non_revocation) before such operations.
         return jwks, tls_cert, log_reader, key_bound_at
 
-    def _fetch_active_status(self, su: str) -> Any:
+    def _fetch_active_status(self, su: str, *, revalidate: bool = False) -> Any:
         """Post-sg status branch (Step 7): fetch su and require ACTIVE."""
-        status = self._fetch_status(su)
+        status = self._fetch_status(su, revalidate=revalidate)
         if status.state != "ACTIVE":
             raise VerificationError(
                 VerificationCode.STATUS_NOT_ACTIVE,
@@ -1841,14 +1865,16 @@ class IdentityManager:
         return DomainLog(domain=vd.domain, events=list(events))
 
     def _fetch_key_set(
-        self, uri: str, allowed_host: str, domain_boundary: bool = False
+        self, uri: str, allowed_host: str, domain_boundary: bool = False,
+        *, revalidate: bool = False,
     ) -> tuple[JWKS, Any]:
         """Fetch a JWKS pinned to an exact host or DNS domain boundary."""
         if self._https_fetcher is not None:
             from ._crypto import jwk_from_dict
 
             raw_jwks, tls_cert = self._https_fetcher.fetch_strict_json(
-                uri, allowed_host=allowed_host, domain_boundary=domain_boundary
+                uri, allowed_host=allowed_host, domain_boundary=domain_boundary,
+                revalidate=revalidate,
             )
             return JWKS(keys=[jwk_from_dict(k) for k in raw_jwks.get("keys", [])]), tls_cert
         kwargs = {"domain_boundary": True} if domain_boundary else {}
@@ -1857,10 +1883,11 @@ class IdentityManager:
             allowed_host=allowed_host,
             transport=self._transport_config,
             client=self._http_client,
+            revalidate=revalidate,
             **kwargs,
         )
 
-    def _fetch_status(self, su: str) -> Any:
+    def _fetch_status(self, su: str, *, revalidate: bool = False) -> Any:
         """Fetch the status endpoint using the injected HTTPSFetcher or the default transport.
 
         A transport-level fetch failure (DNS, connect, TLS handshake, 5xx)
@@ -1877,11 +1904,12 @@ class IdentityManager:
             if self._https_fetcher is not None:
                 from ._https_client import _parse_agent_status_from_dict
 
-                raw, _ = self._https_fetcher.fetch_strict_json(su)
+                raw, _ = self._https_fetcher.fetch_strict_json(su, revalidate=revalidate)
                 status = _parse_agent_status_from_dict(raw)
             else:
                 status = _fetch_strict_json_status(
-                    su, transport=self._transport_config, client=self._http_client
+                    su, transport=self._transport_config, client=self._http_client,
+                    revalidate=revalidate,
                 )
         except VerificationError as exc:
             if exc.transient or exc.code == VerificationCode.DNS_RESOLUTION:
@@ -2230,6 +2258,7 @@ def _fetch_jwks(
     transport: TransportConfig | None = None,
     domain_boundary: bool = False,
     client: httpx.Client | None = None,
+    *, revalidate: bool = False,
 ) -> tuple[JWKS, Any]:
     from ._https_client import fetch_jwks
 
@@ -2241,6 +2270,7 @@ def _fetch_jwks(
         transport=sdk_transport,
         domain_boundary=domain_boundary,
         client=client,
+        revalidate=revalidate,
     )
 
 
@@ -2248,11 +2278,14 @@ def _fetch_strict_json_status(
     su: str,
     transport: TransportConfig | None = None,
     client: httpx.Client | None = None,
+    *, revalidate: bool = False,
 ) -> Any:
     from ._https_client import fetch_agent_status
 
     sdk_transport = _make_sdk_transport(transport) if client is None else None
-    return fetch_agent_status(su, verify=True, transport=sdk_transport, client=client)
+    return fetch_agent_status(
+        su, verify=True, transport=sdk_transport, client=client, revalidate=revalidate
+    )
 
 
 def _make_async_sdk_transport(config: TransportConfig | None) -> httpx.AsyncBaseTransport:

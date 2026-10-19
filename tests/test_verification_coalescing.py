@@ -390,7 +390,9 @@ class _InjectedFetcher(HTTPSFetcher):
     def __init__(self) -> None:
         self.close = MagicMock()
 
-    def fetch_strict_json(self, url, allowed_host=None, domain_boundary=False):
+    def fetch_strict_json(
+        self, url, allowed_host=None, domain_boundary=False, *, revalidate=False,
+    ):
         raise NotImplementedError
 
 

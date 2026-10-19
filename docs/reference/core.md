@@ -434,7 +434,7 @@ IdentityManager.refresh_domain(domain: str, peer_cert: TLSCertificate | None = N
 
 Fully verify fresh identity evidence, bypassing the cached identity result.
 
-Concurrent full acquisitions share network work, not status-only work.
+Concurrent explicit refreshes share network work, not ordinary lookups.
 Each caller enforces its current peer, acceptance, and final freshness.
 Failure never falls back to cached evidence or extends its lifetime.
 Injected resource fetchers must revalidate their caches.

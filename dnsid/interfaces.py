@@ -481,7 +481,7 @@ class HTTPSFetcher(ABC):
     Implementations MUST be safe for concurrent use: after the record
     signature is authenticated, verify_domain fetches the status endpoint on
     a helper thread while the runtime JWKS and lifecycle-log work proceed.
-    Revalidate any resource cache on each call, including explicit identity refresh.
+    When revalidate=True, revalidate resource caches instead of reusing cached evidence.
 
     The built-in fetcher enforces strict HTTPS and rejects su/JWKS hosts that
     resolve to non-public addresses. The only exception is a hostname matching
@@ -498,8 +498,12 @@ class HTTPSFetcher(ABC):
         url: str,
         allowed_host: str | None = None,
         domain_boundary: bool = False,
+        *, revalidate: bool = False,
     ) -> tuple[dict[str, Any], TLSCertificate]:
         """Fetch and parse a JSON document from an HTTPS URL.
+
+        When *revalidate* is True, bypass local caches and require upstream HTTP
+        cache revalidation. Ordinary fetches may use HTTP-fresh cached responses.
 
         Must perform full TLS certificate validation, reject credentials,
         fragments, non-HTTPS URLs, and non-HTTPS redirects, and return the
