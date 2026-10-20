@@ -63,6 +63,8 @@ _OPERATIONS = [
 
 def _response(request):
     path = request.url.path
+    if path == "/api/v1/org/onboarding":
+        return httpx.Response(200, json={"org_id": "org-1"})
     if request.method == "GET":
         return httpx.Response(200, json={**_REGISTER_RESPONSE, "managed": "self", "dns_published": True})
     if path == "/api/v1/agent":

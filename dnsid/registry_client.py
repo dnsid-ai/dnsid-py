@@ -958,13 +958,21 @@ class RegistryClient(AbstractRegistryClient):
         Pending proofs are not ready bindings. This read supplies no entity JWKS
         URL and makes no claim about named creation or permanent replay support.
         """
-        return self._run_registry(self._get_organization_onboarding_steps())
+        return self._run_registry(self._get_organization_onboarding_steps(
+            expected_org_id=expected_org_id, expected_gi=expected_gi,
+        ))
 
-    async def async_get_organization_onboarding(self) -> dict[str, Any]:
+    async def async_get_organization_onboarding(
+        self, *, expected_org_id: str | None = None, expected_gi: str | None = None
+    ) -> dict[str, Any]:
         """Async variant of :meth:`get_organization_onboarding`."""
-        return await self._async_run_registry(self._get_organization_onboarding_steps())
+        return await self._async_run_registry(self._get_organization_onboarding_steps(
+            expected_org_id=expected_org_id, expected_gi=expected_gi,
+        ))
 
-    def _get_organization_onboarding_steps(self) -> Generator[_RegistryCall, Any, dict[str, Any]]:
+    def _get_organization_onboarding_steps(
+        self, *, expected_org_id: str | None = None, expected_gi: str | None = None
+    ) -> Generator[_RegistryCall, Any, dict[str, Any]]:
         import httpx
 
         from .enums import VerificationCode

@@ -427,7 +427,7 @@ URL and makes no claim about named creation or permanent replay support.
 ### `async_get_organization_onboarding`
 
 ```python
-RegistryClient.async async_get_organization_onboarding() -> dict[str, Any]
+RegistryClient.async async_get_organization_onboarding(*, expected_org_id: str | None = None, expected_gi: str | None = None) -> dict[str, Any]
 ```
 
 Async variant of `get_organization_onboarding`.
