@@ -109,7 +109,6 @@ transport, including `httpx.MockTransport`; the returned client owns and closes 
 Other blocking SDK operations still need `asyncio.to_thread` or an executor.
 See the runnable [async verification example](examples/async-verification/) for
 configuration, request deadlines, error handling, and cleanup.
-See [the migration checklist](ASYNC_MIGRATION.md) for remaining native async work.
 
 **Async registry I/O.** Every registry operation has an `async_` variant,
 including `async_register_agent()`, `async_get_agent_status()`, and
