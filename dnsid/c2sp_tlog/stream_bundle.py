@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import datetime
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass, field
+from typing import cast
 from urllib.parse import quote
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from .._utils import b64url_decode_strict, b64url_encode, normalize_fqdn
-from .._verification_budget import verification_operation
+from .._verification_budget import (
+    async_run_blocking,
+    async_verification_operation,
+    verification_operation,
+)
 from ..models import JWK, IssuanceEvent, KeyRotationEvent, MigrationEvent
 from .canonical import (
     _MAX_SAFE_INT,
@@ -45,6 +50,7 @@ from .policy import (
 from .resource_fetcher import (
     C2spBoundedResourceFetcher,
     C2spResourceFetchGuarantees,
+    async_fetch_bounded_bytes,
     fetch_bounded_bytes,
 )
 from .signed_note import SignedNoteKey
@@ -59,7 +65,7 @@ from .stream_verifier import (
     MigrationVerificationResult,
     StreamVerifierOptions,
     VerifiedLifecycleEvent,
-    verify_stream_lifecycle,
+    _verify_stream_lifecycle_steps,
 )
 
 _TOP_LEVEL_MEMBERS = frozenset(
@@ -195,19 +201,7 @@ class _FetchedStreamBundleSource:
             raise
         if account_response is not None:
             account_response(len(data))
-        options = C2spStreamBundleVerifierOptions(
-            policy_bytes=self._policy_bytes,
-            bundle_keys=self._bundle_keys,
-            entity_key=entity_key,
-            checkpoint_freshness_ms=self._checkpoint_freshness_ms,
-            max_bundle_lifetime_ms=self._max_bundle_lifetime_ms,
-            max_bundle_bytes=self._max_bundle_bytes,
-            max_events=self._max_events,
-            max_tree_size=self._max_tree_size,
-            max_clock_skew_ms=self._max_clock_skew_ms,
-            checkpoint_store=InMemoryCheckpointStore(),
-            now=self._now,
-        )
+        options = self._verifier_options(entity_key)
         verified = _verify_c2sp_stream_bundle(
             data, options, verify_migration, cutoff_index, reference.lr
         )
@@ -238,6 +232,96 @@ class _FetchedStreamBundleSource:
                 complete_entries=complete_entries,
             )
         return verified
+
+    def _verifier_options(self, entity_key: JWK) -> C2spStreamBundleVerifierOptions:
+        return C2spStreamBundleVerifierOptions(
+            policy_bytes=self._policy_bytes,
+            bundle_keys=self._bundle_keys,
+            entity_key=entity_key,
+            checkpoint_freshness_ms=self._checkpoint_freshness_ms,
+            max_bundle_lifetime_ms=self._max_bundle_lifetime_ms,
+            max_bundle_bytes=self._max_bundle_bytes,
+            max_events=self._max_events,
+            max_tree_size=self._max_tree_size,
+            max_clock_skew_ms=self._max_clock_skew_ms,
+            checkpoint_store=InMemoryCheckpointStore(),
+            now=self._now,
+        )
+
+    @async_verification_operation
+    async def async_load_verified_bundle(
+        self,
+        reference: ParsedC2spTlogLr,
+        fqdn: str,
+        entity_key: JWK,
+        verify_migration: Callable[[MigrationEvent], Awaitable[MigrationVerificationResult]] | None,
+        *,
+        cutoff_index: int | None = None,
+        account_response: Callable[[int], None] | None = None,
+    ) -> VerifiedC2spStreamBundle | None:
+        """Await native reads; offload deterministic validation and atomic storage."""
+        from ._async import async_run_verification, call_async
+
+        normalized = normalize_fqdn(fqdn, agent_fqdn=True)
+        endpoint = f"{reference.log_prefix}/streams/{quote(normalized, safe='')}?format=bundle"
+        try:
+            data = await async_fetch_bounded_bytes(self._fetcher, endpoint, self._max_bundle_bytes)
+        except C2spTlogTransportError as exc:
+            if not self._require_bundle and _bundle_fallback_allowed(exc):
+                return None
+            raise
+        if account_response is not None:
+            account_response(len(data))
+        options = self._verifier_options(entity_key)
+        steps = _verify_c2sp_stream_bundle_steps(
+            data, options, verify_migration is not None, cutoff_index, reference.lr,
+        )
+        verified = await async_run_verification(steps, verify_migration)
+        if verified.fqdn != normalized:
+            raise C2spTlogVerificationError("stream bundle fqdn does not match requested domain")
+        options.checkpoint_store = self._checkpoint_store
+        try:
+            await async_run_blocking(
+                _verify_and_advance_checkpoint, verified.reference, verified.checkpoint,
+                verified.checkpoint_witness_time, options,
+            )
+        except _MissingC2spConsistencyEvidenceError:
+            if self._require_bundle:
+                raise
+            evidence = await call_async(self._fallback, "load_stream", reference, fqdn)
+            if account_response is not None:
+                account_response(_stream_evidence_bytes(evidence))
+            complete_entries = await async_run_blocking(_verified_complete_scan_entries, evidence)
+            await async_run_blocking(
+                _verify_and_advance_checkpoint, verified.reference, verified.checkpoint,
+                verified.checkpoint_witness_time, options, complete_entries=complete_entries,
+            )
+        return verified
+
+    @async_verification_operation
+    async def async_fetch_checkpoint(self, reference: ParsedC2spTlogLr) -> bytes:
+        """Read a checkpoint through the same bounded raw source."""
+        from ._async import call_async
+
+        return cast(bytes, await call_async(self._fallback, "fetch_checkpoint", reference))
+
+    @async_verification_operation
+    async def async_read_entry(self, reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry:
+        """Read an entry through the same bounded raw source."""
+        from ._async import call_async
+
+        return cast(
+            C2spProvenEntry, await call_async(self._fallback, "read_entry", reference, index),
+        )
+
+    @async_verification_operation
+    async def async_load_stream(self, reference: ParsedC2spTlogLr, fqdn: str) -> C2spStreamEvidence:
+        """Read complete raw fallback evidence asynchronously."""
+        from ._async import call_async
+
+        return cast(
+            C2spStreamEvidence, await call_async(self._fallback, "load_stream", reference, fqdn),
+        )
 
     def fetch_checkpoint(self, reference: ParsedC2spTlogLr) -> bytes:
         """Use raw standard resources for single-event reads."""
@@ -285,6 +369,23 @@ def _verify_c2sp_stream_bundle(
     cutoff_index: int | None,
     expected_lr: str | None,
 ) -> VerifiedC2spStreamBundle:
+    from ._async import run_verification
+
+    return run_verification(
+        _verify_c2sp_stream_bundle_steps(
+            data, options, migration_verifier is not None, cutoff_index, expected_lr,
+        ),
+        migration_verifier,
+    )
+
+
+def _verify_c2sp_stream_bundle_steps(
+    data: bytes,
+    options: C2spStreamBundleVerifierOptions,
+    allow_migration: bool,
+    cutoff_index: int | None,
+    expected_lr: str | None,
+) -> Generator[MigrationEvent, MigrationVerificationResult, VerifiedC2spStreamBundle]:
     _validate_options(options)
     if len(data) > options.max_bundle_bytes:
         raise C2spTlogVerificationError(
@@ -382,18 +483,9 @@ def _verify_c2sp_stream_bundle(
     def verify_migration_memoized(
         event: MigrationEvent,
     ) -> MigrationVerificationResult:
-        cached = migration_results.get(id(event))
-        if cached is not None:
-            return cached
-        if migration_verifier is None:
-            raise C2spTlogVerificationError(
-                "MIGRATION requires verified prior-log history"
-            )
-        result = migration_verifier(event)
-        migration_results[id(event)] = result
-        return result
+        return migration_results[id(event)]
 
-    verified = verify_stream_lifecycle(
+    verified = yield from _verify_stream_lifecycle_steps(
         entries,
         fqdn,
         StreamVerifierOptions(
@@ -405,9 +497,10 @@ def _verify_c2sp_stream_bundle(
                 witness_time_ms + options.max_clock_skew_ms
             ),
             verify_migration=(
-                verify_migration_memoized if migration_verifier is not None else None
+                verify_migration_memoized if allow_migration else None
             ),
         ),
+        migration_results=migration_results,
     )
     if cutoff_index is not None and (
         not verified or verified[-1].index != cutoff_index

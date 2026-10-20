@@ -170,7 +170,7 @@ def test_status_failure_wins_and_cancels_blocked_identity_work(ec_pair):
     assert ku_saw_cancel.is_set()
 
 
-def test_status_branch_inherits_and_cannot_extend_the_invocation_budget(ec_pair):
+def test_status_branch_uses_shared_work_budget_not_callers_wait_budget(ec_pair):
     manager, resolver, counters, domain, fetch_jwks, fetch_status, _ = _manager_fixture(ec_pair)
     observed: list[float] = []
 
@@ -185,7 +185,7 @@ def test_status_branch_inherits_and_cannot_extend_the_invocation_budget(ec_pair)
     ):
         manager.verify_domain(domain)
     manager.close()
-    assert observed and observed[0] <= 2.0
+    assert observed and 2.0 < observed[0] <= 30.0
 
 
 def test_history_preload_runs_concurrently_with_ku_and_failure_maps_to_log_error(ec_pair):

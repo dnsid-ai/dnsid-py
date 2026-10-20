@@ -3,7 +3,7 @@
 import copy
 import importlib
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -186,7 +186,9 @@ def test_configured_entity_signer_must_match_publication(tmp_path, monkeypatch):
         ({"gi": {"domain": GI, "state": "verified", "gate_authorized": "true"}}, False),
     ],
 )
-def test_onboarding_readiness_preserves_pending(monkeypatch, change, ready):
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True], ids=["sync", "async"])
+async def test_onboarding_readiness_preserves_pending(monkeypatch, change, ready, native):
     body = {
         "org_id": "org-1",
         "governance_domain": GI,
@@ -197,9 +199,13 @@ def test_onboarding_readiness_preserves_pending(monkeypatch, change, ready):
     }
     with RegistryClient("https://registry.example", api_key="owner") as client:
         monkeypatch.setattr(
-            client, "_http_request", lambda *a, **kw: httpx.Response(200, json=body)
+            client, "_async_http_request" if native else "_http_request",
+            (AsyncMock if native else Mock)(return_value=httpx.Response(200, json=body)),
         )
-        result = client.get_organization_onboarding(expected_org_id="org-1", expected_gi=GI)
+        read = client.async_get_organization_onboarding if native else client.get_organization_onboarding
+        result = read(expected_org_id="org-1", expected_gi=GI)
+        if native:
+            result = await result
     assert result == {**body, "bindings_ready": ready}
 
 
@@ -214,11 +220,17 @@ def test_onboarding_readiness_preserves_pending(monkeypatch, change, ready):
         {"gi": {"domain": "other.example", "state": "verified", "gate_authorized": True}},
     ],
 )
-def test_onboarding_rejects_binding_mismatch(monkeypatch, change):
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True], ids=["sync", "async"])
+async def test_onboarding_rejects_binding_mismatch(monkeypatch, change, native):
     body = {"org_id": "org-1", "governance_domain": GI, **change}
     with RegistryClient("https://registry.example", api_key="owner") as client:
         monkeypatch.setattr(
-            client, "_http_request", lambda *a, **kw: httpx.Response(200, json=body)
+            client, "_async_http_request" if native else "_http_request",
+            (AsyncMock if native else Mock)(return_value=httpx.Response(200, json=body)),
         )
+        read = client.async_get_organization_onboarding if native else client.get_organization_onboarding
         with pytest.raises((ArgumentError, ValidationError)):
-            client.get_organization_onboarding(expected_org_id="org-1", expected_gi=GI)
+            result = read(expected_org_id="org-1", expected_gi=GI)
+            if native:
+                await result

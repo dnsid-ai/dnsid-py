@@ -65,6 +65,7 @@ class VerificationCode(Enum):
       policy check failed (permanent).
     * COUNTERPARTY_NOT_ACCEPTED — configured ``trusted_entities`` policy
       denied a protocol-valid identity; permanent.
+    * DEADLINE_EXCEEDED — verification exceeded its budget; transient.
     """
 
     DNS_RESOLUTION = auto()  # Timeout, network error, or ordinary SERVFAIL. Transient.
@@ -78,6 +79,7 @@ class VerificationCode(Enum):
     LOG_ERROR = auto()  # Log unreachable (Transient) or proof failed (Permanent).
     COUNTERPARTY_NOT_ACCEPTED = auto()  # Configured policy denied verified counterparty. Permanent.
     RECORD_NOT_FOUND = auto()  # NXDOMAIN or NOERROR/NODATA. Non-transient, not a blacklist.
+    DEADLINE_EXCEEDED = auto()  # Verification exceeded its budget. Transient.
 
 
 class AgentState(StrEnum):

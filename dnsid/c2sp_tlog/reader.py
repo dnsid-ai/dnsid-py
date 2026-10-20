@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import datetime
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import ParamSpec, TypeVar, cast
 
 from .._utils import parse_ledger_ref
-from .._verification_budget import verification_operation
+from .._verification_budget import (
+    async_run_blocking,
+    async_verification_operation,
+    verification_operation,
+)
 from ..exceptions import ParseError
 from ..interfaces import KeyProvider as KeyProviderT
 from ..interfaces import LogReader
@@ -28,6 +32,7 @@ from ..models import (
     VerifiedCutoffHistory,
 )
 from . import prepared as prepared_mod
+from ._async import async_run_verification, call_async, run_verification
 from .checkpoint import Checkpoint
 from .checkpoint_store import (
     CheckpointStore,
@@ -56,11 +61,16 @@ from .policy import (
 from .proof import TlogProofV1, verify_c2sp_tlog_proof
 from .resource_fetcher import C2spBoundedResourceFetcher
 from .signed_note import SignedNoteKey
-from .stream_bundle import _FetchedStreamBundleSource, _verified_complete_scan_entries
+from .stream_bundle import (
+    VerifiedC2spStreamBundle,
+    _FetchedStreamBundleSource,
+    _verified_complete_scan_entries,
+)
 from .stream_source import (
     C2spScanLimits,
     C2spTlogSource,
     C2spTlogTransport,
+    IndexedEntry,
     ScanStreamSource,
     StreamEvidence,
     enforce_public_read_guarantees,
@@ -69,8 +79,8 @@ from .stream_verifier import (
     MigrationVerificationResult,
     StreamVerifierOptions,
     VerifiedLifecycleEvent,
+    _verify_stream_lifecycle_steps,
     verify_occurrence,
-    verify_stream_lifecycle,
 )
 
 _DEFAULT_MAX_MIGRATION_DEPTH = 8
@@ -245,11 +255,38 @@ def _verification_boundary(func: Callable[_P, _R]) -> Callable[_P, _R]:
     return verification_operation(wrapped)
 
 
+def _async_verification_boundary(
+    func: Callable[_P, Awaitable[_R]],
+) -> Callable[_P, Awaitable[_R]]:
+    """Apply the same error boundary to awaited resource and predecessor reads."""
+    @wraps(func)
+    async def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        from ..exceptions import VerificationError
+
+        try:
+            return await func(*args, **kwargs)
+        except VerificationError:
+            raise
+        except C2spTlogError as exc:
+            raise _adapt_c2sp_error(exc) from exc
+        except (ConnectionError, OSError, TimeoutError) as exc:
+            transport_error = C2spTlogTransportError(
+                "C2SP verification resource is unavailable", transient=True, cause=exc,
+            )
+            raise _adapt_c2sp_error(transport_error) from exc
+
+    return async_verification_operation(wrapped)
+
+
 class C2spTlogReader(LogReader):
     """LogReader over a C2SP tile log, verified against a local trust policy.
 
     Read paths authenticate the checkpoint and select the signed lifecycle
     from either a strictly verified per-domain bundle or a complete raw scan.
+    AsyncLogReader methods use native async source/fetcher capabilities, with
+    worker fallback for sync-only injected adapters. Both APIs share verified
+    history caches and deterministic validation. Async checkpoint-store calls
+    run atomically in tracked workers. Injected resources remain caller-owned.
 
     For a draft 01 record this reader performs the binding-level lifecycle
     checks verify_domain requires:
@@ -433,7 +470,11 @@ class C2spTlogReader(LogReader):
                 thumbprint does not appear in the verified history or the
                 history itself cannot be loaded and verified.
         """
-        for event in self.rebuild_history(domain):
+        return self._key_timestamp(self.rebuild_history(domain), key_thumbprint)
+
+    @staticmethod
+    def _key_timestamp(events: list[AnyLogEvent], key_thumbprint: str) -> datetime.datetime:
+        for event in events:
             if (
                 isinstance(event, IssuanceEvent)
                 and event.operational_key is not None
@@ -475,8 +516,14 @@ class C2spTlogReader(LogReader):
         domain = getattr(record, "identity_fqdn", "") or getattr(record, "domain", "")
         if not domain:
             raise _log_error("cannot infer domain for bilateral binding")
-        initial_entity_thumbprint = entity_key.thumbprint()
         verified = self._load_complete_history(domain, entity_key)
+        return self._bilateral_binding(record, entity_key, operational_key, domain, verified)
+
+    def _bilateral_binding(
+        self, record: object, entity_key: JWK, operational_key: JWK,
+        domain: str, verified: _VerifiedHistory,
+    ) -> BilateralBindingResult:
+        initial_entity_thumbprint = entity_key.thumbprint()
         snapshot = DomainLog(domain, list(verified.events)).snapshot_at(
             max(event.timestamp for event in verified.events)
         )
@@ -530,9 +577,16 @@ class C2spTlogReader(LogReader):
         current_operational_thumbprint: str,
     ) -> None:
         """Verify the active operational key follows from the initial one."""
-        from ..models import DomainLog
-
         verified = self._load_complete_history(domain)
+        self._operational_continuity(
+            domain, initial_operational_thumbprint, current_operational_thumbprint, verified,
+        )
+
+    @staticmethod
+    def _operational_continuity(
+        domain: str, initial_operational_thumbprint: str,
+        current_operational_thumbprint: str, verified: _VerifiedHistory,
+    ) -> None:
         first = next(
             (e for e in verified.events if isinstance(e, IssuanceEvent)), None
         )
@@ -570,6 +624,11 @@ class C2spTlogReader(LogReader):
                 stale, or the history cannot be loaded and verified.
         """
         verified = self._load_complete_history(domain, require_fresh=True)
+        return self._non_revocation(domain, at, verified)
+
+    def _non_revocation(
+        self, domain: str, at: datetime.datetime, verified: _VerifiedHistory,
+    ) -> LoggedStateEvidence:
         self._assert_fresh(verified.checkpoint_witness_time)
         snapshot = DomainLog(domain, list(verified.events)).snapshot_at(at)
         if snapshot.historical_state in ("REVOKED", "RETIRED"):
@@ -612,6 +671,34 @@ class C2spTlogReader(LogReader):
                 proof, checkpoint policy, timestamp, or lifecycle
                 authorization checks fail.
         """
+        parsed, proof = self._event_reference(ref)
+        evidence = self._source.load_stream(parsed, parsed.stream_id)
+        entry, event, entity_key = self._event_evidence(parsed, proof, evidence)
+        if isinstance(self._source, _FetchedStreamBundleSource):
+            history = self._load_complete_history(event.domain, entity_key)
+            return verify_occurrence(
+                entry, history.current_stream_events,
+                self._verifier_options(parsed, entity_key, history.checkpoint_witness_time),
+            ).event
+        context = _MigrationContext(
+            _MigrationBudget(self._options.migration_limits, {self.parsed.lr})
+        )
+        witness_time = self._prepare_scan(evidence, context)
+        self._enforce_append_only_consistency(evidence, witness_time)
+        history = run_verification(
+            self._scan_history_steps(
+                evidence, event.domain, entity_key, context, None, witness_time,
+            ),
+            lambda migration: self._verify_prior_history(
+                migration, event.domain, entity_key, context,
+            ),
+        )
+        return verify_occurrence(
+            entry, history.current_stream_events,
+            self._verifier_options(parsed, entity_key, witness_time),
+        ).event
+
+    def _event_reference(self, ref: LogRef) -> tuple[ParsedC2spTlogLr, TlogProofV1 | str]:
         parsed = parse_c2sp_tlog_lr(str(ref))
         if (
             parsed.scope != self.parsed.scope
@@ -626,7 +713,11 @@ class C2spTlogReader(LogReader):
             raise _log_error(
                 "C2SP read_event requires a proof/source for historical inclusion"
             )
-        evidence = self._source.load_stream(parsed, parsed.stream_id)
+        return parsed, proof
+
+    def _event_evidence(
+        self, parsed: ParsedC2spTlogLr, proof: TlogProofV1 | str, evidence: StreamEvidence,
+    ) -> tuple[IndexedEntry, AnyLogEvent, JWK]:
         entry = next(
             (e for e in evidence.entries if e.index == parsed.entry_index), None
         )
@@ -667,52 +758,11 @@ class C2spTlogReader(LogReader):
         entity_key = self._options.entity_key or self._trusted_entity_key
         if entity_key is None:
             raise _log_error("C2SP read_event requires a trusted entity key")
-        if isinstance(self._source, _FetchedStreamBundleSource):
-            history = self._load_complete_history(event.domain, entity_key)
-            return verify_occurrence(
-                entry, history.current_stream_events,
-                self._verifier_options(parsed, entity_key, history.checkpoint_witness_time),
-            ).event
-        if not evidence.complete:
+        if not isinstance(self._source, _FetchedStreamBundleSource) and not evidence.complete:
             raise _log_error(
-                "C2SP read_event requires complete lifecycle evidence for "
-                "event authorization"
+                "C2SP read_event requires complete lifecycle evidence for event authorization"
             )
-        policy_result = enforce_checkpoint_policy(
-            evidence.checkpoint,
-            parsed.origin,
-            self._options.policy,
-            parsed.scope,
-            self._now_ms(),
-            self._options.max_clock_skew_ms,
-        )
-        if policy_result.checkpoint_witness_time is None:
-            raise _log_error(
-                "C2SP event timestamp requires an accepted timestamped witness quorum"
-            )
-        _verified_complete_scan_entries(evidence)
-        self._enforce_append_only_consistency(
-            evidence, policy_result.checkpoint_witness_time
-        )
-        migration_context = _MigrationContext(
-            _MigrationBudget(self._options.migration_limits, {self.parsed.lr})
-        )
-        migration_context.budget.add_response(_stream_evidence_bytes(evidence))
-        verifier_options = self._verifier_options(
-            parsed, entity_key, policy_result.checkpoint_witness_time
-        )
-
-        def verify_migration(migration: MigrationEvent) -> MigrationVerificationResult:
-            return self._verify_prior_history(
-                migration, event.domain, entity_key, migration_context
-            )
-
-        verifier_options.verify_migration = verify_migration
-        verified = verify_stream_lifecycle(
-            evidence.entries, event.domain, verifier_options
-        )
-        migration_context.budget.add_events(len(verified))
-        return verify_occurrence(entry, verified, verifier_options).event
+        return entry, event, entity_key
 
     @_verification_boundary
     def rebuild_history(self, domain: str) -> list[AnyLogEvent]:
@@ -738,6 +788,21 @@ class C2spTlogReader(LogReader):
         seen_log_references: frozenset[str],
     ) -> VerifiedCutoffHistory:
         """Verify this stream through exactly *final_entry_ref*."""
+        cutoff, context = self._cutoff_context(
+            final_entry_ref, max_depth, max_events, max_response_bytes, seen_log_references,
+        )
+        history = self._load_complete_history(
+            domain,
+            entity_key,
+            cutoff_index=cutoff.entry_index,
+            migration_context=context,
+        )
+        return self._cutoff_result(history, final_entry_ref, context)
+
+    def _cutoff_context(
+        self, final_entry_ref: str, max_depth: int, max_events: int,
+        max_response_bytes: int, seen_log_references: frozenset[str],
+    ) -> tuple[ParsedC2spTlogLr, _MigrationContext]:
         cutoff = parse_c2sp_tlog_lr(final_entry_ref)
         if (
             cutoff.entry_index is None
@@ -755,20 +820,115 @@ class C2spTlogReader(LogReader):
         )
         budget = _MigrationBudget(limits, set(seen_log_references) | {self.parsed.lr})
         budget.activate()
-        history = self._load_complete_history(
-            domain,
-            entity_key,
-            cutoff_index=cutoff.entry_index,
-            migration_context=_MigrationContext(budget),
-        )
+        return cutoff, _MigrationContext(budget)
+
+    @staticmethod
+    def _cutoff_result(
+        history: _VerifiedHistory, final_entry_ref: str, context: _MigrationContext,
+    ) -> VerifiedCutoffHistory:
         if not history.event_refs or history.event_refs[-1] != final_entry_ref:
             raise C2spTlogVerificationError(
                 "MIGRATION prior history does not end at the signed cutoff",
                 category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
             )
         return VerifiedCutoffHistory(
-            list(history.events), list(history.event_refs), budget.response_bytes
+            list(history.events), list(history.event_refs), context.budget.response_bytes
         )
+
+    @_async_verification_boundary
+    async def async_preload_history(self, domain: str, entity_key: JWK) -> None:
+        """Load authenticated history through native reads or sync-adapter fallback."""
+        await self._async_load_complete_history(domain, entity_key)
+
+    @_async_verification_boundary
+    async def async_key_timestamp(self, domain: str, key_thumbprint: str) -> datetime.datetime:
+        """Return the same verified key introduction time as key_timestamp."""
+        history = await self._async_load_complete_history(domain)
+        return await async_run_blocking(self._key_timestamp, history.events, key_thumbprint)
+
+    @_async_verification_boundary
+    async def async_verify_bilateral_binding(
+        self, record: object, entity_key: JWK, operational_key: JWK,
+    ) -> BilateralBindingResult:
+        """Verify both anchors against asynchronously loaded lifecycle evidence."""
+        domain = getattr(record, "identity_fqdn", "") or getattr(record, "domain", "")
+        if not domain:
+            raise _log_error("cannot infer domain for bilateral binding")
+        history = await self._async_load_complete_history(domain, entity_key)
+        return await async_run_blocking(
+            self._bilateral_binding, record, entity_key, operational_key, domain, history,
+        )
+
+    @_async_verification_boundary
+    async def async_verify_operational_continuity(
+        self, domain: str, initial_operational_thumbprint: str, current_operational_thumbprint: str,
+    ) -> None:
+        """Verify rotations under the same lifecycle rules as the sync reader."""
+        history = await self._async_load_complete_history(domain)
+        await async_run_blocking(
+            self._operational_continuity,
+            domain, initial_operational_thumbprint, current_operational_thumbprint, history,
+        )
+
+    @_async_verification_boundary
+    async def async_verify_non_revocation(
+        self, domain: str, at: datetime.datetime,
+    ) -> LoggedStateEvidence:
+        """Verify fresh, complete, non-terminal history through at."""
+        history = await self._async_load_complete_history(domain, require_fresh=True)
+        return await async_run_blocking(self._non_revocation, domain, at, history)
+
+    @_async_verification_boundary
+    async def async_rebuild_history(self, domain: str) -> list[AnyLogEvent]:
+        """Rebuild authenticated history, including recursive predecessor reads."""
+        return (await self._async_load_complete_history(domain)).events
+
+    @_async_verification_boundary
+    async def async_rebuild_history_through(
+        self, domain: str, final_entry_ref: str, entity_key: JWK, *,
+        max_depth: int, max_events: int, max_response_bytes: int,
+        seen_log_references: frozenset[str],
+    ) -> VerifiedCutoffHistory:
+        """Verify the exact signed cutoff under cumulative migration bounds."""
+        cutoff, context = self._cutoff_context(
+            final_entry_ref, max_depth, max_events, max_response_bytes, seen_log_references,
+        )
+        history = await self._async_load_complete_history(
+            domain, entity_key, cutoff_index=cutoff.entry_index, migration_context=context,
+        )
+        return self._cutoff_result(history, final_entry_ref, context)
+
+    @_async_verification_boundary
+    async def async_read_event(self, ref: LogRef) -> AnyLogEvent:
+        """Verify an exact occurrence, its inclusion proof and lifecycle authority."""
+        parsed, proof = self._event_reference(ref)
+        evidence = await call_async(self._source, "load_stream", parsed, parsed.stream_id)
+        entry, event, entity_key = await async_run_blocking(
+            self._event_evidence, parsed, proof, evidence,
+        )
+        if isinstance(self._source, _FetchedStreamBundleSource):
+            history = await self._async_load_complete_history(event.domain, entity_key)
+        else:
+            context = _MigrationContext(
+                _MigrationBudget(self._options.migration_limits, {self.parsed.lr})
+            )
+            witness_time = await async_run_blocking(self._prepare_scan, evidence, context)
+            await async_run_blocking(self._enforce_append_only_consistency, evidence, witness_time)
+
+            async def resolve(migration: MigrationEvent) -> MigrationVerificationResult:
+                return await self._async_verify_prior_history(
+                    migration, event.domain, entity_key, context,
+                )
+
+            history = await async_run_verification(
+                self._scan_history_steps(
+                    evidence, event.domain, entity_key, context, None, witness_time,
+                ), resolve,
+            )
+        return (await async_run_blocking(
+            verify_occurrence, entry, history.current_stream_events,
+            self._verifier_options(parsed, entity_key, history.checkpoint_witness_time),
+        )).event
 
     # ------------------------------------------------------------------
     # Internals
@@ -803,7 +963,96 @@ class C2spTlogReader(LogReader):
             raise _log_error("C2SP lifecycle verification requires a trusted entity key")
         cache_key = (domain, trusted.thumbprint())
         use_cache = cutoff_index is None and migration_context is None
-        cached = self._history_cache.get(cache_key) if use_cache else None
+        cached = self._cached_history(cache_key, require_fresh) if use_cache else None
+        if cached is not None:
+            return cached
+        context = migration_context or _MigrationContext(
+            _MigrationBudget(self._options.migration_limits, {self.parsed.lr})
+        )
+        def verify_migration(event: MigrationEvent) -> MigrationVerificationResult:
+            return self._verify_prior_history(event, domain, trusted, context)
+
+        if isinstance(self._source, _FetchedStreamBundleSource):
+            bundle = self._source.load_verified_bundle(
+                self.parsed,
+                domain,
+                trusted,
+                verify_migration,
+                cutoff_index=cutoff_index,
+                account_response=context.budget.add_response,
+            )
+            if bundle is not None:
+                result = self._bundle_history(bundle, domain, cutoff_index, context)
+                if use_cache:
+                    self._history_cache[cache_key] = result
+                return result
+
+        evidence = self._source.load_stream(self.parsed, domain)
+        witness_time = self._prepare_scan(evidence, context)
+        self._enforce_append_only_consistency(evidence, witness_time)
+        result = run_verification(
+            self._scan_history_steps(
+                evidence, domain, trusted, context, cutoff_index, witness_time,
+            ),
+            verify_migration,
+        )
+        if use_cache:
+            self._history_cache[cache_key] = result
+        return result
+
+    async def _async_load_complete_history(
+        self,
+        domain: str,
+        entity_key: JWK | None = None,
+        *,
+        require_fresh: bool = False,
+        cutoff_index: int | None = None,
+        migration_context: _MigrationContext | None = None,
+    ) -> _VerifiedHistory:
+        trusted = entity_key or self._options.entity_key or self._trusted_entity_key
+        if trusted is None:
+            raise _log_error("C2SP lifecycle verification requires a trusted entity key")
+        cache_key = (domain, trusted.thumbprint())
+        use_cache = cutoff_index is None and migration_context is None
+        cached = self._cached_history(cache_key, require_fresh) if use_cache else None
+        if cached is not None:
+            return cached
+        context = migration_context or _MigrationContext(
+            _MigrationBudget(self._options.migration_limits, {self.parsed.lr})
+        )
+
+        async def verify_migration(event: MigrationEvent) -> MigrationVerificationResult:
+            return await self._async_verify_prior_history(event, domain, trusted, context)
+
+        if isinstance(self._source, _FetchedStreamBundleSource):
+            bundle = await self._source.async_load_verified_bundle(
+                self.parsed, domain, trusted, verify_migration,
+                cutoff_index=cutoff_index, account_response=context.budget.add_response,
+            )
+            if bundle is not None:
+                result = await async_run_blocking(
+                    self._bundle_history, bundle, domain, cutoff_index, context,
+                )
+                if use_cache:
+                    self._history_cache[cache_key] = result
+                return result
+        evidence = await call_async(self._source, "load_stream", self.parsed, domain)
+        witness_time = await async_run_blocking(self._prepare_scan, evidence, context)
+        await async_run_blocking(self._enforce_append_only_consistency, evidence, witness_time)
+        result = await async_run_verification(
+            self._scan_history_steps(
+                evidence, domain, trusted, context, cutoff_index, witness_time,
+            ),
+            verify_migration,
+        )
+        if use_cache:
+            self._history_cache[cache_key] = result
+        return result
+
+    def _cached_history(
+        self, cache_key: tuple[str, str], require_fresh: bool,
+    ) -> _VerifiedHistory | None:
+        cached = self._history_cache.get(cache_key)
         if cached is not None:
             expired = (
                 cached.evidence_expires_at is not None
@@ -816,58 +1065,42 @@ class C2spTlogReader(LogReader):
                 return cached
             del self._history_cache[cache_key]
 
-        context = migration_context or _MigrationContext(
-            _MigrationBudget(self._options.migration_limits, {self.parsed.lr})
-        )
-        migration_results: dict[int, MigrationVerificationResult] = {}
+        return None
 
-        def verify_migration(event: MigrationEvent) -> MigrationVerificationResult:
-            cached_result = migration_results.get(id(event))
-            if cached_result is not None:
-                return cached_result
-            result = self._verify_prior_history(event, domain, trusted, context)
-            migration_results[id(event)] = result
-            return result
-
-        if isinstance(self._source, _FetchedStreamBundleSource):
-            bundle = self._source.load_verified_bundle(
-                self.parsed,
-                domain,
-                trusted,
-                verify_migration,
-                cutoff_index=cutoff_index,
-                account_response=context.budget.add_response,
+    def _bundle_history(
+        self, bundle: VerifiedC2spStreamBundle, domain: str,
+        cutoff_index: int | None, context: _MigrationContext,
+    ) -> _VerifiedHistory:
+        if bundle.reference.lr != self.lr:
+            raise C2spTlogVerificationError(
+                "stream bundle lr does not exactly match authenticated record"
             )
-            if bundle is not None:
-                if bundle.reference.lr != self.lr:
-                    raise C2spTlogVerificationError(
-                        "stream bundle lr does not exactly match authenticated record"
-                    )
-                self._assert_cutoff(bundle.events, cutoff_index)
-                context.budget.add_events(len(bundle.events))
-                events = [item.event for item in bundle.events]
-                events = _stitch_migration_history(
-                    domain, events, bundle.migration_results
-                )
-                result = _VerifiedHistory(
-                    events=events,
-                    checkpoint_witness_time=bundle.checkpoint_witness_time,
-                    complete_through=bundle.checkpoint.tree_size,
-                    completeness_mode="trusted-index",
-                    checkpoint=bundle.checkpoint_bytes or bundle.checkpoint,
-                    evidence_expires_at=datetime.datetime.fromtimestamp(
-                        bundle.expires, tz=datetime.UTC
-                    ),
-                    current_stream_events=list(bundle.events),
-                    event_refs=_stitched_event_refs(
-                        self.parsed.lr, bundle.events, bundle.migration_results
-                    ),
-                )
-                if use_cache:
-                    self._history_cache[cache_key] = result
-                return result
+        self._assert_cutoff(bundle.events, cutoff_index)
+        context.budget.add_events(len(bundle.events))
+        events = [item.event for item in bundle.events]
+        events = _stitch_migration_history(
+            domain, events, bundle.migration_results
+        )
+        result = _VerifiedHistory(
+            events=events,
+            checkpoint_witness_time=bundle.checkpoint_witness_time,
+            complete_through=bundle.checkpoint.tree_size,
+            completeness_mode="trusted-index",
+            checkpoint=bundle.checkpoint_bytes or bundle.checkpoint,
+            evidence_expires_at=datetime.datetime.fromtimestamp(
+                bundle.expires, tz=datetime.UTC
+            ),
+            current_stream_events=list(bundle.events),
+            event_refs=_stitched_event_refs(
+                self.parsed.lr, bundle.events, bundle.migration_results
+            ),
+        )
 
-        evidence = self._source.load_stream(self.parsed, domain)
+        return result
+
+    def _prepare_scan(
+        self, evidence: StreamEvidence, context: _MigrationContext,
+    ) -> datetime.datetime:
         context.budget.add_response(_stream_evidence_bytes(evidence))
         if (
             self._options.max_tree_size is not None
@@ -901,25 +1134,31 @@ class C2spTlogReader(LogReader):
                 C2spLifecycleErrorCategory.INVALID_EVIDENCE,
             )
         _verified_complete_scan_entries(evidence)
-        self._enforce_append_only_consistency(
-            evidence, policy_result.checkpoint_witness_time
-        )
+        return policy_result.checkpoint_witness_time
+
+    def _scan_history_steps(
+        self, evidence: StreamEvidence, domain: str, trusted: JWK,
+        context: _MigrationContext, cutoff_index: int | None, witness_time: datetime.datetime,
+    ) -> Generator[MigrationEvent, MigrationVerificationResult, _VerifiedHistory]:
         verifier_options = self._verifier_options(
-            self.parsed, trusted, policy_result.checkpoint_witness_time
+            self.parsed, trusted, witness_time
         )
-        verifier_options.verify_migration = verify_migration
+        migration_results: dict[int, MigrationVerificationResult] = {}
+        verifier_options.verify_migration = lambda event: migration_results[id(event)]
         verifier_options.cutoff_index = cutoff_index
         entries = evidence.entries
         if cutoff_index is not None:
             entries = [entry for entry in entries if entry.index <= cutoff_index]
-        verified = verify_stream_lifecycle(entries, domain, verifier_options)
+        verified = yield from _verify_stream_lifecycle_steps(
+            entries, domain, verifier_options, migration_results=migration_results,
+        )
         self._assert_cutoff(verified, cutoff_index)
         context.budget.add_events(len(verified))
         events = [item.event for item in verified]
         events = _stitch_migration_history(domain, events, migration_results)
         result = _VerifiedHistory(
             events=events,
-            checkpoint_witness_time=policy_result.checkpoint_witness_time,
+            checkpoint_witness_time=witness_time,
             complete_through=evidence.checkpoint.tree_size,
             completeness_mode=evidence.completeness_mode or "full-scan",
             checkpoint=evidence.checkpoint_bytes or evidence.checkpoint,
@@ -928,8 +1167,7 @@ class C2spTlogReader(LogReader):
                 self.parsed.lr, verified, migration_results
             ),
         )
-        if use_cache:
-            self._history_cache[cache_key] = result
+
         return result
 
     def _verify_prior_history(
@@ -939,6 +1177,88 @@ class C2spTlogReader(LogReader):
         trusted: JWK,
         context: _MigrationContext,
     ) -> MigrationVerificationResult:
+        reader = self._prior_reader(event, context)
+        if isinstance(reader, C2spTlogReader):
+            cutoff = self._prior_cutoff(event, reader)
+            prior = reader._load_complete_history(
+                domain,
+                trusted,
+                cutoff_index=cutoff.entry_index,
+                migration_context=_MigrationContext(context.budget, context.depth + 1),
+            )
+        else:
+            remaining_events = (
+                context.budget.limits.max_history_events
+                - context.budget.history_events
+            )
+            remaining_bytes = (
+                context.budget.limits.max_response_bytes
+                - context.budget.response_bytes
+            )
+            cutoff_history = reader.rebuild_history_through(
+                domain,
+                event.final_entry_ref,
+                trusted,
+                max_depth=context.budget.limits.max_depth - context.depth,
+                max_events=remaining_events,
+                max_response_bytes=remaining_bytes,
+                seen_log_references=frozenset(context.budget.seen),
+            )
+            prior = self._external_prior(
+                event, cutoff_history, context, remaining_events, remaining_bytes,
+            )
+        return self._prior_result(domain, trusted, prior)
+
+    async def _async_verify_prior_history(
+        self, event: MigrationEvent, domain: str, trusted: JWK, context: _MigrationContext,
+    ) -> MigrationVerificationResult:
+        reader = self._prior_reader(event, context)
+        if isinstance(reader, C2spTlogReader):
+            cutoff = self._prior_cutoff(event, reader)
+            prior = await reader._async_load_complete_history(
+                domain, trusted, cutoff_index=cutoff.entry_index,
+                migration_context=_MigrationContext(context.budget, context.depth + 1),
+            )
+        else:
+            remaining_events = (
+                context.budget.limits.max_history_events - context.budget.history_events
+            )
+            remaining_bytes = (
+                context.budget.limits.max_response_bytes - context.budget.response_bytes
+            )
+            history = await call_async(
+                reader, "rebuild_history_through", domain, event.final_entry_ref, trusted,
+                max_depth=context.budget.limits.max_depth - context.depth,
+                max_events=remaining_events, max_response_bytes=remaining_bytes,
+                seen_log_references=frozenset(context.budget.seen),
+            )
+            prior = await async_run_blocking(
+                self._external_prior, event, history, context, remaining_events, remaining_bytes,
+            )
+        return await async_run_blocking(self._prior_result, domain, trusted, prior)
+
+    def _external_prior(
+        self, event: MigrationEvent, cutoff_history: VerifiedCutoffHistory,
+        context: _MigrationContext, remaining_events: int, remaining_bytes: int,
+    ) -> _VerifiedHistory:
+        self._validate_predecessor_history(
+            event, cutoff_history, context, remaining_events, remaining_bytes
+        )
+        context.budget.add_response(cutoff_history.response_bytes)
+        context.budget.add_events(len(cutoff_history.events))
+        prior = _VerifiedHistory(
+            events=list(cutoff_history.events),
+            checkpoint_witness_time=datetime.datetime.min.replace(
+                tzinfo=datetime.UTC
+            ),
+            complete_through=event.final_entry_ref,
+            completeness_mode="verified-cutoff",
+            checkpoint=None,
+            event_refs=list(cutoff_history.event_refs),
+        )
+        return prior
+
+    def _prior_reader(self, event: MigrationEvent, context: _MigrationContext) -> LogReader:
         context.budget.activate()
         if event.new_log != self.parsed.lr:
             raise C2spTlogVerificationError(
@@ -976,67 +1296,36 @@ class C2spTlogReader(LogReader):
                 category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
             )
         context.budget.seen.add(event.previous_log)
-        reader = factory(event.previous_log)
-        if isinstance(reader, C2spTlogReader):
-            try:
-                previous = parse_c2sp_tlog_lr(event.previous_log)
-                cutoff = parse_c2sp_tlog_lr(event.final_entry_ref)
-            except C2spTlogError as exc:
-                raise C2spTlogVerificationError(
-                    "MIGRATION previous-log reference is invalid",
-                    category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
-                ) from exc
-            if (
-                previous.entry_index is not None
-                or event.previous_log != previous.lr
-                or cutoff.entry_index is None
-                or cutoff.lr != previous.lr
-                or event.final_entry_ref != _event_ref(previous.lr, cutoff.entry_index)
-                or reader.parsed.lr != previous.lr
-            ):
-                raise C2spTlogVerificationError(
-                    "MIGRATION prev_ref must exactly identify an entry in prev_lr",
-                    category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
-                )
-            prior = reader._load_complete_history(
-                domain,
-                trusted,
-                cutoff_index=cutoff.entry_index,
-                migration_context=_MigrationContext(context.budget, context.depth + 1),
+        return factory(event.previous_log)
+
+    @staticmethod
+    def _prior_cutoff(event: MigrationEvent, reader: C2spTlogReader) -> ParsedC2spTlogLr:
+        try:
+            previous = parse_c2sp_tlog_lr(event.previous_log)
+            cutoff = parse_c2sp_tlog_lr(event.final_entry_ref)
+        except C2spTlogError as exc:
+            raise C2spTlogVerificationError(
+                "MIGRATION previous-log reference is invalid",
+                category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
+            ) from exc
+        if (
+            previous.entry_index is not None
+            or event.previous_log != previous.lr
+            or cutoff.entry_index is None
+            or cutoff.lr != previous.lr
+            or event.final_entry_ref != _event_ref(previous.lr, cutoff.entry_index)
+            or reader.parsed.lr != previous.lr
+        ):
+            raise C2spTlogVerificationError(
+                "MIGRATION prev_ref must exactly identify an entry in prev_lr",
+                category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
             )
-        else:
-            remaining_events = (
-                context.budget.limits.max_history_events
-                - context.budget.history_events
-            )
-            remaining_bytes = (
-                context.budget.limits.max_response_bytes
-                - context.budget.response_bytes
-            )
-            cutoff_history = reader.rebuild_history_through(
-                domain,
-                event.final_entry_ref,
-                trusted,
-                max_depth=context.budget.limits.max_depth - context.depth,
-                max_events=remaining_events,
-                max_response_bytes=remaining_bytes,
-                seen_log_references=frozenset(context.budget.seen),
-            )
-            self._validate_predecessor_history(
-                event, cutoff_history, context, remaining_events, remaining_bytes
-            )
-            context.budget.add_response(cutoff_history.response_bytes)
-            context.budget.add_events(len(cutoff_history.events))
-            prior = _VerifiedHistory(
-                events=list(cutoff_history.events),
-                checkpoint_witness_time=datetime.datetime.min.replace(
-                    tzinfo=datetime.UTC
-                ),
-                complete_through=event.final_entry_ref,
-                completeness_mode="verified-cutoff",
-                checkpoint=None,
-                event_refs=list(cutoff_history.event_refs),
-            )
+        return cutoff
+
+    @staticmethod
+    def _prior_result(
+        domain: str, trusted: JWK, prior: _VerifiedHistory,
+    ) -> MigrationVerificationResult:
         snapshot = DomainLog(domain, cast(list[LogEvent], prior.events)).snapshot_at(
             datetime.datetime.max.replace(tzinfo=datetime.UTC)
         )

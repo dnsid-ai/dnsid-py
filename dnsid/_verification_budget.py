@@ -4,16 +4,17 @@ Injected blocking dependencies must honor ``remaining_seconds()`` and check
 cancellation between reads; Python cannot forcibly interrupt arbitrary callbacks.
 """
 
+import asyncio
 import contextvars
 import math
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from functools import wraps
-from typing import ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import httpx
 
@@ -23,9 +24,15 @@ from .exceptions import ArgumentError, VerificationError
 _budget: ContextVar[tuple[float, tuple[threading.Event, ...]] | None] = ContextVar(
     "dnsid_verification_budget", default=None
 )
+_background_work: ContextVar[Callable[[Future[Any]], None] | None] = ContextVar(
+    "dnsid_background_work", default=None
+)
 P = ParamSpec("P")
 T = TypeVar("T")
 U = TypeVar("U")
+
+# Process-owned; managers drain their tracked futures, not other managers' work.
+_blocking_executor = ThreadPoolExecutor(thread_name_prefix="dnsid-blocking")
 
 
 class BudgetExhausted(VerificationError):
@@ -37,7 +44,7 @@ class BudgetExhausted(VerificationError):
 
     def __init__(self) -> None:
         super().__init__(
-            VerificationCode.RECORD_INVALID,
+            VerificationCode.DEADLINE_EXCEEDED,
             "verification deadline exceeded or cancelled",
             transient=True,
         )
@@ -66,7 +73,12 @@ def remaining_seconds(maximum: float = 30.0) -> float:
 def verification_budget(
     timeout: float = 30.0, *, cancelled: threading.Event | None = None
 ) -> Iterator[None]:
-    """Set a finite overall timeout; nested budgets cannot extend their parent."""
+    """Limit this caller; nested budgets cannot extend their parent.
+
+    Exceeding the budget raises VerificationError with DEADLINE_EXCEEDED and
+    transient=True. Shared identity evidence has a separate 30-second budget;
+    ending this caller's wait does not end work needed by another caller.
+    """
     if (
         isinstance(timeout, bool)
         or not isinstance(timeout, int | float)
@@ -87,6 +99,46 @@ def verification_budget(
         remaining_seconds()
     finally:
         _budget.reset(token)
+
+
+def verification_work_context(
+    track_work: Callable[[Future[Any]], None], *, independent: bool = False,
+) -> contextvars.Context:
+    """Track worker branches and optionally detach the shared-work budget."""
+    context = contextvars.copy_context()
+    if independent:
+        context.run(_budget.set, (time.monotonic() + 30.0, ()))
+    context.run(_background_work.set, track_work)
+    return context
+
+
+def submit_blocking(
+    function: Callable[P, T], *args: P.args, **kwargs: P.kwargs,
+) -> Future[T]:
+    """Submit budgeted, tracked work to the process-owned bounded pool."""
+    context = contextvars.copy_context()
+
+    def run() -> T:
+        remaining_seconds()
+        return function(*args, **kwargs)
+
+    future = _blocking_executor.submit(context.run, run)
+    track_work = _background_work.get()
+    if track_work is not None:
+        track_work(future)
+    return future
+
+
+async def async_run_blocking(function: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
+    """Offload to a process-owned bounded pool; track work through cancellation."""
+    return await async_wait_for_verification(submit_blocking(function, *args, **kwargs))
+
+
+async def async_wait_for_verification(future: Future[T]) -> T:
+    """Await shared work without cancelling it; observe failures after cancellation."""
+    waiter = asyncio.wrap_future(future)
+    waiter.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+    return await asyncio.shield(waiter)
 
 
 def wait_for_verification(future: Future[T]) -> T:
@@ -125,6 +177,9 @@ def run_concurrently(primary: Callable[[], T], secondary: Callable[[], U]) -> tu
     pool = ThreadPoolExecutor(max_workers=1)
     future: Future[U] = pool.submit(context.run, guarded_secondary)
     pool.shutdown(wait=False)
+    track_work = _background_work.get()
+    if track_work is not None:
+        track_work(future)
     try:
         with verification_budget(cancelled=cancel):
             primary_result = primary()
@@ -143,6 +198,59 @@ def run_concurrently(primary: Callable[[], T], secondary: Callable[[], U]) -> tu
     return primary_result, wait_for_verification(future)
 
 
+async def async_run_concurrently(
+    primary: Callable[[], Awaitable[T]], secondary: Callable[[], Awaitable[U]],
+) -> tuple[T, U]:
+    """Await native branches with the same failure precedence and worker cancellation."""
+    cancel = threading.Event()
+    tasks: list[asyncio.Task[Any]] = []
+    cancelled: asyncio.CancelledError | None = None
+
+    async def guarded(work: Callable[[], Awaitable[Any]]) -> Any:
+        try:
+            with verification_budget(cancelled=cancel):
+                return await work()
+        except BaseException:
+            cancel.set()
+            raise
+
+    try:
+        for work in (primary, secondary):
+            coroutine = guarded(work)
+            try:
+                tasks.append(asyncio.create_task(coroutine))
+            except BaseException:
+                coroutine.close()
+                raise
+        pending = set(tasks)
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if any(task.cancelled() or task.exception() is not None for task in done):
+                break
+    except asyncio.CancelledError as exc:
+        cancelled = exc
+    finally:
+        for task in tasks:
+            if not task.done():
+                cancel.set()
+                task.cancel()
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError as exc:
+            cancelled = exc
+    # Preserve settled nested failures even when a sibling cancelled their parent.
+    errors = [asyncio.CancelledError() if task.cancelled() else task.exception() for task in tasks]
+    for error in errors:
+        if error is not None and not isinstance(error, (BudgetExhausted, asyncio.CancelledError)):
+            raise error
+    if cancelled is not None:
+        raise cancelled
+    for error in errors:
+        if error is not None:
+            raise error
+    return tasks[0].result(), tasks[1].result()
+
+
 def bounded_http_timeout(timeout: float | httpx.Timeout | None = None) -> httpx.Timeout:
     """Clamp every HTTP phase to the remaining invocation budget."""
     value = httpx.Timeout(timeout) if timeout is not None else httpx.Timeout(10.0)
@@ -152,6 +260,28 @@ def bounded_http_timeout(timeout: float | httpx.Timeout | None = None) -> httpx.
             for name, limit in value.as_dict().items()
         }
     )
+
+
+def async_verification_operation(
+    function: Callable[P, Awaitable[T]],
+) -> Callable[P, Awaitable[T]]:
+    """Apply the shared verification budget without blocking the event loop."""
+
+    @wraps(function)
+    async def bounded(*args: P.args, **kwargs: P.kwargs) -> T:
+        with verification_budget() if _budget.get() is None else nullcontext():
+            remaining_seconds()
+            current = _budget.get()
+            assert current is not None
+            try:
+                async with asyncio.timeout(current[0] - time.monotonic()):
+                    result = await function(*args, **kwargs)
+                    remaining_seconds()
+                    return result
+            except TimeoutError as exc:
+                raise BudgetExhausted() from exc
+
+    return bounded
 
 
 def verification_operation(function: Callable[P, T]) -> Callable[P, T]:

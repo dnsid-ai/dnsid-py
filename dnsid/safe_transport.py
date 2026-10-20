@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import ssl
-from collections.abc import Collection, Iterable
+from collections.abc import AsyncIterable, Collection, Iterable
 
 import httpcore
 import httpx
@@ -86,7 +86,31 @@ def resolve_checked_address(
     Resolution failure never falls back to returning the hostname because that
     would make the network stack perform a second, unchecked lookup.
     """
-    addresses = _resolve_addresses(host, dns_host, dns_port)
+    return _checked_address(
+        host, _resolve_addresses(host, dns_host, dns_port),
+        private_address_hosts, allow_loopback_host,
+    )
+
+
+async def async_resolve_checked_address(
+    host: str,
+    dns_host: str = "",
+    dns_port: int = 53,
+    *,
+    private_address_hosts: Collection[str] = (),
+    allow_loopback_host: str | None = None,
+) -> str:
+    """Resolve asynchronously and apply the same address policy as sync reads."""
+    return _checked_address(
+        host, await _async_resolve_addresses(host, dns_host, dns_port),
+        private_address_hosts, allow_loopback_host,
+    )
+
+
+def _checked_address(
+    host: str, addresses: list[str], private_address_hosts: Collection[str],
+    allow_loopback_host: str | None,
+) -> str:
     if not addresses:
         raise httpcore.ConnectError(f"unable to resolve {host!r}")
 
@@ -154,6 +178,31 @@ def make_ssrf_safe_transport(
     """Build an HTTP transport that connects only to validated DNS results."""
     private_address_hosts = config.private_address_hosts if config else frozenset()
     validate_private_address_hosts(private_address_hosts)
+    ssl_context, dns_host, dns_port = _transport_settings(config)
+    backend = _CheckedResolveBackend(dns_host, dns_port, private_address_hosts, allow_loopback_host)
+    pool = httpcore.ConnectionPool(ssl_context=ssl_context, network_backend=backend)
+    return _HttpcoreTransport(pool)
+
+
+def make_ssrf_safe_async_transport(
+    config: TransportConfig | None = None,
+    *,
+    allow_loopback_host: str | None = None,
+) -> httpx.AsyncBaseTransport:
+    """Build an async transport with DNS pinning and the sync destination policy."""
+    private_address_hosts = config.private_address_hosts if config else frozenset()
+    validate_private_address_hosts(private_address_hosts)
+    ssl_context, dns_host, dns_port = _transport_settings(config)
+    backend = _AsyncCheckedResolveBackend(
+        dns_host, dns_port, private_address_hosts, allow_loopback_host
+    )
+    pool = httpcore.AsyncConnectionPool(ssl_context=ssl_context, network_backend=backend)
+    return _AsyncHttpcoreTransport(pool)
+
+
+def _transport_settings(
+    config: TransportConfig | None,
+) -> tuple[ssl.SSLContext | None, str, int]:
     ssl_context: ssl.SSLContext | None = None
     dns_host = ""
     dns_port = 53
@@ -167,12 +216,7 @@ def make_ssrf_safe_transport(
             dns_host = raw_host or dns_server
             dns_port = int(port_text) if port_text else 53
 
-    backend = _CheckedResolveBackend(dns_host, dns_port, private_address_hosts, allow_loopback_host)
-    pool = httpcore.ConnectionPool(
-        ssl_context=ssl_context,
-        network_backend=backend,
-    )
-    return _HttpcoreTransport(pool)
+    return ssl_context, dns_host, dns_port
 
 
 class _CheckedResolveBackend(httpcore.SyncBackend):
@@ -282,6 +326,99 @@ class _HttpcoreTransport(httpx.BaseTransport):
         self._pool.close()
 
 
+class _AsyncCheckedResolveBackend(httpcore.AsyncNetworkBackend):
+    def __init__(
+        self, dns_host: str, dns_port: int, private_address_hosts: Collection[str],
+        allow_loopback_host: str | None,
+    ) -> None:
+        self._delegate = httpcore.AnyIOBackend()
+        self._dns_host = dns_host
+        self._dns_port = dns_port
+        self._private_address_hosts = frozenset(private_address_hosts)
+        self._allow_loopback_host = allow_loopback_host
+
+    async def connect_tcp(
+        self, host: str, port: int, timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        address = await async_resolve_checked_address(
+            host, self._dns_host, self._dns_port,
+            private_address_hosts=self._private_address_hosts,
+            allow_loopback_host=self._allow_loopback_host,
+        )
+        return _AsyncBudgetStream(await self._delegate.connect_tcp(
+            address, port, remaining_seconds(timeout if timeout is not None else 30.0),
+            local_address, socket_options,
+        ))
+
+    async def sleep(self, seconds: float) -> None:
+        await self._delegate.sleep(seconds)
+
+
+class _AsyncBudgetStream(httpcore.AsyncNetworkStream):
+    def __init__(self, stream: httpcore.AsyncNetworkStream) -> None:
+        self._stream = stream
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return await self._stream.read(
+            max_bytes, remaining_seconds(timeout if timeout is not None else 30.0)
+        )
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        await self._stream.write(
+            buffer, remaining_seconds(timeout if timeout is not None else 30.0)
+        )
+
+    async def start_tls(
+        self, ssl_context: ssl.SSLContext, server_hostname: str | None = None,
+        timeout: float | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        return _AsyncBudgetStream(await self._stream.start_tls(
+            ssl_context, server_hostname,
+            remaining_seconds(timeout if timeout is not None else 30.0),
+        ))
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
+
+    def get_extra_info(self, info: str) -> object:
+        return self._stream.get_extra_info(info)
+
+
+class _AsyncHttpcoreTransport(httpx.AsyncBaseTransport):
+    def __init__(self, pool: httpcore.AsyncConnectionPool) -> None:
+        self._pool = pool
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        from httpx._transports.default import AsyncResponseStream, map_httpcore_exceptions
+
+        core_request = httpcore.Request(
+            method=request.method,
+            url=httpcore.URL(
+                scheme=request.url.raw_scheme,
+                host=request.url.raw_host,
+                port=request.url.port,
+                target=request.url.raw_path,
+            ),
+            headers=request.headers.raw,
+            content=request.stream,
+            extensions=request.extensions,
+        )
+        with map_httpcore_exceptions():
+            response = await self._pool.handle_async_request(core_request)
+        stream: AsyncIterable[bytes] = response.stream  # type: ignore[assignment]
+        return httpx.Response(
+            status_code=response.status,
+            headers=response.headers,
+            stream=AsyncResponseStream(stream),
+            extensions=response.extensions,
+        )
+
+    async def aclose(self) -> None:
+        await self._pool.aclose()
+
+
 def _matches_private_allowlist(host: str, private_address_hosts: Collection[str]) -> bool:
     """Match *host* against exact entries and leading-dot suffix entries.
 
@@ -355,6 +492,39 @@ def _resolve_with_dns_server(host: str, dns_host: str, dns_port: int) -> list[st
             # that would claim to have validated every resolution result
             # without obtaining a complete DNS view.
             raise httpcore.ConnectError(f"unable to resolve {host!r}") from exc
+    result = _unique_addresses(addresses)
+    if result:
+        return result
+    raise httpcore.ConnectError(f"unable to resolve {host!r}")
+
+
+async def _async_resolve_addresses(host: str, dns_host: str, dns_port: int) -> list[str]:
+    import dns.asyncresolver
+    import dns.exception
+    import dns.resolver
+
+    try:
+        return [str(ipaddress.ip_address(host))]
+    except ValueError:
+        pass
+    if not dns_host and host.rstrip(".").lower() == "localhost":
+        return ["127.0.0.1", "::1"]
+    addresses: list[str] = []
+    try:
+        resolver = dns.asyncresolver.Resolver(configure=not bool(dns_host))
+        if dns_host:
+            resolver.nameservers = [dns_host]
+            resolver.port = dns_port
+        for record_type in ("A", "AAAA"):
+            try:
+                answers = await resolver.resolve(
+                    host, record_type, lifetime=remaining_seconds(10.0), search=False
+                )
+                addresses.extend(str(answer) for answer in answers)
+            except dns.resolver.NoAnswer:
+                continue
+    except dns.exception.DNSException as exc:
+        raise httpcore.ConnectError(f"unable to resolve {host!r}") from exc
     result = _unique_addresses(addresses)
     if result:
         return result

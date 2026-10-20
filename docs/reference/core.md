@@ -5,7 +5,7 @@ description: "Primary entry point of the dnsid Python SDK: IdentityManager and i
 
 <!-- GENERATED FILE — do not edit. Regenerate with `python scripts/gen_docs.py` in dnsid-ai/dnsid-py. -->
 
-`IdentityManager` is the primary entry point of the SDK; all protocol operations flow through it. The public API is **synchronous** — see the [package overview](https://docs.dnsid.ai/reference/py/overview/) for the async story.
+`IdentityManager` is the primary entry point of the SDK; all protocol operations flow through it. Verification supports both synchronous and asynchronous callers — see the [package overview](https://docs.dnsid.ai/reference/py/overview/) for async behavior and limits.
 
 ## `IdentityManager`
 
@@ -434,6 +434,24 @@ including identity-cache hits.
 
 - `VerificationError`: If any verification step fails — DNS resolution, DNSSEC, identity record parsing or validation, signature checks, key-set fetches, lifecycle-log checks, key age, policy flags, or status. Carries a VerificationCode identifying the failing step.
 
+### `async_verify_domain`
+
+```python
+IdentityManager.async async_verify_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify without blocking the event loop; enforce the same policy as verify_domain.
+
+Async-led cold verification awaits native TXT, key-set, status and log
+reads. Sync-only dependencies, substantial log validation, and atomic
+checkpoint stores use tracked workers. Fresh cache hits and shared waits
+need no worker. Sync callers retain synchronous evidence leaders; both
+APIs share whichever leader starts first. Shared work has its own
+30-second budget; caller cancellation
+or deadlines stop only that caller's wait. Use ``aclose()`` or ``async with``
+to drain work before closing resources. Keep participating event loops
+running until shutdown completes.
+
 ### `refresh_domain`
 
 ```python
@@ -446,6 +464,25 @@ Concurrent explicit refreshes share network work, not ordinary lookups.
 Each caller enforces its current peer, acceptance, and final freshness.
 Failure never falls back to cached evidence or extends its lifetime.
 Injected resource fetchers must revalidate their caches.
+
+### `async_refresh_domain`
+
+```python
+IdentityManager.async async_refresh_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Fully verify fresh evidence asynchronously, bypassing the identity cache.
+
+Concurrent sync and async explicit refreshes share work, not ordinary
+lookups. Each caller enforces its current peer, acceptance, and final
+freshness. Zero-TTL evidence is not shared between callers. Failures
+never fall back to cached evidence or extend its lifetime. Injected
+HTTP fetchers must honor ``revalidate=True``. DNS caches may return
+answers with their remaining TTL.
+
+Native async adapters are awaited; sync-only dependencies use tracked
+workers. Shared work has an independent 30-second budget. Cancellation
+or a deadline stops only that caller's wait; ``aclose()`` drains work.
 
 ### `verify_log_evidence`
 
@@ -496,10 +533,25 @@ Load the full verified event history for a domain from its lifecycle log.
 IdentityManager.close() -> None
 ```
 
-Close manager-owned HTTP resources.
+Drain owned verification work and close resources synchronously.
 
-Closing is idempotent. The manager must not be closed while verification
-calls are active. Injected HTTPSFetcher instances remain caller-owned.
+Raises RuntimeError rather than blocking an event loop when work is
+active; use ``await aclose()`` or ``async with`` there. Closing is
+idempotent. Injected dependencies remain caller-owned.
+
+### `aclose`
+
+```python
+IdentityManager.async aclose() -> None
+```
+
+Reject new verification calls, drain owned work, then close resources.
+
+Includes shared refreshes, workers and unfinished fan-out branches left
+after a caller cancels or fails. Existing calls keep their own deadlines.
+Injected blocking adapters must honor verification budgets. Cancellation
+of ``aclose()`` leaves the manager closing; await it again to finish.
+Injected dependencies remain caller-owned. Closing is idempotent.
 
 ### `create_dnsid_http_client`
 
@@ -542,12 +594,23 @@ from dnsid import IdentityManagerDependencies
 Optional dependencies for IdentityManager.
 
 All fields default to None; the manager uses built-in defaults when omitted.
+Verification dependencies must be safe for concurrent use and honor the
+remaining verification budget. Blocking adapters run in workers even for
+synchronous callers. Optional AsyncDNSResolver, AsyncHTTPSFetcher and
+AsyncLogReader capabilities supplement the existing synchronous interfaces;
+adapters must also provide synchronous methods. Async-led cold verification,
+explicit refreshes, and stale-status refreshes await native capabilities,
+with worker fallback
+for sync-only adapters. Sync-led evidence remains worker-backed and is shared
+with async waiters. Injected dependencies remain caller-owned. Async adapters
+must support concurrent calls on the event loops used by the application;
+the manager does not move loop-bound clients between loops.
 
 **Attributes:**
 
 - `log_registry` (`LogRegistry | None`): Registry of log-method bindings. Used to derive the local log for config.identity.log_ref and to construct readers for counterparty logs during verification.
 - `dns_resolver` (`DNSResolver | None`): DNS resolver used for _dnsid TXT lookups. Omit to use the built-in default resolver: system DNS or a ``host:port`` server (neither reports DNSSEC state), or DNS-over-HTTPS when config.transport.dns_server is an ``http(s)://`` URL (reports DNSSEC state from the AD bit). System and ``host:port`` resolution report ``UNKNOWN``, which the default ``AUTO`` policy accepts and preserves. Inject a DNSSEC-aware resolver for ``VALIDATED`` or ``REQUIRED`` policy.
-- `https_fetcher` (`HTTPSFetcher | None`): HTTPS fetcher used for JWKS and status endpoint requests. Omit to use the SDK's default transport.
+- `https_fetcher` (`HTTPSFetcher | None`): HTTPS fetcher used for JWKS and status endpoint requests. Omit to use the SDK's default transport. An implementation of AsyncHTTPSFetcher is awaited for async-led key-set and status reads.
 - `cache` (`IdentityCache | None`): Cache for verified identities. Defaults to an in-memory cache.
 - `entity_key_provider` (`KeyProvider | None`): Accountable-entity key provider, used only for _dnsid identity record signing and entity lifecycle events. Keep separate from the agent key_provider; for draft 01 the current entity and agent public keys MUST be distinct.
 
@@ -561,7 +624,11 @@ from dnsid import verification_budget
 verification_budget(timeout: float = 30.0, *, cancelled: threading.Event | None = None) -> Iterator[None]
 ```
 
-Set a finite overall timeout; nested budgets cannot extend their parent.
+Limit this caller; nested budgets cannot extend their parent.
+
+Exceeding the budget raises VerificationError with DEADLINE_EXCEEDED and
+transient=True. Shared identity evidence has a separate 30-second budget;
+ending this caller's wait does not end work needed by another caller.
 
 ## `remaining_seconds`
 

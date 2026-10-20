@@ -22,14 +22,14 @@ required for DNSid conformance.
 ### `HttpSignatureProfile` constructor
 
 ```python
-HttpSignatureProfile(resolver: IdentityResolver, key_provider: KeyProvider | None, domain: str, config: HttpMessageSignatureConfig | None = None, transport_config: TransportConfig | None = None) -> None
+HttpSignatureProfile(resolver: IdentityResolver | AsyncIdentityResolver, key_provider: KeyProvider | None, domain: str, config: HttpMessageSignatureConfig | None = None, transport_config: TransportConfig | None = None) -> None
 ```
 
 Initialize the profile for a local DNSid identity.
 
 **Arguments:**
 
-- `resolver` (`IdentityResolver`): Any object satisfying the IdentityResolver protocol.
+- `resolver` (`IdentityResolver | AsyncIdentityResolver`): An IdentityResolver or AsyncIdentityResolver. Sync verification requires IdentityResolver; async verification accepts either.
 - `key_provider` (`KeyProvider | None`): Key management implementation for the local identity.
 - `domain` (`str`): FQDN of the local identity. Used as the domain portion of the ``{domain}#{kid}`` keyId in Signature-Input headers.
 - `config` (`HttpMessageSignatureConfig | None`): Optional freshness overrides. Defaults to 300 s max age / 5 s skew. — default `None`
@@ -98,7 +98,7 @@ Wrap an httpx.Client so every outbound request is automatically signed.
 ### `create_signed_async_http_client`
 
 ```python
-HttpSignatureProfile.create_signed_async_http_client(base_headers: dict[str, str] | None = None, opts: HttpSigningOptions | None = None, transport_config: TransportConfig | None = None) -> httpx.AsyncClient
+HttpSignatureProfile.create_signed_async_http_client(base_headers: dict[str, str] | None = None, opts: HttpSigningOptions | None = None, transport_config: TransportConfig | None = None, *, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient
 ```
 
 Return an httpx.AsyncClient that auto-signs every outbound request.
@@ -108,6 +108,7 @@ Return an httpx.AsyncClient that auto-signs every outbound request.
 - `base_headers` (`dict[str, str] | None`): Default headers applied to every request. — default `None`
 - `opts` (`HttpSigningOptions | None`): Optional signing overrides applied to every request. — default `None`
 - `transport_config` (`TransportConfig | None`): Optional DNS and TLS settings. Defaults to the configuration inherited by `from_identity_manager`. Custom hostname resolution supports ``host:port`` DNS servers; DoH URLs apply only to DNSid TXT lookups. — default `None`
+- `transport` (`httpx.AsyncBaseTransport | None`): Optional outbound transport, for example MockTransport or a proxy-configured AsyncHTTPTransport. The returned client owns and closes it, as with httpx.AsyncClient. An injected transport handles its own DNS/TLS settings; transport_config is rejected when supplied together with it. — default `None`
 
 **Returns:**
 
@@ -137,6 +138,17 @@ freshness, Content-Digest integrity, and the signature itself.
 **Raises:**
 
 - `VerificationError`: If the Signature/Signature-Input headers are missing or malformed, the signature is stale or expired, the Content-Digest does not match the body, the key or algorithm cannot be validated, or the signature is invalid; also propagated from signer identity verification. Carries a VerificationCode.
+
+### `async_verify_signed_http_request`
+
+```python
+HttpSignatureProfile.async async_verify_signed_http_request(req: HttpRequest, opts: HttpVerificationOptions | None = None, *, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify inbound signatures using async identity resolution.
+
+Local validation is shared with the synchronous verifier. Legacy
+synchronous resolvers run in a worker; async resolvers are awaited.
 
 ## `HttpMessageSignatureConfig`
 
