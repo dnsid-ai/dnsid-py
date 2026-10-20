@@ -1,0 +1,29 @@
+# Lint, test and security scanning on every pull request, from the shared
+# workflow in dnsid-ai/github-actions. Make "python / Summary" the one required
+# check on main.
+name: Security
+
+on:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    uses: dnsid-ai/github-actions/.github/workflows/security-python.yml@main
+    permissions:
+      contents: read # check out the code
+      security-events: write # required by the called workflow's jobs
+      actions: read # required by the called workflow's jobs
+      pull-requests: write # the Summary job posts a sticky python: summary comment with findings
+    with:
+      # uv.lock present -> uv sync --locked.
+      mypy-target: dnsid
+      # dnsid-py does not use ruff format; don't enforce it (lint + mypy still run).
+      format-check: false
+      upload-sarif: false
+      enforce-security: false
