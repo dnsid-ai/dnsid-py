@@ -7,7 +7,7 @@ jobs:
   compliance:
     # The private compliance harness is not available to fork pull requests.
     if: github.event.pull_request.head.repo.full_name == github.repository
-    uses: dnsid-ai/dnsid-sdk-compliance/.github/workflows/sdk-compliance.yaml@8c3731d1ed068399dc2ab4190b2b88e4ce37aeda
+    uses: dnsid-ai/dnsid-sdk-compliance/.github/workflows/sdk-compliance.yaml@main
     with:
       sdk: py
       ref: ${{ github.event.pull_request.head.sha }}
