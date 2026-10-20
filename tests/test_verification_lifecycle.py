@@ -276,12 +276,12 @@ async def test_cancelled_zero_ttl_followup_worker_is_drained(verifier):
     started, release = threading.Event(), threading.Event()
     original, calls = manager._async_verify_domain_uncached, []
 
-    async def cold(domain):
+    async def cold(domain, **kwargs):
         calls.append(domain)
         if len(calls) == 2:
             started.set()
             assert await asyncio.to_thread(release.wait, 2)
-        return await original(domain)
+        return await original(domain, **kwargs)
 
     with (
         patch.object(manager, "_async_verify_domain_uncached", side_effect=cold),

@@ -118,7 +118,8 @@ Request-budget expiry reports `VerificationCode.DEADLINE_EXCEEDED` with
 identity evidence work, which has its own 30-second budget. `aclose()` waits for
 that work before releasing resources, so shutdown can outlast the request deadline.
 Async-led cold verification uses native TXT, JWKS, status and C2SP reads.
-Sync-only adapters and atomic checkpoint stores use workers. Mixed sync/async
+Sync-only adapters, substantial C2SP validation, and atomic checkpoint stores
+use bounded workers. Mixed sync/async
 calls share whichever evidence leader starts first; sync-led work remains
 worker-backed. Injected blocking adapters must honor verification budgets.
 Keep participating event loops running until shutdown completes.

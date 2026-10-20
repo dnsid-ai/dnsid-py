@@ -112,8 +112,10 @@ def verification_work_context(
     return context
 
 
-async def async_run_blocking(function: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
-    """Offload to a process-owned bounded pool; track work through cancellation."""
+def submit_blocking(
+    function: Callable[P, T], *args: P.args, **kwargs: P.kwargs,
+) -> Future[T]:
+    """Submit budgeted, tracked work to the process-owned bounded pool."""
     context = contextvars.copy_context()
 
     def run() -> T:
@@ -124,7 +126,12 @@ async def async_run_blocking(function: Callable[P, T], *args: P.args, **kwargs: 
     track_work = _background_work.get()
     if track_work is not None:
         track_work(future)
-    return await async_wait_for_verification(future)
+    return future
+
+
+async def async_run_blocking(function: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
+    """Offload to a process-owned bounded pool; track work through cancellation."""
+    return await async_wait_for_verification(submit_blocking(function, *args, **kwargs))
 
 
 async def async_wait_for_verification(future: Future[T]) -> T:

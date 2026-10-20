@@ -25,7 +25,7 @@ async def test_large_zero_ttl_burst_does_not_grow_the_retry_stack(verifier):
     cached = manager.verify_domain(domain)
     manager.evict_domain(domain)
 
-    async def cold(domain):
+    async def cold(domain, **kwargs):
         await asyncio.sleep(0)
         return replace(cached, dns_ttl=0)
 
@@ -54,7 +54,7 @@ async def test_status_refresh_retries_zero_ttl_without_joining_its_own_future(ve
             domain, manager._verification_futures, previous, replace(cached, dns_ttl=0),
         )
         assert (await asyncio.wait_for(call, 1)).dns_ttl == 0
-        read.assert_awaited_once_with(domain)
+        read.assert_awaited_once_with(domain, cache_result=False)
 
 
 @pytest.mark.asyncio

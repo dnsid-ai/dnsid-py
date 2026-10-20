@@ -443,10 +443,11 @@ IdentityManager.async async_verify_domain(domain: str, peer_cert: TLSCertificate
 Verify without blocking the event loop; enforce the same policy as verify_domain.
 
 Async-led cold verification awaits native TXT, key-set, status and log
-reads. Sync-only dependencies and atomic checkpoint stores use tracked
-workers. Fresh cache hits and shared waits need no worker. Sync callers
-retain synchronous evidence leaders; both APIs share whichever leader
-starts first. Shared work has its own 30-second budget; caller cancellation
+reads. Sync-only dependencies, substantial log validation, and atomic
+checkpoint stores use tracked workers. Fresh cache hits and shared waits
+need no worker. Sync callers retain synchronous evidence leaders; both
+APIs share whichever leader starts first. Shared work has its own
+30-second budget; caller cancellation
 or deadlines stop only that caller's wait. Use ``aclose()`` or ``async with``
 to drain work before closing resources. Keep participating event loops
 running until shutdown completes.

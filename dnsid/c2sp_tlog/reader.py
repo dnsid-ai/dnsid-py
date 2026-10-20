@@ -844,7 +844,7 @@ class C2spTlogReader(LogReader):
     async def async_key_timestamp(self, domain: str, key_thumbprint: str) -> datetime.datetime:
         """Return the same verified key introduction time as key_timestamp."""
         history = await self._async_load_complete_history(domain)
-        return self._key_timestamp(history.events, key_thumbprint)
+        return await async_run_blocking(self._key_timestamp, history.events, key_thumbprint)
 
     @_async_verification_boundary
     async def async_verify_bilateral_binding(
@@ -855,7 +855,9 @@ class C2spTlogReader(LogReader):
         if not domain:
             raise _log_error("cannot infer domain for bilateral binding")
         history = await self._async_load_complete_history(domain, entity_key)
-        return self._bilateral_binding(record, entity_key, operational_key, domain, history)
+        return await async_run_blocking(
+            self._bilateral_binding, record, entity_key, operational_key, domain, history,
+        )
 
     @_async_verification_boundary
     async def async_verify_operational_continuity(
@@ -863,7 +865,8 @@ class C2spTlogReader(LogReader):
     ) -> None:
         """Verify rotations under the same lifecycle rules as the sync reader."""
         history = await self._async_load_complete_history(domain)
-        self._operational_continuity(
+        await async_run_blocking(
+            self._operational_continuity,
             domain, initial_operational_thumbprint, current_operational_thumbprint, history,
         )
 
@@ -873,7 +876,7 @@ class C2spTlogReader(LogReader):
     ) -> LoggedStateEvidence:
         """Verify fresh, complete, non-terminal history through at."""
         history = await self._async_load_complete_history(domain, require_fresh=True)
-        return self._non_revocation(domain, at, history)
+        return await async_run_blocking(self._non_revocation, domain, at, history)
 
     @_async_verification_boundary
     async def async_rebuild_history(self, domain: str) -> list[AnyLogEvent]:
@@ -900,14 +903,16 @@ class C2spTlogReader(LogReader):
         """Verify an exact occurrence, its inclusion proof and lifecycle authority."""
         parsed, proof = self._event_reference(ref)
         evidence = await call_async(self._source, "load_stream", parsed, parsed.stream_id)
-        entry, event, entity_key = self._event_evidence(parsed, proof, evidence)
+        entry, event, entity_key = await async_run_blocking(
+            self._event_evidence, parsed, proof, evidence,
+        )
         if isinstance(self._source, _FetchedStreamBundleSource):
             history = await self._async_load_complete_history(event.domain, entity_key)
         else:
             context = _MigrationContext(
                 _MigrationBudget(self._options.migration_limits, {self.parsed.lr})
             )
-            witness_time = self._prepare_scan(evidence, context)
+            witness_time = await async_run_blocking(self._prepare_scan, evidence, context)
             await async_run_blocking(self._enforce_append_only_consistency, evidence, witness_time)
 
             async def resolve(migration: MigrationEvent) -> MigrationVerificationResult:
@@ -920,10 +925,10 @@ class C2spTlogReader(LogReader):
                     evidence, event.domain, entity_key, context, None, witness_time,
                 ), resolve,
             )
-        return verify_occurrence(
-            entry, history.current_stream_events,
+        return (await async_run_blocking(
+            verify_occurrence, entry, history.current_stream_events,
             self._verifier_options(parsed, entity_key, history.checkpoint_witness_time),
-        ).event
+        )).event
 
     # ------------------------------------------------------------------
     # Internals
@@ -1025,12 +1030,14 @@ class C2spTlogReader(LogReader):
                 cutoff_index=cutoff_index, account_response=context.budget.add_response,
             )
             if bundle is not None:
-                result = self._bundle_history(bundle, domain, cutoff_index, context)
+                result = await async_run_blocking(
+                    self._bundle_history, bundle, domain, cutoff_index, context,
+                )
                 if use_cache:
                     self._history_cache[cache_key] = result
                 return result
         evidence = await call_async(self._source, "load_stream", self.parsed, domain)
-        witness_time = self._prepare_scan(evidence, context)
+        witness_time = await async_run_blocking(self._prepare_scan, evidence, context)
         await async_run_blocking(self._enforce_append_only_consistency, evidence, witness_time)
         result = await async_run_verification(
             self._scan_history_steps(
@@ -1225,8 +1232,10 @@ class C2spTlogReader(LogReader):
                 max_events=remaining_events, max_response_bytes=remaining_bytes,
                 seen_log_references=frozenset(context.budget.seen),
             )
-            prior = self._external_prior(event, history, context, remaining_events, remaining_bytes)
-        return self._prior_result(domain, trusted, prior)
+            prior = await async_run_blocking(
+                self._external_prior, event, history, context, remaining_events, remaining_bytes,
+            )
+        return await async_run_blocking(self._prior_result, domain, trusted, prior)
 
     def _external_prior(
         self, event: MigrationEvent, cutoff_history: VerifiedCutoffHistory,

@@ -259,7 +259,7 @@ class _FetchedStreamBundleSource:
         cutoff_index: int | None = None,
         account_response: Callable[[int], None] | None = None,
     ) -> VerifiedC2spStreamBundle | None:
-        """Await bounded bundles and predecessor reads; offload atomic storage only."""
+        """Await native reads; offload deterministic validation and atomic storage."""
         from ._async import async_run_verification, call_async
 
         normalized = normalize_fqdn(fqdn, agent_fqdn=True)
@@ -291,7 +291,7 @@ class _FetchedStreamBundleSource:
             evidence = await call_async(self._fallback, "load_stream", reference, fqdn)
             if account_response is not None:
                 account_response(_stream_evidence_bytes(evidence))
-            complete_entries = _verified_complete_scan_entries(evidence)
+            complete_entries = await async_run_blocking(_verified_complete_scan_entries, evidence)
             await async_run_blocking(
                 _verify_and_advance_checkpoint, verified.reference, verified.checkpoint,
                 verified.checkpoint_witness_time, options, complete_entries=complete_entries,

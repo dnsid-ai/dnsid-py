@@ -24,6 +24,8 @@ def _doh_response(payload):
     import json
     response.content = json.dumps(payload).encode()
     response.status_code = 200
+    response.headers = httpx.Headers()
+    response.is_stream_consumed = True
     response.iter_bytes.return_value = [response.content]
     response.__enter__.return_value = response
     response.json.return_value = payload

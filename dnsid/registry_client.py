@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from ._bounded_response import ACCEPT_ENCODING
 from ._verification_budget import async_verification_operation, remaining_seconds
 from .enums import RegistryRevocationReason
 from .interfaces import AbstractRegistryClient
@@ -290,6 +291,7 @@ class RegistryClient(AbstractRegistryClient):
                 trust_env=False,
                 follow_redirects=False,
             )
+        kwargs["headers"] = {"Accept-Encoding": ACCEPT_ENCODING, **kwargs.get("headers", {})}
         async with self._async_http_client.stream(method, url, **kwargs) as response:
             body = await _async_read_limited(
                 response, 4 * 1024 * 1024, VerificationCode.LOG_ERROR,
@@ -314,6 +316,7 @@ class RegistryClient(AbstractRegistryClient):
                 trust_env=False,
                 follow_redirects=False,
             )
+        kwargs["headers"] = {"Accept-Encoding": ACCEPT_ENCODING, **kwargs.get("headers", {})}
         with self._http_client.stream(method, url, **kwargs) as response:
             body = _read_limited(
                 response, 4 * 1024 * 1024, VerificationCode.LOG_ERROR,

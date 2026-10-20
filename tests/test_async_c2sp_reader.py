@@ -331,7 +331,7 @@ async def test_cancelled_atomic_store_work_remains_tracked(native):
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert len(tracked) == 1 and not tracked[0].done()
+        assert sum(not future.done() for future in tracked) == 1
         assert not reader._history_cache
     finally:
         release.set()

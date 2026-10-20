@@ -28,6 +28,12 @@ No runtime dependencies were added.
       `aclose()` / `async with`.
 - [x] Preserve main's DNS absence/error classification, HTTP revalidation rules,
       refresh coordination, and checkpoint continuity contracts.
+- [x] Defer refresh dependencies without occupying verification workers; run
+      zero-TTL follower acquisitions concurrently and track cancellation cleanup.
+- [x] Run substantial C2SP scan/lifecycle validation in bounded workers while
+      awaiting resource and predecessor reads natively.
+- [x] Bound gzip/deflate output before allocation in core, registry, and C2SP
+      readers; reject unsupported codings and malformed compressed streams.
 
 ### Registry I/O
 
@@ -74,9 +80,10 @@ No runtime dependencies were added.
 
 ## Current limits
 
-- Async-led verification uses native adapters. Sync-only adapters and atomic
-  checkpoint-store operations use tracked workers. Atomic checkpoint work and
-  C2SP fallback adapters share a process-owned bounded pool; managers drain
+- Async-led verification uses native adapters. Sync-only adapters, substantial
+  C2SP validation, and atomic checkpoint-store operations use tracked workers.
+  C2SP validation, atomic checkpoint work, and fallback adapters share a
+  process-owned bounded pool; managers drain
   their own tracked futures without closing that shared pool. The SDK supplies
   only an in-memory checkpoint store; durable stores are deployment-provided.
 - Explicit refreshes revalidate key-set and status HTTP resources and wait for
@@ -84,6 +91,9 @@ No runtime dependencies were added.
   refreshes share work; ordinary lookups join an ongoing refresh. DNS caches
   may return answers with their remaining TTL. Async C2SP reads require HTTP
   revalidation, matching synchronous reads.
+- Async zero-TTL followers acquire private evidence concurrently. Private retries
+  do not populate the shared identity cache, even if their new DNS answer has a
+  positive TTL; this prevents overwriting a concurrent explicit refresh.
 - Mixed sync/async verification shares whichever evidence leader starts first.
   Sync-led evidence still uses synchronous adapters in workers. Shared evidence
   has an independent 30-second budget; caller cancellation stops only its wait.

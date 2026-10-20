@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .._bounded_response import ACCEPT_ENCODING, BoundedBody
 from .._verification_budget import (
     async_verification_operation,
     remaining_seconds,
@@ -117,23 +118,26 @@ class SafeC2spResourceFetcher:
         deadline = self._clock() + timeout
         try:
             with self._client.stream(
-                "GET", url, headers={"Cache-Control": "no-cache"}, timeout=timeout,
+                "GET", url,
+                headers={"Cache-Control": "no-cache", "Accept-Encoding": ACCEPT_ENCODING},
+                timeout=timeout,
             ) as response:
                 _validate_resource_response(response, url, max_bytes)
-                body = bytearray()
-                # iter_bytes() yields decoded bytes, so compression cannot evade
-                # this limit even when Content-Length describes encoded bytes.
-                for chunk in response.iter_bytes():
+                body = BoundedBody(
+                    response, max_bytes, lambda: _response_limit_error(url, max_bytes),
+                    invalid=lambda detail: C2spTlogTransportError(detail, transient=False),
+                )
+                chunks = (response.iter_bytes() if response.is_stream_consumed
+                          else response.iter_raw())
+                for chunk in chunks:
                     remaining_seconds()
                     if self._clock() > deadline:
                         raise C2spTlogTransportError(
                             f"deadline exceeded fetching C2SP resource: {url}",
                             transient=True,
                         )
-                    body.extend(chunk)
-                    if len(body) > max_bytes:
-                        raise _response_limit_error(url, max_bytes)
-                return bytes(body)
+                    body.append(chunk)
+                return body.finish()
         except C2spTlogTransportError:
             raise
         except httpx.ConnectError as exc:
@@ -175,16 +179,20 @@ class SafeC2spResourceFetcher:
                     timeout=timeout,
                 ) as client:
                     async with client.stream(
-                        "GET", url, headers={"Cache-Control": "no-cache"}, timeout=timeout,
+                        "GET", url,
+                        headers={"Cache-Control": "no-cache", "Accept-Encoding": ACCEPT_ENCODING},
+                        timeout=timeout,
                     ) as response:
                         _validate_resource_response(response, url, max_bytes)
-                        body = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            remaining_seconds()
-                            if len(body) + len(chunk) > max_bytes:
-                                raise _response_limit_error(url, max_bytes)
-                            body.extend(chunk)
-                        return bytes(body)
+                        body = BoundedBody(
+                            response, max_bytes, lambda: _response_limit_error(url, max_bytes),
+                            invalid=lambda detail: C2spTlogTransportError(detail, transient=False),
+                        )
+                        chunks = (response.aiter_bytes() if response.is_stream_consumed
+                                  else response.aiter_raw())
+                        async for chunk in chunks:
+                            body.append(chunk)
+                        return body.finish()
         except httpx.ConnectError as exc:
             raise C2spTlogTransportError(
                 f"failed to connect while fetching C2SP resource: {url}",

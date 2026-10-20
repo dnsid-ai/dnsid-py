@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from ._bounded_response import ACCEPT_ENCODING, BoundedBody
 from ._verification_budget import (
     async_verification_operation,
     remaining_seconds,
@@ -60,7 +61,8 @@ def fetch_jwks(
             try:
                 with client.stream(
                     "GET", url,
-                    headers={"Cache-Control": "no-cache"} if revalidate else {},
+                    headers={"Accept-Encoding": ACCEPT_ENCODING,
+                             **({"Cache-Control": "no-cache"} if revalidate else {})},
                     follow_redirects=False,
                     timeout=remaining_seconds(10.0),
                 ) as response:
@@ -128,7 +130,8 @@ async def async_fetch_jwks(
         for _ in range(_MAX_REDIRECTS + 1):
             try:
                 async with client.stream(
-                    "GET", url, headers={"Cache-Control": "no-cache"} if revalidate else {},
+                    "GET", url, headers={"Accept-Encoding": ACCEPT_ENCODING,
+                                         **({"Cache-Control": "no-cache"} if revalidate else {})},
                     follow_redirects=False, timeout=remaining_seconds(10.0),
                 ) as response:
                     if response.is_redirect:
@@ -217,7 +220,7 @@ def fetch_agent_status(
                     "GET",
                     url,
                     headers={
-                        "Accept": "application/json",
+                        "Accept": "application/json", "Accept-Encoding": ACCEPT_ENCODING,
                         **({"Cache-Control": "no-cache"} if revalidate else {}),
                     },
                     follow_redirects=False,
@@ -285,7 +288,7 @@ async def async_fetch_agent_status(
             try:
                 async with client.stream(
                     "GET", url, headers={
-                        "Accept": "application/json",
+                        "Accept": "application/json", "Accept-Encoding": ACCEPT_ENCODING,
                         **({"Cache-Control": "no-cache"} if revalidate else {}),
                     },
                     follow_redirects=False, timeout=remaining_seconds(10.0),
@@ -400,31 +403,29 @@ def _read_limited(
     message: str,
     *, decode_content: bool = True,
 ) -> bytes:
-    """Read bounded content bytes, optionally preserving the received coding."""
-    body = bytearray()
-    chunks = (
-        response.iter_bytes() if decode_content or response.is_stream_consumed
-        else response.iter_raw()
+    """Read bounded bytes, including bounded gzip/deflate decompression."""
+    body = BoundedBody(
+        response, limit, lambda: VerificationError(code, message),
+        invalid=lambda detail: VerificationError(code, detail), decode_content=decode_content,
     )
+    chunks = response.iter_bytes() if response.is_stream_consumed else response.iter_raw()
     for chunk in chunks:
-        remaining_seconds()
-        if len(body) + len(chunk) > limit:
-            raise VerificationError(code, message)
-        body.extend(chunk)
-    return bytes(body)
+        body.append(chunk)
+    return body.finish()
 
 
 async def _async_read_limited(
     response: httpx.Response, limit: int, code: VerificationCode, message: str,
 ) -> bytes:
-    """Read decoded async response bytes without exceeding the supplied limit."""
-    body = bytearray()
-    async for chunk in response.aiter_bytes():
-        remaining_seconds()
-        if len(body) + len(chunk) > limit:
-            raise VerificationError(code, message)
-        body.extend(chunk)
-    return bytes(body)
+    """Read decoded async bytes with a bound on decompression allocations."""
+    body = BoundedBody(
+        response, limit, lambda: VerificationError(code, message),
+        invalid=lambda detail: VerificationError(code, detail),
+    )
+    chunks = response.aiter_bytes() if response.is_stream_consumed else response.aiter_raw()
+    async for chunk in chunks:
+        body.append(chunk)
+    return body.finish()
 
 
 def _assert_https_redirect(location: str) -> None:

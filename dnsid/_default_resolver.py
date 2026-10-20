@@ -6,6 +6,7 @@ import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from ._bounded_response import ACCEPT_ENCODING
 from ._verification_budget import (
     async_verification_operation,
     remaining_seconds,
@@ -148,6 +149,7 @@ class DefaultDNSResolver(DNSResolver):
     def _fetch_via_doh(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
         import httpx
 
+        from ._https_client import _read_limited
         from .safe_transport import make_ssrf_safe_transport
 
         url = f"{self._dns_server}/dns-query?name={name}&type=TXT"
@@ -156,18 +158,14 @@ class DefaultDNSResolver(DNSResolver):
                 with client.stream(
                     "GET",
                     url,
-                    headers={"Accept": "application/dns-json"},
+                    headers={"Accept": "application/dns-json", "Accept-Encoding": ACCEPT_ENCODING},
                     timeout=remaining_seconds(10.0),
                 ) as response:
-                    body = bytearray()
-                    for chunk in response.iter_bytes():
-                        remaining_seconds()
-                        if len(body) + len(chunk) > _MAX_DOH_BODY_BYTES:
-                            raise VerificationError(
-                                VerificationCode.DNS_RESOLUTION, "DoH response body too large"
-                            )
-                        body.extend(chunk)
-                    resp = httpx.Response(response.status_code, content=bytes(body))
+                    body = _read_limited(
+                        response, _MAX_DOH_BODY_BYTES, VerificationCode.DNS_RESOLUTION,
+                        "DoH response body too large",
+                    )
+                    resp = httpx.Response(response.status_code, content=body)
         except httpx.TransportError as exc:
             raise VerificationError(
                 VerificationCode.DNS_RESOLUTION,
@@ -190,7 +188,8 @@ class DefaultDNSResolver(DNSResolver):
                 follow_redirects=False,
             ) as client:
                 async with client.stream(
-                    "GET", url, headers={"Accept": "application/dns-json"},
+                    "GET", url,
+                    headers={"Accept": "application/dns-json", "Accept-Encoding": ACCEPT_ENCODING},
                     timeout=remaining_seconds(10.0),
                 ) as response:
                     body = await _async_read_limited(

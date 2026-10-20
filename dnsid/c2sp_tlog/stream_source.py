@@ -191,19 +191,15 @@ class ScanStreamSource:
     @async_verification_operation
     async def async_load(self, prefix: str) -> StreamEvidence:
         """Scan standard resources asynchronously, authenticating before tile reads."""
-        steps = self._load_steps(prefix)
-        try:
-            url, maximum = next(steps)
-            while True:
-                if callable(getattr(self._transport, "fetch_bounded", None)):
-                    data = await async_fetch_bounded_bytes(self._transport, url, maximum)
-                else:
-                    data = await async_run_blocking(self._bytes, url, maximum)
-                url, maximum = steps.send(data)
-        except StopIteration as done:
-            return cast(StreamEvidence, done.value)
-        finally:
-            steps.close()
+        from ._async import async_run_verification
+
+        async def read(request: tuple[str, int]) -> bytes:
+            url, maximum = request
+            if callable(getattr(self._transport, "fetch_bounded", None)):
+                return await async_fetch_bounded_bytes(self._transport, url, maximum)
+            return await async_run_blocking(self._bytes, url, maximum)
+
+        return await async_run_verification(self._load_steps(prefix), read)
 
     def _load_steps(self, prefix: str) -> Generator[tuple[str, int], bytes, StreamEvidence]:
         checkpoint_bytes = yield checkpoint_path(prefix), self._max_checkpoint_bytes
@@ -288,7 +284,7 @@ class ScanStreamSource:
     async def async_read_entry(self, reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry:
         """Build an inclusion proof from an asynchronously fetched full scan."""
         evidence = await self.async_load_stream(reference, reference.stream_id)
-        return self._proven_entry(evidence, index)
+        return await async_run_blocking(self._proven_entry, evidence, index)
 
     @staticmethod
     def _proven_entry(evidence: StreamEvidence, index: int) -> C2spProvenEntry:

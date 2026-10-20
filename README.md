@@ -86,10 +86,11 @@ use no worker threads; policy and signature checks still run on every request.
 Async-led cold verification uses native TXT, JWKS, status and C2SP bundle,
 tile and predecessor reads. Optional `AsyncDNSResolver`, `AsyncHTTPSFetcher`
 and `AsyncLogReader` capabilities are awaited; keep synchronous methods for
-synchronous callers. Sync-only adapters and atomic checkpoint-store operations
-use workers. Mixed sync/async calls share whichever evidence leader starts
-first; sync-led work retains synchronous adapters in workers.
-Injected resources remain caller-owned.
+synchronous callers. Sync-only adapters, substantial C2SP validation, and atomic
+checkpoint-store operations use bounded workers. Network reads remain native
+async. Mixed sync/async calls share whichever evidence leader starts first; sync-led work retains synchronous adapters in workers.
+Injected resources remain caller-owned. Core verification, registry, and C2SP
+readers bound gzip/deflate output during decompression and reject other codings.
 Shared evidence has its own 30-second budget. Caller cancellation or deadlines
 stop only that caller's wait. Reuse one manager for the application lifetime;
 use `async with manager` or `await manager.aclose()` at shutdown to drain work
