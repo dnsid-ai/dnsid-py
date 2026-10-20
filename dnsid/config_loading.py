@@ -466,8 +466,10 @@ def construct_identity_manager(
     providers are built from ``key_source`` only when ``dnsid.identity`` is
     present and the corresponding provider is absent. ``loaded.dnsid`` is
     validated first so invalid configuration never reads a key file or fetches
-    a policy. Adds no configuration values.
+    a policy. Selected providers are opened before policy fetch/discovery and
+    matched against verified local publication before return. Adds no values.
     """
+    from ._utils import normalize_fqdn
     from .manager import IdentityManager, IdentityManagerDependencies, validate_dnsid_config
 
     deps = replace(deps) if deps is not None else IdentityManagerDependencies()
@@ -476,17 +478,51 @@ def construct_identity_manager(
         resolver_injected=deps.dns_resolver is not None,
         fetcher_injected=deps.https_fetcher is not None,
     )
-    if deps.log_registry is None and _has_trust(loaded.log_trust):
-        deps.log_registry = _log_registry_from_trust(loaded.log_trust, loaded.dnsid.transport)
     identity, source = loaded.dnsid.identity, loaded.key_source
+    configured_operational = configured_entity = False
     if identity is not None and any(getattr(source, f.name) for f in fields(source)):
         from .local_key_provider import LocalKeyProvider
 
         if key_provider is None:
             key_provider = _operational_key_provider(source, identity.domain)
+            configured_operational = key_provider is not None
         if deps.entity_key_provider is None and source.entity_key_path:
             deps.entity_key_provider = LocalKeyProvider.from_private_jwk(source.entity_key_path)
-    return IdentityManager(loaded.dnsid, key_provider, deps)
+            configured_entity = True
+    if deps.log_registry is None and _has_trust(loaded.log_trust):
+        deps.log_registry = _log_registry_from_trust(loaded.log_trust, loaded.dnsid.transport)
+    manager = IdentityManager(loaded.dnsid, key_provider, deps)
+    if configured_operational or configured_entity:
+        assert identity is not None
+        try:
+            observed = manager._verify_publication_evidence(manager.local_domain)
+            from .exceptions import ValidationError
+
+            if (observed.record.gi, observed.record.lr) != (
+                normalize_fqdn(identity.governance_id),
+                identity.log_ref,
+            ):
+                raise ValidationError("configured identity does not match local publication")
+            selected = []
+            if configured_operational:
+                selected.append(
+                    (key_provider, observed.jwks.current_operational_signing_key(observed.record.v))
+                )
+            if configured_entity:
+                selected.append((deps.entity_key_provider, observed.signing_key))
+            for provider, published in selected:
+                assert provider is not None
+                key = provider.signing_key()
+                if (key.kid, key.alg, key.thumbprint()) != (
+                    published.kid,
+                    published.alg,
+                    published.thumbprint(),
+                ):
+                    raise ValidationError("configured signer does not match local publication")
+        except BaseException:
+            manager.close()
+            raise
+    return manager
 
 
 def _log_registry_from_trust(trust: LogTrust, transport: TransportConfig) -> LogRegistry:

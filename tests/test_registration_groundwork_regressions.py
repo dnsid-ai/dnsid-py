@@ -61,7 +61,9 @@ def test_default_registry_transport_decodes_once_reuses_client_and_closes(monkey
     monkeypatch.setattr("dnsid.safe_transport.make_ssrf_safe_transport", factory)
     with RegistryClient("https://registry.test", api_key="test-token") as client:
         with verification_budget(1):
-            assert client.get_organization_onboarding() == {"org_id": "org-1"}
+            assert client.get_organization_onboarding() == {
+                "org_id": "org-1", "bindings_ready": False
+            }
         pooled = client._http_client
         response = client._http_request("GET", "https://registry.test/api/v1/org/onboarding")
         assert response.json() == {"org_id": "org-1"}

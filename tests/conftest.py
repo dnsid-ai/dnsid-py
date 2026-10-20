@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
-from dnsid import JWK
+from dnsid import JWK, IdentityManager
 from dnsid._crypto import (
     ec_public_jwk_dict,
     ec_sign,
@@ -17,6 +17,34 @@ from dnsid.enums import DNSSECState
 from dnsid.interfaces import DNSResolver, KeyProvider
 from dnsid.models import TXTRecord
 from tests._config import make_config
+
+# ---------------------------------------------------------------------------
+# Configuration-selected publication fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def local_publication(monkeypatch):
+    """Loader tests use verified publication matching their selected file keys."""
+    from types import SimpleNamespace
+
+    def observed(manager, domain):
+        identity = manager.config.identity
+        return SimpleNamespace(
+            record=SimpleNamespace(
+                gi=identity.governance_id, lr=identity.log_ref, v=identity.publish_profile
+            ),
+            jwks=SimpleNamespace(
+                current_operational_signing_key=lambda _: manager._key_provider.signing_key()
+            ),
+            signing_key=(
+                manager._entity_key_provider.signing_key()
+                if manager._entity_key_provider else None
+            ),
+        )
+
+    monkeypatch.setattr(IdentityManager, "_verify_publication_evidence", observed)
+
 
 # ---------------------------------------------------------------------------
 # Key pair generation helpers

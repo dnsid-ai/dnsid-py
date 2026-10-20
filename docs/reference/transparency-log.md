@@ -836,6 +836,10 @@ Treated as immutable apart from adding a role signature (via
 preserves unknown signed fields; ``signed_bytes`` is the canonical JCS of
 the envelope with the top-level ``sigs`` member removed.
 
+**Attributes:**
+
+- `event_id` (`str`): Locally derived logical ID, independent of lifecycle signatures.
+
 ### `missing_signatures`
 
 ```python

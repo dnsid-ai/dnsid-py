@@ -144,7 +144,7 @@ Return an ephemeral in-memory provider using EdDSA or ES256.
 LocalKeyProvider.signing_key() -> JWK
 ```
 
-Return the public JWK of the current active signing key.
+Return the active public JWK; raise NoActiveSigningKeyError if absent.
 
 ### `jwk`
 
@@ -273,7 +273,7 @@ IDs and warms the JWK cache.
 
 **Raises:**
 
-- `ArgumentError`: If any configured key ID is empty or contains '#'.
+- `ArgumentError`: If an algorithm/key spec is unsupported or mismatched, or any configured key ID is empty or contains '#'.
 
 ### `load`
 
@@ -300,7 +300,7 @@ Return a copy of the current key lifecycle state for persistence.
 AwsKmsKeyProvider.signing_key() -> JWK
 ```
 
-Return the public JWK of the current active signing key.
+Return the active public JWK; raise NoActiveSigningKeyError if absent.
 
 ### `jwk`
 
@@ -352,6 +352,14 @@ Sign with an active or pending KMS key for rotation authorization.
 
 Applies the same payload limits and response validation as ``sign``.
 Retained keys cannot sign.
+
+### `generation_algorithm`
+
+```python
+AwsKmsKeyProvider.generation_algorithm() -> str
+```
+
+Return the configured JOSE generation algorithm, even without an active key.
 
 ### `generate_key`
 

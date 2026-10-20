@@ -726,9 +726,13 @@ class RegistryClient(AbstractRegistryClient):
             raw=data,
         )
 
-    def get_organization_onboarding(self) -> dict[str, Any]:
+    def get_organization_onboarding(
+        self, *, expected_org_id: str | None = None, expected_gi: str | None = None
+    ) -> dict[str, Any]:
         """Read account/GI proofs and delegation using authenticated effective transport.
 
+        Compare saved/configured IDs when supplied; derive ``bindings_ready``
+        only from matching verified GI proof and verified entity delegation.
         Pending proofs are not ready bindings. This read supplies no entity JWKS
         URL and makes no claim about named creation or permanent replay support.
         """
@@ -753,7 +757,42 @@ class RegistryClient(AbstractRegistryClient):
             ) from None
         if not response.is_success:
             raise RegistryRequestError(path, response.status_code, _registry_error_code(response))
-        return _parse_json(response, "organization onboarding")
+        data = _parse_json(response, "organization onboarding")
+        from ._utils import normalize_fqdn
+        from .exceptions import ValidationError
+
+        org_id = data.get("org_id")
+        if not isinstance(org_id, str) or not org_id.strip():
+            raise ValidationError("onboarding org_id must be nonempty")
+        if expected_org_id is not None and org_id != expected_org_id:
+            raise ValidationError("onboarding organization ID changed")
+        governance = data.get("governance_domain")
+        if governance is not None and not isinstance(governance, str):
+            raise ValidationError("onboarding governance_domain must be a domain")
+        gi = normalize_fqdn(governance) if governance is not None else None
+        if expected_gi is not None and gi != normalize_fqdn(expected_gi):
+            raise ValidationError("onboarding governance ID changed")
+        proof = data.get("gi")
+        delegation = data.get("ek")
+        if proof is not None and not isinstance(proof, dict):
+            raise ValidationError("onboarding gi must be an object")
+        if delegation is not None and not isinstance(delegation, dict):
+            raise ValidationError("onboarding ek must be an object")
+        if proof and proof.get("domain") is not None:
+            if not isinstance(proof["domain"], str):
+                raise ValidationError("onboarding gi.domain must be a domain")
+            if normalize_fqdn(proof["domain"]) != gi:
+                raise ValidationError("onboarding governance proof domain mismatch")
+        data["bindings_ready"] = bool(
+            gi
+            and proof
+            and proof.get("domain")
+            and proof.get("state") == "verified"
+            and proof.get("gate_authorized") is True
+            and delegation
+            and delegation.get("status") == "verified"
+        )
+        return data
 
     def get_registration(self, domain: str) -> AgentRegistration | None:
         """Read authenticated management status without conflating status namespaces.

@@ -47,7 +47,12 @@ from ._utils import (
     normalize_fqdn,
 )
 from .enums import DNSSECMode, DNSSECState, EventType, LogSignerRole, VerificationCode
-from .exceptions import ArgumentError, ValidationError, VerificationError
+from .exceptions import (
+    ArgumentError,
+    NoActiveSigningKeyError,
+    ValidationError,
+    VerificationError,
+)
 from .interfaces import (
     DNSResolver,
     HTTPSFetcher,
@@ -695,6 +700,7 @@ class IdentityManager:
         target_key_provider: KeyProvider | None = None,
         previous_provider_reference: str = "",
         target_provider_reference: str = "",
+        target_algorithm: str | None = None,
     ) -> KeyRotationResult:
         """Rotate the managed operational key with mandatory recovery hooks.
 
@@ -707,6 +713,9 @@ class IdentityManager:
 
         Args:
             target_key_provider: Explicit target; defaults to the current provider.
+            target_algorithm: Selected JOSE algorithm; defaults to the previous
+                key's algorithm. Changing it requires an explicit value and a
+                target provider configured to generate that algorithm.
             previous_provider_reference: Stable old-provider reference for cross-provider recovery.
             target_provider_reference: Stable target reference, saved before submission.
             registry_client: Client implementing the registry rotation API.
@@ -764,9 +773,15 @@ class IdentityManager:
                 raise ArgumentError("previous provider cannot retire its active key")
         elif previous_provider_reference != target_provider_reference:
             raise ArgumentError("same-provider rotation requires matching provider references")
+        selected_algorithm = (
+            previous_key.signature_alg() if target_algorithm is None else target_algorithm
+        )
+        if target.generation_algorithm() != selected_algorithm:
+            raise ArgumentError("target provider is not configured for the selected algorithm")
         new_kid = target.generate_key()
         new_key = target.jwk(new_kid)
-        new_key.signature_alg()  # validates required alg/key binding
+        if new_key.signature_alg() != selected_algorithm:
+            raise ValidationError("generated key does not use the selected algorithm")
         previous_thumbprint = previous_key.thumbprint()
         new_thumbprint = new_key.thumbprint()
         if previous_thumbprint == new_thumbprint:
@@ -849,6 +864,7 @@ class IdentityManager:
             result,
             persist_rotation,
             set_application_signing_paused,
+            key_provider,
             target,
         )
 
@@ -862,14 +878,19 @@ class IdentityManager:
         target_key_provider: KeyProvider | None = None,
         previous_provider_reference: str = "",
         target_provider_reference: str = "",
+        previous_key_provider: KeyProvider | None = None,
     ) -> KeyRotationResult:
         """Resume an exact persisted managed key rotation safely.
 
         Validates the persisted bytes, hash, identity, log, and key bindings
         before any network or key mutation. Pending state reuses the exact
         bytes and idempotency key. Accepted state performs only idempotent
-        local reconciliation; activated-but-paused state only releases the
-        signing pause and persists completion.
+        local reconciliation; activated-but-paused state restores the signer
+        before releasing the signing pause and persisting completion. For
+        cross-provider recovery, construct the manager with the reopened saved
+        source provider and pass the reopened saved target provider. If the
+        manager already uses the target, supply the reopened saved source as
+        ``previous_key_provider``. Newly created provider state is not recovery.
         """
         from .exceptions import (
             ManagedKeyRotationActivationError,
@@ -880,8 +901,9 @@ class IdentityManager:
         self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         rotation = self._clone_rotation(result)
         self._validate_persisted_rotation(rotation)
-        target = self._rotation_target(
+        previous, target = self._rotation_target(
             rotation,
+            previous_key_provider,
             target_key_provider,
             previous_provider_reference,
             target_provider_reference,
@@ -948,13 +970,14 @@ class IdentityManager:
 
         if rotation.submission is not None and rotation.submission.accepted:
             return self._finish_accepted_rotation(
-                rotation, persist_rotation, set_application_signing_paused, target
+                rotation, persist_rotation, set_application_signing_paused, previous, target
             )
         return self._submit_rotation(
             registry_client,
             rotation,
             persist_rotation,
             set_application_signing_paused,
+            previous,
             target,
         )
 
@@ -968,14 +991,20 @@ class IdentityManager:
         target_key_provider: KeyProvider | None = None,
         previous_provider_reference: str = "",
         target_provider_reference: str = "",
+        previous_key_provider: KeyProvider | None = None,
     ) -> KeyRotationResult:
-        """Reconcile an accepted rotation using the mandatory durability hooks."""
+        """Reconcile an accepted rotation using the mandatory durability hooks.
+
+        Supply ``previous_key_provider`` if the manager no longer uses the
+        saved source provider; reopen both providers from their saved state.
+        """
         self._require_local_identity("activate_rotated_key")
         self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         rotation = self._clone_rotation(result)
         self._validate_persisted_rotation(rotation)
-        target = self._rotation_target(
+        previous, target = self._rotation_target(
             rotation,
+            previous_key_provider,
             target_key_provider,
             previous_provider_reference,
             target_provider_reference,
@@ -1016,7 +1045,7 @@ class IdentityManager:
                 cause=exc,
             ) from exc
         return self._finish_accepted_rotation(
-            rotation, persist_rotation, set_application_signing_paused, target
+            rotation, persist_rotation, set_application_signing_paused, previous, target
         )
 
     def _submit_rotation(
@@ -1025,6 +1054,7 @@ class IdentityManager:
         rotation: KeyRotationResult,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        previous: KeyProvider,
         target: KeyProvider,
     ) -> KeyRotationResult:
         from .exceptions import ManagedKeyRotationSubmissionError
@@ -1101,7 +1131,7 @@ class IdentityManager:
         if not submission.accepted:
             return candidate
         return self._finish_accepted_rotation(
-            candidate, persist_rotation, set_application_signing_paused, target
+            candidate, persist_rotation, set_application_signing_paused, previous, target
         )
 
     def _finish_accepted_rotation(
@@ -1109,13 +1139,14 @@ class IdentityManager:
         rotation: KeyRotationResult,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        previous: KeyProvider,
         target: KeyProvider,
     ) -> KeyRotationResult:
         from .exceptions import ManagedKeyRotationActivationError
 
         try:
             ku_url = self._rotation_publication(rotation)
-            self._reconcile_rotation_keys(rotation, target)
+            self._reconcile_rotation_keys(rotation, previous, target)
         except Exception as exc:
             raise ManagedKeyRotationActivationError(
                 "accepted managed key rotation could not reconcile local keys",
@@ -1155,10 +1186,11 @@ class IdentityManager:
     def _rotation_target(
         self,
         rotation: KeyRotationResult,
+        previous: KeyProvider | None,
         target: KeyProvider | None,
         previous_reference: str,
         target_reference: str,
-    ) -> KeyProvider:
+    ) -> tuple[KeyProvider, KeyProvider]:
         if (previous_reference, target_reference) != (
             rotation.previous_provider_reference,
             rotation.new_provider_reference,
@@ -1166,13 +1198,70 @@ class IdentityManager:
             raise ValidationError("rotation provider references changed")
         if previous_reference != target_reference and target is None:
             raise ArgumentError("reopen the target provider from its saved reference")
-        previous = self._require_operational_key_provider("managed key rotation")
+        previous = previous or self._require_operational_key_provider("managed key rotation")
         target = target or previous
-        if previous_reference != target_reference and target is previous and not rotation.activated:
+        if previous_reference != target_reference and target is previous:
             raise ArgumentError("reopen both saved providers before cross-provider reconciliation")
-        if target.jwk(rotation.new_kid).thumbprint() != rotation.new_thumbprint:
+        if previous_reference == target_reference and target is not previous:
+            raise ArgumentError("same-provider recovery requires one reopened saved provider")
+        try:
+            self._validate_rotation_keys(rotation, previous, target)
+        except Exception as exc:
+            from .exceptions import ManagedKeyRotationActivationError
+
+            raise ManagedKeyRotationActivationError(
+                "failed to validate saved rotation provider keys",
+                self._clone_rotation(rotation),
+                cause=exc,
+            ) from exc
+        return previous, target
+
+    def _validate_rotation_keys(
+        self, rotation: KeyRotationResult, previous: KeyProvider, target: KeyProvider
+    ) -> bool:
+        new_key = target.jwk(rotation.new_kid)
+        if new_key.kid != rotation.new_kid or new_key.thumbprint() != rotation.new_thumbprint:
             raise ValidationError("target key does not match persisted rotation")
-        return target
+        try:
+            active_target = target.signing_key()
+        except NoActiveSigningKeyError:
+            active_target = None
+        target_is_active = (
+            active_target is not None
+            and active_target.kid == rotation.new_kid
+            and active_target.thumbprint() == rotation.new_thumbprint
+        )
+        accepted = rotation.submission is not None and rotation.submission.accepted
+        if rotation.activated and (not accepted or not target_is_active):
+            raise ValidationError(
+                "activated rotation requires acceptance and the saved active target key"
+            )
+        if rotation.previous_kid in previous.list_key_ids():
+            old_key = previous.jwk(rotation.previous_kid)
+            if (
+                old_key.kid != rotation.previous_kid
+                or old_key.thumbprint() != rotation.previous_thumbprint
+            ):
+                raise ValidationError("previous provider key changed")
+            active_source = previous.signing_key()
+            if previous is target and accepted and target_is_active:
+                return target_is_active
+            if (
+                active_source.kid != rotation.previous_kid
+                or active_source.thumbprint() != rotation.previous_thumbprint
+            ):
+                raise ValidationError("active source key does not match persisted previous key")
+            return target_is_active
+        if not accepted or not target_is_active:
+            raise ValidationError("absent previous key requires saved acceptance and active target")
+        if previous is not target:
+            try:
+                previous.signing_key()
+            except NoActiveSigningKeyError:
+                pass
+            else:
+                raise ValidationError("superseded source provider still has an active key")
+        return target_is_active
 
     def _rotation_publication(self, rotation: KeyRotationResult) -> str:
         self.evict_domain(rotation.domain)
@@ -1186,16 +1275,10 @@ class IdentityManager:
             raise ValidationError("published identity does not bind the accepted rotation")
         return observed.record.ku
 
-    def _reconcile_rotation_keys(self, rotation: KeyRotationResult, target: KeyProvider) -> None:
-        previous = self._require_operational_key_provider("managed key rotation")
-        if target.jwk(rotation.new_kid).thumbprint() != rotation.new_thumbprint:
-            raise ValidationError("target key does not match persisted rotation")
-        active = target.signing_key()
-        if target is previous and active.kid not in {rotation.previous_kid, rotation.new_kid}:
-            raise ValidationError("unexpected active key during rotation recovery")
-        if active.kid != rotation.new_kid:
-            if target is previous and active.thumbprint() != rotation.previous_thumbprint:
-                raise ValidationError("active key does not match persisted previous key")
+    def _reconcile_rotation_keys(
+        self, rotation: KeyRotationResult, previous: KeyProvider, target: KeyProvider
+    ) -> None:
+        if not self._validate_rotation_keys(rotation, previous, target):
             target.activate(rotation.new_kid)
         if rotation.previous_kid in previous.list_key_ids():
             if previous.jwk(rotation.previous_kid).thumbprint() != rotation.previous_thumbprint:
@@ -1403,7 +1486,7 @@ class IdentityManager:
 
     @verification_operation
     def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
-        """Internal protocol-only verification for registry publication confirmation."""
+        """Verify local publication without application-peer or acceptance checks."""
         return self._verify(domain, None, acceptance=False)
 
     def _verify(
@@ -1412,8 +1495,8 @@ class IdentityManager:
     ) -> VerifiedDomain:
         """Shared per-invocation verification boundary.
 
-        Only registry publication confirmation passes ``acceptance=False``;
-        there is no public bypass.
+        Only internal local-publication validation passes ``acceptance=False``;
+        public verification always checks the current peer and acceptance policy.
         """
         domain = normalize_fqdn(domain)
         result = (
@@ -1421,9 +1504,9 @@ class IdentityManager:
                            lambda: self._refresh_identity(domain))
             if refresh else self._reusable_verification(domain)
         )
-        # mTLS binds the current peer, not reusable identity evidence.
-        _enforce_mtls_policy(result.record, domain, peer_cert)
         if acceptance:
+            # Local publication validation has no application peer to authenticate.
+            _enforce_mtls_policy(result.record, domain, peer_cert)
             self._enforce_counterparty_acceptance(result)
         self._require_fresh_evidence(result, fresh_dns_lookup=result.dns_ttl == 0)
         return result

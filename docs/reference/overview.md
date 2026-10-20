@@ -57,4 +57,4 @@ Immutable protocol-facing conformance metadata for this SDK release.
 from dnsid import SDK_CONFORMANCE
 ```
 
-*Value:* `SDKConformance(publish_profile=_DRAFT_01, verification_profiles=MappingProxyType({_DRAFT_01: _DRAFT_01, 'DNSid1': _DRAFT_01}), specification_status='internet-draft', log_bindings=MappingProxyType({'c2sp-tlog': _C2SP_TLOG_BINDING}), known_deviations=())`
+*Value:* `SDKConformance(publish_profile=_DRAFT_01, verification_profiles=MappingProxyType({_DRAFT_01: _DRAFT_01, 'DNSid1': _DRAFT_01}), specification_status='internet-draft', log_bindings=MappingProxyType({'c2sp-tlog': _C2SP_TLOG_BINDING}), known_deviations=('JOSE, HTTP Message Signatures, and OIDC profiles retain mutable caller configuration.', 'The JWT bearer profile is exported as WebBotAuthProfile; Web Bot Auth naming is reserved for RFC 9421.'))`

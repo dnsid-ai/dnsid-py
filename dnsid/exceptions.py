@@ -49,6 +49,10 @@ class ArgumentError(DNSidError):
     """Caller-supplied argument is invalid (wrong format, reserved field override, etc.)."""
 
 
+class NoActiveSigningKeyError(ArgumentError):
+    """Provider state has no active signing key; not a key-access failure."""
+
+
 class ManagedKeyRotationSubmissionError(DNSidError):
     """Managed rotation submission failed with recoverable exact-byte state."""
 

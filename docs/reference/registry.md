@@ -308,11 +308,13 @@ mirror the TypeScript ``RegistryAgentStatus`` interface.
 ### `get_organization_onboarding`
 
 ```python
-RegistryClient.get_organization_onboarding() -> dict[str, Any]
+RegistryClient.get_organization_onboarding(*, expected_org_id: str | None = None, expected_gi: str | None = None) -> dict[str, Any]
 ```
 
 Read account/GI proofs and delegation using authenticated effective transport.
 
+Compare saved/configured IDs when supplied; derive ``bindings_ready``
+only from matching verified GI proof and verified entity delegation.
 Pending proofs are not ready bindings. This read supplies no entity JWKS
 URL and makes no claim about named creation or permanent replay support.
 

@@ -51,6 +51,7 @@ from tests.test_local_key_provider_cli import _make_private_jwk, _write_key_pair
 _LOG_REF = "c2sp-tlog:public:https://log.example#abc"
 
 
+
 def _identity_env(**extra: str) -> dict[str, str]:
     """A complete local identity via environment variables."""
     return {
@@ -329,7 +330,7 @@ def test_trust_profile_file_constructs_with_bundle_lifetime_default(tmp_path):
     manager.close()
 
 
-def test_cli_directory_wins_over_key_store(tmp_path):
+def test_cli_directory_wins_over_key_store(tmp_path, local_publication):
     (tmp_path / "cli").mkdir()
     cli_dir = _write_cli_dir(tmp_path / "cli", _cli_config())
     cli_key = json.loads((cli_dir / "agent.example.com" / "private.jwk").read_text())
@@ -339,7 +340,7 @@ def test_cli_directory_wins_over_key_store(tmp_path):
     manager.close()
 
 
-def test_cli_entity_key_path_supplies_entity_provider(tmp_path):
+def test_cli_entity_key_path_supplies_entity_provider(tmp_path, local_publication):
     cfg = _cli_config(
         ek_url="https://example.com/entity.jwks.json",
         ku_url="https://agent.example.com/jwks.json",
@@ -359,7 +360,9 @@ def test_cli_entity_key_path_supplies_entity_provider(tmp_path):
     manager.close()
 
 
-def test_from_dnsid_default_reads_home_not_config_dir_variable(tmp_path, monkeypatch):
+def test_from_dnsid_default_reads_home_not_config_dir_variable(
+    tmp_path, monkeypatch, local_publication
+):
     home = tmp_path / "home"
     (home / ".dnsid").mkdir(parents=True)
     _write_cli_dir(home / ".dnsid", _cli_config())
@@ -370,7 +373,7 @@ def test_from_dnsid_default_reads_home_not_config_dir_variable(tmp_path, monkeyp
     manager.close()
 
 
-def test_convenience_equals_manual_composition(tmp_path):
+def test_convenience_equals_manual_composition(tmp_path, local_publication):
     cli_dir = _write_cli_dir(tmp_path, _cli_config())
     env = _identity_env(
         DNSID_CONFIG_DIR=str(cli_dir), DNSID_KU_URL="https://agent.example.com/jwks"
@@ -725,7 +728,7 @@ def test_merge_default_valued_overlays_cannot_clear_loaded_values():
 # ---------------------------------------------------------------------------
 
 
-def test_key_store_alone_supplies_operational_key(tmp_path):
+def test_key_store_alone_supplies_operational_key(tmp_path, local_publication):
     store = _key_store(tmp_path)
     manager = identity_manager_from_environment(_identity_env(DNSID_KEY_STORE=store))
     assert manager.get_key_set().keys[0].kid == LocalKeyProvider.load(store).signing_key().kid
@@ -751,7 +754,7 @@ def test_caller_key_providers_win(tmp_path):
     manager.close()
 
 
-def test_overlay_applies_before_validation_and_key_lookup(tmp_path):
+def test_overlay_applies_before_validation_and_key_lookup(tmp_path, local_publication):
     cfg = _cli_config()
     del cfg["log_ref"]
     cli_dir = _write_cli_dir(tmp_path, cfg, keys=False)
@@ -766,7 +769,7 @@ def test_overlay_applies_before_validation_and_key_lookup(tmp_path):
     manager.close()
 
 
-def test_per_identity_directory_key_files(tmp_path):
+def test_per_identity_directory_key_files(tmp_path, local_publication):
     _write_cli_dir(tmp_path, _cli_config(), keys=False)
     key, _ = _write_key_pair(tmp_path)
     manager = identity_manager_from_dnsid(tmp_path)
