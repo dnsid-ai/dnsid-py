@@ -58,6 +58,7 @@ Errors:
     ArgumentError     — invalid caller-supplied argument
 
 Enumerations:
+    VerificationCode includes RECORD_NOT_FOUND for non-transient TXT absence.
     DNSSECState, DNSSECMode, VerificationCode, AgentState, RevocationReason,
     RegistryRevocationReason, EventType
 """
@@ -111,6 +112,7 @@ from .exceptions import (
     LifecycleVerificationError,
     ManagedKeyRotationActivationError,
     ManagedKeyRotationSubmissionError,
+    NoActiveSigningKeyError,
     ParseError,
     RegistryRequestError,
     ValidationError,
@@ -119,6 +121,10 @@ from .exceptions import (
 from .http_signatures import HttpMessageSignatureConfig, HttpSignatureProfile
 from .interfaces import (
     AbstractRegistryClient,
+    AsyncDNSResolver,
+    AsyncHTTPSFetcher,
+    AsyncIdentityResolver,
+    AsyncLogReader,
     DNSResolver,
     HTTPSFetcher,
     IdentityCache,
@@ -336,6 +342,10 @@ __all__ = [
     "AbstractRegistryClient",
     "IdentityResolver",
     "RefreshingIdentityResolver",
+    "AsyncIdentityResolver",
+    "AsyncDNSResolver",
+    "AsyncHTTPSFetcher",
+    "AsyncLogReader",
     "KeyProvider",
     "Log",
     "LogReader",
@@ -376,6 +386,7 @@ __all__ = [
     "RegistryRequestError",
     "VerificationError",
     "ArgumentError",
+    "NoActiveSigningKeyError",
     "NetworkError",
     "OAuthError",
     # Enumerations

@@ -110,6 +110,13 @@ class PreparedC2spTlogEvent:
     signed_bytes: bytes = field(repr=False)
     required_signatures: list[C2spSignerRole] = field(default_factory=list)
 
+    @property
+    def event_id(self) -> str:
+        """Locally derived logical ID, independent of lifecycle signatures."""
+        from .merkle import sha256
+
+        return b64url_encode(sha256(b"dnsid-c2sp-event-v1\x00", self.signed_bytes))
+
     def missing_signatures(self) -> list[C2spSignerRole]:
         """Roles still absent from the envelope's sigs object."""
         sigs = self.envelope.get("sigs")

@@ -12,7 +12,7 @@ are cross-compatible — Alice can be Python while Bob is TypeScript and vice ve
 Install the example's additional requirements from the project root:
 
 ```bash
-pip install fastapi uvicorn dnspython a2a-sdk sse-starlette
+pip install fastapi uvicorn dnspython "a2a-sdk>=1.2" sse-starlette
 ```
 
 (`httpx` is already a dependency of the dnsid SDK.)
@@ -102,6 +102,29 @@ reply: "[from: bob.test; verified sender: alice.test] hello from alice.test"
 On subsequent runs (without a testnet reset), both agents show `already published (READY)`
 instead of `published identity record`.
 
+## Async behavior and cleanup
+
+Inbound verification, peer verification, and self-verification use the async SDK
+methods. Synchronous registry operations and challenge signing (including KMS)
+run in workers. Cancelling startup waits for an offloaded operation before closing
+its resources. Configuration and trust-policy loading remain synchronous startup
+work; complete them before accepting traffic in production.
+
+Middleware limits request bodies to 8 MiB while reading. Invalid signatures return
+401, counterparty-policy denials return 403, and transient verification failures
+return 503. Unexpected errors are left to the web server as 500 responses.
+
+The returned stop callback drains the server, closes outbound clients, and awaits
+`IdentityManager.aclose()` to drain verification work. Registry clients close after
+registration. Startup and message-send failures also run cleanup. Reuse one manager
+per application; do not construct one for each request.
+
+After installing the optional example packages, run its boundary and cleanup tests:
+
+```sh
+pytest -q tests/test_a2a_example.py
+```
+
 ## How it works
 
 | Step | What happens |
@@ -110,7 +133,7 @@ instead of `published identity record`.
 | Registration | `RegistryClient.register_agent()` registers with the registry |
 | Verification | The agent requests verification, polls the status document for the challenge nonce, signs the decoded nonce with its active key, and submits it via `RegistryClient.submit_challenge_signature()`; the registry transitions `VERIFICATION → VERIFIED` |
 | Publish | `IdentityManager.publish_to_registry()` validates and signs the registry's canonical content, then submits the signature |
-| Self-verify | `idm.verify_domain(own_domain)` confirms the published record is DNS-resolvable |
-| Send (Alice) | `agent.create_client()` returns an `A2AClient` that builds a signed A2A 1.0 `SendMessage` JSON-RPC request via `create_signed_http_client` (RFC 9421) |
-| Receive (Bob) | FastAPI middleware calls `HttpSignatureProfile.verify_signed_http_request()` on every inbound POST and stores the verified sender as a `VerifiedSenderUser` on the request; the a2a-sdk `DefaultRequestHandler` dispatches the JSON-RPC method to the `AgentExecutor` |
+| Self-verify | `await idm.async_verify_domain(own_domain)` confirms the published record is DNS-resolvable |
+| Send (Alice) | `agent.create_client()` returns an `A2AClient` that builds a signed A2A 1.0 `SendMessage` JSON-RPC request via `create_signed_async_http_client` (RFC 9421) |
+| Receive (Bob) | FastAPI middleware calls `await HttpSignatureProfile.async_verify_signed_http_request()` on every inbound POST and stores the verified sender as a `VerifiedSenderUser` on the request; the a2a-sdk `DefaultRequestHandler` dispatches the JSON-RPC method to the `AgentExecutor` |
 | Echo (Bob) | `echo_executor` (an a2a-sdk `AgentExecutor`) reads the sender from `RequestContext`, builds a reply, and publishes it to the `EventQueue` |

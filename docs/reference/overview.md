@@ -1,6 +1,6 @@
 ---
 title: "Python: SDK overview"
-description: "Import surface, sync-only design, and layout of the dnsid Python SDK reference."
+description: "Import surface, async verification, and layout of the dnsid Python SDK reference."
 ---
 
 <!-- GENERATED FILE — do not edit. Regenerate with `python scripts/gen_docs.py` in dnsid-ai/dnsid-py. -->
@@ -30,12 +30,41 @@ from dnsid.http_signatures import HttpSignatureProfile
 The transparency-log integration is the exception: import it from
 `dnsid.c2sp_tlog`.
 
-## Synchronous by design
+## Async verification
 
-Verification and most public operations are synchronous. Async support
-includes `RegistryClient.async_wait_for_status()` (which polls synchronously),
-signed `httpx.AsyncClient` transport plumbing, and `async_retry_transient`.
-Call blocking SDK operations from async code via `asyncio.to_thread` or an executor.
+Use `await manager.async_verify_domain(domain)` and
+`await http_signer.async_verify_signed_http_request(request)` in async code.
+Fresh cache hits, shared waits, and default stale-status refreshes need no worker
+threads. Async-led cold verification awaits native TXT, JWKS, status and C2SP
+reads, including bundles, tiles and recursive predecessors. Injected adapters
+may implement `AsyncDNSResolver`, `AsyncHTTPSFetcher` and `AsyncLogReader`
+alongside their synchronous methods. Sync-only adapters and atomic checkpoint
+stores use tracked workers. Sync-led work retains synchronous adapters in
+workers; both APIs share whichever evidence leader starts first. Injected
+resources remain caller-owned.
+Shared evidence has an independent 30-second budget. Cancellation or a request
+deadline stops only that caller's wait. Use `async with manager` or
+`await manager.aclose()` at shutdown to drain owned work and close resources.
+Use `with verification_budget(5):` around a request to set its deadline; expiry
+raises `VerificationError` with `DEADLINE_EXCEEDED` and `transient=True`.
+Injected identity caches must be nonblocking.
+
+Use `await manager.async_refresh_domain(domain)` to bypass the identity cache
+and revalidate HTTP evidence. Concurrent explicit refreshes share work, but do
+not reuse ordinary lookups. Each caller enforces its current peer, acceptance,
+and freshness; cancellation stops only that caller's wait.
+
+Signed `httpx.AsyncClient` requests offload synchronous signing, including KMS.
+`create_signed_async_http_client(transport=...)` accepts an outbound transport;
+the returned client owns and closes it. Synchronous APIs remain available.
+RegistryClient exposes native `async_` variants for every registry HTTP
+operation, including `async_wait_for_status()`. Use `async with client` or
+`await client.aclose()` after async use. Requests share a protected async pool
+on one event loop; finish outstanding requests before closing. Cancellation
+does not undo server-side mutations. Preserve the same request and idempotency
+key when reconciling and retrying an uncertain operation.
+Manager-level publication, rotation and other blocking SDK operations still
+need workers.
 
 ## Application profiles
 
@@ -57,4 +86,4 @@ Immutable protocol-facing conformance metadata for this SDK release.
 from dnsid import SDK_CONFORMANCE
 ```
 
-*Value:* `SDKConformance(publish_profile=_DRAFT_01, verification_profiles=MappingProxyType({_DRAFT_01: _DRAFT_01, 'DNSid1': _DRAFT_01}), specification_status='internet-draft', log_bindings=MappingProxyType({'c2sp-tlog': _C2SP_TLOG_BINDING}), known_deviations=())`
+*Value:* `SDKConformance(publish_profile=_DRAFT_01, verification_profiles=MappingProxyType({_DRAFT_01: _DRAFT_01, 'DNSid1': _DRAFT_01}), specification_status='internet-draft', log_bindings=MappingProxyType({'c2sp-tlog': _C2SP_TLOG_BINDING}), known_deviations=('JOSE, HTTP Message Signatures, and OIDC profiles retain mutable caller configuration.', 'The JWT bearer profile is exported as WebBotAuthProfile; Web Bot Auth naming is reserved for RFC 9421.'))`

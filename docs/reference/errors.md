@@ -156,6 +156,16 @@ from dnsid import ArgumentError
 
 Caller-supplied argument is invalid (wrong format, reserved field override, etc.).
 
+## `NoActiveSigningKeyError`
+
+```python
+from dnsid import NoActiveSigningKeyError
+```
+
+*Bases:* `ArgumentError`
+
+Provider state has no active signing key; not a key-access failure.
+
 ## `NetworkError`
 
 ```python
@@ -243,10 +253,12 @@ Identifies the failure category in VerificationError.
 
 Values:
 
-* DNS_RESOLUTION — DNS lookup failed (network error or NXDOMAIN);
+* DNS_RESOLUTION — DNS lookup failed (timeout, network error, or SERVFAIL);
   transient.
 * DNSSEC_FAILED — DNSSEC validation attempted and failed; permanent.
-* RECORD_INVALID — wrong number of TXT records, or record
+* RECORD_NOT_FOUND — no TXT record (NXDOMAIN or NOERROR/NODATA); non-transient.
+  Later verification may succeed after publication.
+* RECORD_INVALID — multiple TXT records, or record
   parse/validation failure; permanent.
 * SIGNATURE_INVALID — no JWKS key could verify the sg tag; permanent.
 * TLS_ERROR — TLS certificate error or disallowed redirect; permanent.
@@ -258,6 +270,7 @@ Values:
   policy check failed (permanent).
 * COUNTERPARTY_NOT_ACCEPTED — configured ``trusted_entities`` policy
   denied a protocol-valid identity; permanent.
+* DEADLINE_EXCEEDED — verification exceeded its budget; transient.
 
 **Members:**
 
@@ -271,6 +284,8 @@ Values:
 - `STATUS_UNAVAILABLE` = `auto()`
 - `LOG_ERROR` = `auto()`
 - `COUNTERPARTY_NOT_ACCEPTED` = `auto()`
+- `RECORD_NOT_FOUND` = `auto()`
+- `DEADLINE_EXCEEDED` = `auto()`
 
 ## `AgentState`
 

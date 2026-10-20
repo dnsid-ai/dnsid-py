@@ -527,6 +527,62 @@ def test_discovery_and_token_errors_surface_cleanly(ed_provider):
     token_client.close()
 
 
+@pytest.mark.parametrize("status_code", [200, 400])
+@pytest.mark.parametrize("injected", [False, True])
+@pytest.mark.parametrize("extra_bytes", [0, 1])
+def test_token_response_is_bounded_while_streaming(
+    ed_provider, monkeypatch, status_code, injected, extra_bytes
+):
+    from dnsid.oidc import _MAX_BODY_BYTES
+
+    payload = (
+        b'{"access_token":"token","token_type":"Bearer"}'
+        if status_code == 200 else b'{"error":"invalid_scope"}'
+    )
+    body = payload.ljust(_MAX_BODY_BYTES + extra_bytes)
+
+    class TokenStream(httpx.SyncByteStream):
+        closed = False
+
+        def __iter__(self):
+            for offset in range(0, len(body), 64 * 1024):
+                yield body[offset:offset + 64 * 1024]
+            if extra_bytes:
+                pytest.fail("oversized response was read past the limit")
+
+        def close(self):
+            self.closed = True
+
+    stream = TokenStream()
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(status_code, stream=stream)
+        )
+    )
+    try:
+        monkeypatch.setattr("dnsid.oidc._client", lambda *_args: client)
+        oidc = _profile(ed_provider, OIDCConfig(http_client=client if injected else None))
+        opts = OIDCTokenExchangeOptions(
+            issuer="https://issuer.example.com",
+            token_endpoint="https://issuer.example.com/token",
+            audience="rp.example.com",
+        )
+        if extra_bytes:
+            with pytest.raises(NetworkError, match="body too large"):
+                oidc.exchange_oidc_token(opts)
+        elif status_code == 400:
+            with pytest.raises(OAuthError) as excinfo:
+                oidc.exchange_oidc_token(opts)
+            assert excinfo.value.error == "invalid_scope"
+        else:
+            assert oidc.exchange_oidc_token(opts).access_token == "token"
+        assert stream.closed
+        if injected:
+            assert not client.is_closed
+    finally:
+        client.close()
+
+
 def test_mint_oidc_token_does_not_log_assertion_or_access_token(caplog, ed_provider):
     captured_assertion = ""
 

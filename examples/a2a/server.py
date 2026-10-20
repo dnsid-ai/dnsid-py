@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,7 +36,13 @@ from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from dnsid import IdentityManager, active_status_document
+from dnsid import (
+    DNSidError,
+    IdentityManager,
+    VerificationCode,
+    VerificationError,
+    active_status_document,
+)
 from dnsid.http_signatures import HttpSignatureProfile
 from dnsid.jose import JoseProfile
 from dnsid.models import HttpRequest as DnsidRequest
@@ -53,6 +60,7 @@ class EchoAgentOptions:
 # Required signature components — mirrors TypeScript server.ts
 # ---------------------------------------------------------------------------
 
+_MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024
 _REQUIRED_SIG_COMPONENTS = [
     "@method",
     "@target-uri",
@@ -108,10 +116,19 @@ class _DnsidSignatureMiddleware:
             return
 
         chunks: list[bytes] = []
+        size = 0
         more = True
         while more:
             msg = await receive()
-            chunks.append(msg.get("body", b""))
+            if msg["type"] == "http.disconnect":
+                return
+            chunk = msg.get("body", b"")
+            size += len(chunk)
+            if size > _MAX_REQUEST_BODY_BYTES:
+                response = JSONResponse({"error": "request body exceeds 8 MiB"}, status_code=413)
+                await response(scope, receive, send)
+                return
+            chunks.append(chunk)
             more = msg.get("more_body", False)
         body = b"".join(chunks)
 
@@ -150,15 +167,21 @@ class _DnsidSignatureMiddleware:
 
         dnsid_req = DnsidRequest(method=scope["method"], url=url, headers=headers_raw, body=body)
         try:
-            verified = await asyncio.to_thread(
-                self._http_sig.verify_signed_http_request, dnsid_req, _VERIFY_OPTS
+            verified = await self._http_sig.async_verify_signed_http_request(
+                dnsid_req, _VERIFY_OPTS
             )
             scope = {**scope, "_dnsid_sender": VerifiedSenderUser(verified.domain)}
             print(
                 f"[{self._idm.local_domain}] verified signed POST {path} from {verified.domain}"
             )
-        except Exception as exc:
-            response = JSONResponse({"error": str(exc)}, status_code=401)
+        except DNSidError as exc:
+            status = 401
+            if isinstance(exc, VerificationError):
+                if exc.transient:
+                    status = 503
+                elif exc.code == VerificationCode.COUNTERPARTY_NOT_ACCEPTED:
+                    status = 403
+            response = JSONResponse({"error": str(exc)}, status_code=status)
             await response(scope, receive, send)
             return
 
@@ -328,13 +351,16 @@ class EchoAgent:
             await asyncio.sleep(0.05)
 
     async def stop(self) -> None:
-        for c in self._clients.values():
-            await c.aclose()
-        self._clients.clear()
-        if self._server:
-            self._server.should_exit = True
-        if self._serve_task:
-            await self._serve_task
+        try:
+            if self._server:
+                self._server.should_exit = True
+            if self._serve_task:
+                await self._serve_task
+        finally:
+            async with AsyncExitStack() as cleanup:
+                for c in self._clients.values():
+                    cleanup.push_async_callback(c.aclose)
+                self._clients.clear()
 
     # ------------------------------------------------------------------
     # A2A client: send signed messages to a peer agent

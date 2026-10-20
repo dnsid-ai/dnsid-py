@@ -16,18 +16,27 @@ Not responsibilities (handled by separate profile classes):
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import threading
-from collections.abc import Callable, Iterable
-from concurrent.futures import Future
+from collections.abc import Awaitable, Callable, Iterable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
+
+import dns.exception
+import dns.resolver
 
 from ._verification_budget import (
+    async_run_concurrently,
+    async_verification_operation,
+    async_wait_for_verification,
     remaining_seconds,
     run_concurrently,
     verification_operation,
+    verification_work_context,
     wait_for_verification,
 )
 
@@ -37,15 +46,23 @@ if TYPE_CHECKING:
 
     from .interfaces import AbstractRegistryClient
 
-from ._https_client import _create_https_client
+from ._https_client import _create_https_client, async_fetch_agent_status, async_fetch_jwks
 from ._utils import (
     _parse_ka_duration,
     b64url_decode_strict,
     normalize_fqdn,
 )
 from .enums import DNSSECMode, DNSSECState, EventType, LogSignerRole, VerificationCode
-from .exceptions import ArgumentError, ValidationError, VerificationError
+from .exceptions import (
+    ArgumentError,
+    NoActiveSigningKeyError,
+    ValidationError,
+    VerificationError,
+)
 from .interfaces import (
+    AsyncDNSResolver,
+    AsyncHTTPSFetcher,
+    AsyncLogReader,
     DNSResolver,
     HTTPSFetcher,
     IdentityCache,
@@ -56,6 +73,7 @@ from .interfaces import (
 )
 from .models import (
     _V_DRAFT01,
+    JWK,
     JWKS,
     DnsidConfig,
     DnsIdTxtRecord,
@@ -71,15 +89,22 @@ from .models import (
     TLSCertificate,
     TransportConfig,
     TrustedEntity,
+    TXTRecord,
     VerificationConfig,
     VerifiedDomain,
 )
 from .registry import LogRegistry
+from .safe_transport import (
+    _async_resolve_addresses,
+    _AsyncHttpcoreTransport,
+    make_ssrf_safe_async_transport,
+    validate_private_address_hosts,
+)
 from .safe_transport import make_ssrf_safe_transport as _make_sdk_transport
-from .safe_transport import validate_private_address_hosts
 
 _ZERO_TIME = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 _log = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 KeyRotationPersistenceHook = Callable[[KeyRotationResult], None]
 """Persist a complete managed-key-rotation recovery state durably."""
@@ -93,6 +118,17 @@ class IdentityManagerDependencies:
     """Optional dependencies for IdentityManager.
 
     All fields default to None; the manager uses built-in defaults when omitted.
+    Verification dependencies must be safe for concurrent use and honor the
+    remaining verification budget. Blocking adapters run in workers even for
+    synchronous callers. Optional AsyncDNSResolver, AsyncHTTPSFetcher and
+    AsyncLogReader capabilities supplement the existing synchronous interfaces;
+    adapters must also provide synchronous methods. Async-led cold verification,
+    explicit refreshes, and stale-status refreshes await native capabilities,
+    with worker fallback
+    for sync-only adapters. Sync-led evidence remains worker-backed and is shared
+    with async waiters. Injected dependencies remain caller-owned. Async adapters
+    must support concurrent calls on the event loops used by the application;
+    the manager does not move loop-bound clients between loops.
 
     Attributes:
         log_registry: Registry of log-method bindings.  Used to derive the
@@ -107,7 +143,8 @@ class IdentityManagerDependencies:
             preserves.  Inject a DNSSEC-aware resolver for ``VALIDATED`` or
             ``REQUIRED`` policy.
         https_fetcher: HTTPS fetcher used for JWKS and status endpoint
-            requests.  Omit to use the SDK's default transport.
+            requests. Omit to use the SDK's default transport. An implementation
+            of AsyncHTTPSFetcher is awaited for async-led key-set and status reads.
         cache: Cache for verified identities.  Defaults to an in-memory cache.
         entity_key_provider: Accountable-entity key provider, used only for
             _dnsid identity record signing and entity lifecycle events.  Keep
@@ -201,13 +238,20 @@ class IdentityManager:
             else None
         )
         self._closed = False
+        self._closing = False
+        self._verification_executor = ThreadPoolExecutor(thread_name_prefix="dnsid-verification")
 
         self._cache: IdentityCache = (
             _PrivateCache(deps.cache) if deps.cache is not None else _InMemoryCache()
         )
         self._coordination_lock = threading.Lock()
+        self._close_lock = threading.Lock()
         self._verification_futures: dict[str, Future[VerifiedDomain]] = {}
+        self._refresh_futures: dict[str, Future[VerifiedDomain]] = {}
         self._status_futures: dict[str, Future[VerifiedDomain]] = {}
+        self._async_verification_tasks: set[asyncio.Task[None]] = set()
+        self._active_verifications: set[Future[None]] = set()
+        self._verification_workers: set[Future[Any]] = set()
 
         # Derive the local log binding when a registry is available.  The
         # binding always provides canonicalization; it doubles as the local
@@ -691,6 +735,7 @@ class IdentityManager:
         target_key_provider: KeyProvider | None = None,
         previous_provider_reference: str = "",
         target_provider_reference: str = "",
+        target_algorithm: str | None = None,
     ) -> KeyRotationResult:
         """Rotate the managed operational key with mandatory recovery hooks.
 
@@ -703,6 +748,9 @@ class IdentityManager:
 
         Args:
             target_key_provider: Explicit target; defaults to the current provider.
+            target_algorithm: Selected JOSE algorithm; defaults to the previous
+                key's algorithm. Changing it requires an explicit value and a
+                target provider configured to generate that algorithm.
             previous_provider_reference: Stable old-provider reference for cross-provider recovery.
             target_provider_reference: Stable target reference, saved before submission.
             registry_client: Client implementing the registry rotation API.
@@ -760,9 +808,15 @@ class IdentityManager:
                 raise ArgumentError("previous provider cannot retire its active key")
         elif previous_provider_reference != target_provider_reference:
             raise ArgumentError("same-provider rotation requires matching provider references")
+        selected_algorithm = (
+            previous_key.signature_alg() if target_algorithm is None else target_algorithm
+        )
+        if target.generation_algorithm() != selected_algorithm:
+            raise ArgumentError("target provider is not configured for the selected algorithm")
         new_kid = target.generate_key()
         new_key = target.jwk(new_kid)
-        new_key.signature_alg()  # validates required alg/key binding
+        if new_key.signature_alg() != selected_algorithm:
+            raise ValidationError("generated key does not use the selected algorithm")
         previous_thumbprint = previous_key.thumbprint()
         new_thumbprint = new_key.thumbprint()
         if previous_thumbprint == new_thumbprint:
@@ -845,6 +899,7 @@ class IdentityManager:
             result,
             persist_rotation,
             set_application_signing_paused,
+            key_provider,
             target,
         )
 
@@ -858,14 +913,19 @@ class IdentityManager:
         target_key_provider: KeyProvider | None = None,
         previous_provider_reference: str = "",
         target_provider_reference: str = "",
+        previous_key_provider: KeyProvider | None = None,
     ) -> KeyRotationResult:
         """Resume an exact persisted managed key rotation safely.
 
         Validates the persisted bytes, hash, identity, log, and key bindings
         before any network or key mutation. Pending state reuses the exact
         bytes and idempotency key. Accepted state performs only idempotent
-        local reconciliation; activated-but-paused state only releases the
-        signing pause and persists completion.
+        local reconciliation; activated-but-paused state restores the signer
+        before releasing the signing pause and persisting completion. For
+        cross-provider recovery, construct the manager with the reopened saved
+        source provider and pass the reopened saved target provider. If the
+        manager already uses the target, supply the reopened saved source as
+        ``previous_key_provider``. Newly created provider state is not recovery.
         """
         from .exceptions import (
             ManagedKeyRotationActivationError,
@@ -876,8 +936,9 @@ class IdentityManager:
         self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         rotation = self._clone_rotation(result)
         self._validate_persisted_rotation(rotation)
-        target = self._rotation_target(
+        previous, target = self._rotation_target(
             rotation,
+            previous_key_provider,
             target_key_provider,
             previous_provider_reference,
             target_provider_reference,
@@ -944,13 +1005,14 @@ class IdentityManager:
 
         if rotation.submission is not None and rotation.submission.accepted:
             return self._finish_accepted_rotation(
-                rotation, persist_rotation, set_application_signing_paused, target
+                rotation, persist_rotation, set_application_signing_paused, previous, target
             )
         return self._submit_rotation(
             registry_client,
             rotation,
             persist_rotation,
             set_application_signing_paused,
+            previous,
             target,
         )
 
@@ -964,14 +1026,20 @@ class IdentityManager:
         target_key_provider: KeyProvider | None = None,
         previous_provider_reference: str = "",
         target_provider_reference: str = "",
+        previous_key_provider: KeyProvider | None = None,
     ) -> KeyRotationResult:
-        """Reconcile an accepted rotation using the mandatory durability hooks."""
+        """Reconcile an accepted rotation using the mandatory durability hooks.
+
+        Supply ``previous_key_provider`` if the manager no longer uses the
+        saved source provider; reopen both providers from their saved state.
+        """
         self._require_local_identity("activate_rotated_key")
         self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
         rotation = self._clone_rotation(result)
         self._validate_persisted_rotation(rotation)
-        target = self._rotation_target(
+        previous, target = self._rotation_target(
             rotation,
+            previous_key_provider,
             target_key_provider,
             previous_provider_reference,
             target_provider_reference,
@@ -1012,7 +1080,7 @@ class IdentityManager:
                 cause=exc,
             ) from exc
         return self._finish_accepted_rotation(
-            rotation, persist_rotation, set_application_signing_paused, target
+            rotation, persist_rotation, set_application_signing_paused, previous, target
         )
 
     def _submit_rotation(
@@ -1021,6 +1089,7 @@ class IdentityManager:
         rotation: KeyRotationResult,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        previous: KeyProvider,
         target: KeyProvider,
     ) -> KeyRotationResult:
         from .exceptions import ManagedKeyRotationSubmissionError
@@ -1097,7 +1166,7 @@ class IdentityManager:
         if not submission.accepted:
             return candidate
         return self._finish_accepted_rotation(
-            candidate, persist_rotation, set_application_signing_paused, target
+            candidate, persist_rotation, set_application_signing_paused, previous, target
         )
 
     def _finish_accepted_rotation(
@@ -1105,13 +1174,14 @@ class IdentityManager:
         rotation: KeyRotationResult,
         persist_rotation: KeyRotationPersistenceHook,
         set_application_signing_paused: ApplicationSigningPauseHook,
+        previous: KeyProvider,
         target: KeyProvider,
     ) -> KeyRotationResult:
         from .exceptions import ManagedKeyRotationActivationError
 
         try:
             ku_url = self._rotation_publication(rotation)
-            self._reconcile_rotation_keys(rotation, target)
+            self._reconcile_rotation_keys(rotation, previous, target)
         except Exception as exc:
             raise ManagedKeyRotationActivationError(
                 "accepted managed key rotation could not reconcile local keys",
@@ -1151,10 +1221,11 @@ class IdentityManager:
     def _rotation_target(
         self,
         rotation: KeyRotationResult,
+        previous: KeyProvider | None,
         target: KeyProvider | None,
         previous_reference: str,
         target_reference: str,
-    ) -> KeyProvider:
+    ) -> tuple[KeyProvider, KeyProvider]:
         if (previous_reference, target_reference) != (
             rotation.previous_provider_reference,
             rotation.new_provider_reference,
@@ -1162,13 +1233,70 @@ class IdentityManager:
             raise ValidationError("rotation provider references changed")
         if previous_reference != target_reference and target is None:
             raise ArgumentError("reopen the target provider from its saved reference")
-        previous = self._require_operational_key_provider("managed key rotation")
+        previous = previous or self._require_operational_key_provider("managed key rotation")
         target = target or previous
-        if previous_reference != target_reference and target is previous and not rotation.activated:
+        if previous_reference != target_reference and target is previous:
             raise ArgumentError("reopen both saved providers before cross-provider reconciliation")
-        if target.jwk(rotation.new_kid).thumbprint() != rotation.new_thumbprint:
+        if previous_reference == target_reference and target is not previous:
+            raise ArgumentError("same-provider recovery requires one reopened saved provider")
+        try:
+            self._validate_rotation_keys(rotation, previous, target)
+        except Exception as exc:
+            from .exceptions import ManagedKeyRotationActivationError
+
+            raise ManagedKeyRotationActivationError(
+                "failed to validate saved rotation provider keys",
+                self._clone_rotation(rotation),
+                cause=exc,
+            ) from exc
+        return previous, target
+
+    def _validate_rotation_keys(
+        self, rotation: KeyRotationResult, previous: KeyProvider, target: KeyProvider
+    ) -> bool:
+        new_key = target.jwk(rotation.new_kid)
+        if new_key.kid != rotation.new_kid or new_key.thumbprint() != rotation.new_thumbprint:
             raise ValidationError("target key does not match persisted rotation")
-        return target
+        try:
+            active_target = target.signing_key()
+        except NoActiveSigningKeyError:
+            active_target = None
+        target_is_active = (
+            active_target is not None
+            and active_target.kid == rotation.new_kid
+            and active_target.thumbprint() == rotation.new_thumbprint
+        )
+        accepted = rotation.submission is not None and rotation.submission.accepted
+        if rotation.activated and (not accepted or not target_is_active):
+            raise ValidationError(
+                "activated rotation requires acceptance and the saved active target key"
+            )
+        if rotation.previous_kid in previous.list_key_ids():
+            old_key = previous.jwk(rotation.previous_kid)
+            if (
+                old_key.kid != rotation.previous_kid
+                or old_key.thumbprint() != rotation.previous_thumbprint
+            ):
+                raise ValidationError("previous provider key changed")
+            active_source = previous.signing_key()
+            if previous is target and accepted and target_is_active:
+                return target_is_active
+            if (
+                active_source.kid != rotation.previous_kid
+                or active_source.thumbprint() != rotation.previous_thumbprint
+            ):
+                raise ValidationError("active source key does not match persisted previous key")
+            return target_is_active
+        if not accepted or not target_is_active:
+            raise ValidationError("absent previous key requires saved acceptance and active target")
+        if previous is not target:
+            try:
+                previous.signing_key()
+            except NoActiveSigningKeyError:
+                pass
+            else:
+                raise ValidationError("superseded source provider still has an active key")
+        return target_is_active
 
     def _rotation_publication(self, rotation: KeyRotationResult) -> str:
         self.evict_domain(rotation.domain)
@@ -1182,16 +1310,10 @@ class IdentityManager:
             raise ValidationError("published identity does not bind the accepted rotation")
         return observed.record.ku
 
-    def _reconcile_rotation_keys(self, rotation: KeyRotationResult, target: KeyProvider) -> None:
-        previous = self._require_operational_key_provider("managed key rotation")
-        if target.jwk(rotation.new_kid).thumbprint() != rotation.new_thumbprint:
-            raise ValidationError("target key does not match persisted rotation")
-        active = target.signing_key()
-        if target is previous and active.kid not in {rotation.previous_kid, rotation.new_kid}:
-            raise ValidationError("unexpected active key during rotation recovery")
-        if active.kid != rotation.new_kid:
-            if target is previous and active.thumbprint() != rotation.previous_thumbprint:
-                raise ValidationError("active key does not match persisted previous key")
+    def _reconcile_rotation_keys(
+        self, rotation: KeyRotationResult, previous: KeyProvider, target: KeyProvider
+    ) -> None:
+        if not self._validate_rotation_keys(rotation, previous, target):
             target.activate(rotation.new_kid)
         if rotation.previous_kid in previous.list_key_ids():
             if previous.jwk(rotation.previous_kid).thumbprint() != rotation.previous_thumbprint:
@@ -1384,22 +1506,155 @@ class IdentityManager:
         """
         return self._verify(domain, peer_cert, acceptance=True)
 
+    @async_verification_operation
+    async def async_verify_domain(
+        self, domain: str, peer_cert: TLSCertificate | None = None
+    ) -> VerifiedDomain:
+        """Verify without blocking the event loop; enforce the same policy as verify_domain.
+
+        Async-led cold verification awaits native TXT, key-set, status and log
+        reads. Sync-only dependencies, substantial log validation, and atomic
+        checkpoint stores use tracked workers. Fresh cache hits and shared waits
+        need no worker. Sync callers retain synchronous evidence leaders; both
+        APIs share whichever leader starts first. Shared work has its own
+        30-second budget; caller cancellation
+        or deadlines stop only that caller's wait. Use ``aclose()`` or ``async with``
+        to drain work before closing resources. Keep participating event loops
+        running until shutdown completes.
+        """
+        with self._verification_call():
+            domain = normalize_fqdn(domain)
+            result = await self._async_reusable_verification(domain)
+            return self._accept_verification(domain, result, peer_cert, acceptance=True)
+
+    async def _async_reusable_verification(self, domain: str) -> VerifiedDomain:
+        with self._coordination_lock:
+            future = (
+                self._refresh_futures.get(domain)
+                or self._verification_futures.get(domain) or self._status_futures.get(domain)
+            )
+        leader = False
+        if future is None:
+            cached = self._cache.get(domain)
+            if cached is not None and (
+                _now() - cached.last_status_check_at
+                < self._config.verification.status_check_interval
+            ):
+                return cached
+            pending = self._status_futures if cached is not None else self._verification_futures
+            with self._coordination_lock:
+                future = (
+                    self._refresh_futures.get(domain)
+                    or self._verification_futures.get(domain)
+                    or self._status_futures.get(domain)
+                )
+                if future is None:
+                    future = Future()
+                    pending[domain] = future
+                    leader = True
+            if leader:
+                self._start_async_verification(
+                    domain, pending, future,
+                    (lambda: self._async_refresh_status(domain, cached))
+                    if cached is not None else (
+                        lambda: self._async_verify_domain_uncached(domain)
+                    ),
+                    independent=True,
+                )
+        result = await async_wait_for_verification(future)
+        if leader or result.dns_ttl != 0:
+            return result
+        return await self._async_independent_verification(domain)
+
+    async def _async_independent_verification(
+        self, domain: str, *, revalidate: bool = False,
+    ) -> VerifiedDomain:
+        future: Future[VerifiedDomain] = Future()
+        self._track_verification_worker(future)
+        self._start_async_verification(
+            domain, {}, future,
+            (lambda: self._async_refresh_identity(domain, cache_result=False)) if revalidate
+            else (lambda: self._async_verify_domain_uncached(domain, cache_result=False)),
+            independent=True,
+        )
+        return await async_wait_for_verification(future)
+
+    def _start_async_verification(
+        self, domain: str, pending: dict[str, Future[VerifiedDomain]],
+        future: Future[VerifiedDomain], work: Callable[[], Awaitable[VerifiedDomain]],
+        *, independent: bool = False,
+    ) -> None:
+        native = self._complete_async_verification(domain, pending, future, work)
+        try:
+            context = verification_work_context(
+                self._track_verification_worker, independent=independent,
+            )
+            task = asyncio.create_task(native, context=context)
+            self._async_verification_tasks.add(task)
+
+            def finished(task: asyncio.Task[None]) -> None:
+                self._async_verification_tasks.discard(task)
+                error = asyncio.CancelledError() if task.cancelled() else task.exception()
+                if error is not None and not future.done():
+                    self._finish_verification(domain, pending, future, error)
+
+            task.add_done_callback(finished)
+        except BaseException as exc:
+            native.close()
+            self._finish_verification(domain, pending, future, exc)
+            raise
+
     @verification_operation
     def refresh_domain(
         self, domain: str, peer_cert: TLSCertificate | None = None,
     ) -> VerifiedDomain:
         """Fully verify fresh identity evidence, bypassing the cached identity result.
 
-        Concurrent full acquisitions share network work, not status-only work.
+        Concurrent explicit refreshes share network work, not ordinary lookups.
         Each caller enforces its current peer, acceptance, and final freshness.
         Failure never falls back to cached evidence or extends its lifetime.
         Injected resource fetchers must revalidate their caches.
         """
         return self._verify(domain, peer_cert, acceptance=True, refresh=True)
 
+    @async_verification_operation
+    async def async_refresh_domain(
+        self, domain: str, peer_cert: TLSCertificate | None = None,
+    ) -> VerifiedDomain:
+        """Fully verify fresh evidence asynchronously, bypassing the identity cache.
+
+        Concurrent sync and async explicit refreshes share work, not ordinary
+        lookups. Each caller enforces its current peer, acceptance, and final
+        freshness. Zero-TTL evidence is not shared between callers. Failures
+        never fall back to cached evidence or extend its lifetime. Injected
+        HTTP fetchers must honor ``revalidate=True``. DNS caches may return
+        answers with their remaining TTL.
+
+        Native async adapters are awaited; sync-only dependencies use tracked
+        workers. Shared work has an independent 30-second budget. Cancellation
+        or a deadline stops only that caller's wait; ``aclose()`` drains work.
+        """
+        with self._verification_call():
+            domain = normalize_fqdn(domain)
+            with self._coordination_lock:
+                future = self._refresh_futures.get(domain)
+                leader = future is None
+                if future is None:
+                    future = Future()
+                    self._refresh_futures[domain] = future
+            if leader:
+                self._start_async_verification(
+                    domain, self._refresh_futures, future,
+                    lambda: self._async_refresh_identity(domain), independent=True,
+                )
+            result = await async_wait_for_verification(future)
+            if not leader and result.dns_ttl == 0:
+                result = await self._async_independent_verification(domain, revalidate=True)
+            return self._accept_verification(domain, result, peer_cert, acceptance=True)
+
     @verification_operation
     def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
-        """Internal protocol-only verification for registry publication confirmation."""
+        """Verify local publication without application-peer or acceptance checks."""
         return self._verify(domain, None, acceptance=False)
 
     def _verify(
@@ -1408,18 +1663,25 @@ class IdentityManager:
     ) -> VerifiedDomain:
         """Shared per-invocation verification boundary.
 
-        Only registry publication confirmation passes ``acceptance=False``;
-        there is no public bypass.
+        Only internal local-publication validation passes ``acceptance=False``;
+        public verification always checks the current peer and acceptance policy.
         """
-        domain = normalize_fqdn(domain)
-        result = (
-            self._coalesce(domain, self._verification_futures,
-                           lambda: self._verify_domain_uncached(domain))
-            if refresh else self._reusable_verification(domain)
-        )
-        # mTLS binds the current peer, not reusable identity evidence.
-        _enforce_mtls_policy(result.record, domain, peer_cert)
+        with self._verification_call():
+            domain = normalize_fqdn(domain)
+            result = (
+                self._coalesce(domain, self._refresh_futures,
+                               lambda: self._refresh_identity(domain))
+                if refresh else self._reusable_verification(domain)
+            )
+            return self._accept_verification(domain, result, peer_cert, acceptance=acceptance)
+
+    def _accept_verification(
+        self, domain: str, result: VerifiedDomain, peer_cert: TLSCertificate | None,
+        *, acceptance: bool
+    ) -> VerifiedDomain:
         if acceptance:
+            # Local publication validation has no application peer to authenticate.
+            _enforce_mtls_policy(result.record, domain, peer_cert)
             self._enforce_counterparty_acceptance(result)
         self._require_fresh_evidence(result, fresh_dns_lookup=result.dns_ttl == 0)
         return result
@@ -1452,17 +1714,15 @@ class IdentityManager:
     def _reusable_verification(self, domain: str) -> VerifiedDomain:
         """Return reusable verified evidence, coalescing same-domain network work."""
         with self._coordination_lock:
-            full_future = self._verification_futures.get(domain)
+            full_future = (
+                self._refresh_futures.get(domain) or self._verification_futures.get(domain)
+            )
             status_future = self._status_futures.get(domain)
         if full_future is not None or status_future is not None:
             future = full_future if full_future is not None else status_future
             assert future is not None
             result = wait_for_verification(future)
-            if result.dns_ttl != 0:
-                return result
-            return self._coalesce(
-                domain, self._verification_futures, lambda: self._verify_domain_uncached(domain)
-            )
+            return self._uncached_after_shared(domain, result)
 
         cached = self._cache.get(domain)
         if cached is not None:
@@ -1485,14 +1745,19 @@ class IdentityManager:
         self,
         domain: str,
         pending: dict[str, Future[VerifiedDomain]],
-        work: Callable[[], VerifiedDomain],
+        work: Callable[[], VerifiedDomain | Future[VerifiedDomain]],
     ) -> VerifiedDomain:
         while True:
             with self._coordination_lock:
-                future = pending.get(domain)
+                future = (
+                    self._refresh_futures.get(domain)
+                    if pending is self._verification_futures else None
+                ) or pending.get(domain)
                 if future is None:
                     future = Future()
                     pending[domain] = future
+                    previous = (self._verification_futures.get(domain)
+                                if pending is self._refresh_futures else None)
                     break
             result = wait_for_verification(future)
             if result.dns_ttl != 0:
@@ -1502,42 +1767,183 @@ class IdentityManager:
                 if pending.get(domain) is future:
                     del pending[domain]
 
+        context = verification_work_context(self._track_verification_worker, independent=True)
+
+        def start(_: Future[VerifiedDomain] | None = None) -> None:
+            try:
+                if previous is not None:
+                    try:
+                        previous.result()
+                    except VerificationError:
+                        pass
+                context.run(self._submit_verification,
+                            lambda: self._complete_verification(domain, pending, future, work))
+            except BaseException as exc:
+                self._finish_verification(domain, pending, future, exc)
+
+        # A refresh must not occupy a worker needed by the lookup it awaits.
+        if previous is None:
+            start()
+        else:
+            previous.add_done_callback(start)
+        return wait_for_verification(future)
+
+    def _uncached_after_shared(self, domain: str, result: VerifiedDomain) -> VerifiedDomain:
+        if result.dns_ttl == 0:
+            return self._coalesce(
+                domain, self._verification_futures, lambda: self._verify_domain_uncached(domain)
+            )
+        return result
+
+    def _complete_verification(
+        self, domain: str, pending: dict[str, Future[VerifiedDomain]],
+        future: Future[VerifiedDomain],
+        work: Callable[[], VerifiedDomain | Future[VerifiedDomain]],
+    ) -> VerifiedDomain | None:
         try:
+            remaining_seconds()
             result = work()
             remaining_seconds()
         except BaseException as exc:
-            if (isinstance(exc, VerificationError)
-                    and exc.code == VerificationCode.STATUS_NOT_ACTIVE):
-                with self._coordination_lock:
-                    self._cache.evict(domain)
-            future.set_exception(exc)
+            self._finish_verification(domain, pending, future, exc)
             raise
+        if isinstance(result, Future):
+            context = verification_work_context(self._track_verification_worker)
+
+            def complete(joined: Future[VerifiedDomain]) -> None:
+                try:
+                    value = joined.result()
+                    remaining_seconds()
+                    if value.dns_ttl == 0:
+                        self._submit_verification(
+                            lambda: self._complete_verification(domain, pending, future, work),
+                        )
+                    else:
+                        self._finish_verification(domain, pending, future, value)
+                except BaseException as exc:
+                    self._finish_verification(domain, pending, future, exc)
+
+            # Joining refresh/cold work must release the current worker first.
+            result.add_done_callback(lambda done: context.run(complete, done))
+            return None
+        self._finish_verification(domain, pending, future, result)
+        return result
+
+    def _refresh_identity(self, domain: str) -> VerifiedDomain:
+        # Finish older lookups before refreshing so they cannot restore old evidence.
+        with self._coordination_lock:
+            previous = self._verification_futures.get(domain)
+        if previous is not None:
+            try:
+                wait_for_verification(previous)
+            except VerificationError:
+                pass  # The refresh must acquire its own evidence even if the lookup failed.
+        remaining_seconds()
+        return self._verify_domain_uncached(domain, revalidate=True)
+
+    @async_verification_operation
+    async def _async_refresh_identity(
+        self, domain: str, *, cache_result: bool = True,
+    ) -> VerifiedDomain:
+        # Wait for older lookups so they cannot overwrite refreshed evidence.
+        with self._coordination_lock:
+            previous = self._verification_futures.get(domain)
+        if previous is not None:
+            try:
+                await async_wait_for_verification(previous)
+            except VerificationError:
+                pass  # A failed lookup does not replace the refresh's own evidence.
+        remaining_seconds()
+        if not cache_result:
+            return await self._async_verify_domain_uncached(
+                domain, revalidate=True, cache_result=False,
+            )
+        return await self._async_verify_domain_uncached(domain, revalidate=True)
+
+    def _finish_verification(
+        self, domain: str, pending: dict[str, Future[VerifiedDomain]],
+        future: Future[VerifiedDomain], outcome: VerifiedDomain | BaseException,
+    ) -> None:
+        # Keep completion drainable after removal; callbacks must run outside the lock.
+        self._track_verification_worker(future)
+        with self._coordination_lock:
+            if (isinstance(outcome, VerificationError)
+                    and outcome.code == VerificationCode.STATUS_NOT_ACTIVE):
+                self._cache.evict(domain)
+            if pending.get(domain) is future:
+                del pending[domain]
+        if isinstance(outcome, BaseException):
+            future.set_exception(outcome)
         else:
-            future.set_result(result)
-            return result
-        finally:
+            future.set_result(outcome)
+
+    async def _complete_async_verification(
+        self, domain: str, pending: dict[str, Future[VerifiedDomain]],
+        future: Future[VerifiedDomain], work: Callable[[], Awaitable[VerifiedDomain]],
+    ) -> None:
+        try:
+            result = await work()
+        except BaseException as exc:
+            self._finish_verification(domain, pending, future, exc)
+        else:
+            self._finish_verification(domain, pending, future, result)
+
+    @async_verification_operation
+    async def _async_refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
+        latest = self._cache.get(domain)
+        if latest is None:
             with self._coordination_lock:
-                if pending.get(domain) is future:
-                    del pending[domain]
+                future = (
+                    self._refresh_futures.get(domain) or self._verification_futures.get(domain)
+                )
+                leader = future is None
+                if future is None:
+                    future = Future()
+                    self._verification_futures[domain] = future
+            if leader:
+                self._start_async_verification(
+                    domain, self._verification_futures, future,
+                    lambda: self._async_verify_domain_uncached(domain),
+                )
+            result = await async_wait_for_verification(future)
+            if leader or result.dns_ttl != 0:
+                return result
+            return await self._async_independent_verification(domain)
+        if latest.last_status_check_at > cached.last_status_check_at:
+            return latest
+        status = await self._async_fetch_status(latest.record.su)
+        return self._cache_refreshed_status(domain, latest, status)
 
-    def _refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
-        import copy
-
+    def _refresh_status(
+        self, domain: str, cached: VerifiedDomain,
+    ) -> VerifiedDomain | Future[VerifiedDomain]:
         # A refresh may have completed between the caller's cache read and its
         # leadership claim. Reuse that result even when the configured interval
         # is zero, because this call overlapped the completed refresh.
         latest = self._cache.get(domain)
         if latest is None:
-            return self._coalesce(
-                domain,
-                self._verification_futures,
-                lambda: self._verify_domain_uncached(domain),
-            )
+            with self._coordination_lock:
+                future = self._refresh_futures.get(domain) or self._verification_futures.get(domain)
+                leader = future is None
+                if future is None:
+                    future = Future()
+                    self._verification_futures[domain] = future
+            if leader:
+                self._complete_verification(
+                    domain, self._verification_futures, future,
+                    lambda: self._verify_domain_uncached(domain),
+                )
+            return future
         if latest.last_status_check_at > cached.last_status_check_at:
             return latest
 
-        refreshed = copy.copy(latest)
-        status = self._fetch_status(refreshed.record.su)
+        return self._cache_refreshed_status(domain, latest, self._fetch_status(latest.record.su))
+
+    def _cache_refreshed_status(
+        self, domain: str, cached: VerifiedDomain, status: Any,
+    ) -> VerifiedDomain:
+        import copy
+
         if status.state != "ACTIVE":
             self._cache.evict(domain)
             raise VerificationError(
@@ -1545,6 +1951,7 @@ class IdentityManager:
                 f"identity is not ACTIVE: {status.state}",
                 agent_state=status.state,
             )
+        refreshed = copy.copy(cached)
         refreshed.registry_status = status
         refreshed.last_status_check_at = _now()
         self._require_fresh_evidence(refreshed)
@@ -1555,20 +1962,138 @@ class IdentityManager:
                     VerificationCode.STATUS_UNAVAILABLE,
                     "identity invalidated during status refresh", transient=True,
                 )
-            if current != latest:
+            if current != cached:
                 return current
             self._cache.put(domain, refreshed)
         return refreshed
 
-    def _verify_domain_uncached(self, domain: str) -> VerifiedDomain:
-        from ._utils import b64url_decode_strict
-
-        dnssec_mode = self._config.verification.dnssec_mode
-
+    @verification_operation
+    def _verify_domain_uncached(
+        self, domain: str, *, revalidate: bool = False,
+    ) -> VerifiedDomain:
         # -- Step 1: Fetch and parse the _dnsid TXT record ----------------
         dns_acquired_at = _now()  # Lookup start conservatively bounds response acquisition.
-        records, dnssec_state = self._dns_resolver.fetch_txt(f"_dnsid.{domain}")
+        try:
+            records, dnssec_state = self._dns_resolver.fetch_txt(f"_dnsid.{domain}")
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            records, dnssec_state = [], DNSSECState.UNKNOWN
+        except dns.exception.ValidationFailure:
+            records, dnssec_state = [], DNSSECState.FAILED
+        except VerificationError:
+            raise
+        except Exception as exc:
+            raise VerificationError(
+                VerificationCode.DNS_RESOLUTION,
+                f"DNS lookup failed for {domain!r}: {exc}",
+                transient=True,
+            ) from exc
 
+        record, dns_ttl, dns_expires_at = self._record_from_dns(
+            domain, records, dnssec_state, dns_acquired_at,
+        )
+
+        # -- Step 2: Fetch ek and authenticate the TXT record -------------
+        ek_allowed_host = _ek_pinning_host(record.gi, record.ek)
+        ek_jwks, ek_tls_cert = self._fetch_key_set(
+            record.ek, allowed_host=ek_allowed_host, domain_boundary=True,
+            revalidate=revalidate,
+        )
+        signing_key = self._authenticate_record(record, ek_jwks)
+
+        # sg is authenticated: record-derived locations (ku, lr, su) may now be
+        # followed. The ku/lifecycle-log branch and the status fetch are
+        # independent, so they run concurrently; the first definitive failure
+        # cancels the sibling and error precedence is fixed (identity > status
+        # > cancellation). Both must succeed before any result is built.
+        (jwks, tls_cert, log_reader, key_bound_at), status = run_concurrently(
+            lambda: self._verify_identity_evidence(
+                domain, record, ek_jwks, signing_key, revalidate=revalidate,
+            ),
+            lambda: self._fetch_active_status(record.su, revalidate=revalidate),
+        )
+
+        result = VerifiedDomain(
+            domain=domain,
+            record=record,
+            jwks=jwks,
+            signing_key=signing_key,
+            tls_cert=tls_cert,
+            registry_status=status,
+            verified_at=_now(),
+            dns_ttl=dns_ttl,
+            dns_expires_at=dns_expires_at,
+            key_bound_at=key_bound_at,
+            last_status_check_at=_now(),
+            dnssec_state=dnssec_state,
+            log_reader=log_reader,
+            record_signing_jwks=ek_jwks,
+            record_signing_tls_cert=ek_tls_cert,
+        )
+        return self._cache_verification(result)
+
+    @async_verification_operation
+    async def _async_verify_domain_uncached(
+        self, domain: str, *, revalidate: bool = False, cache_result: bool = True,
+    ) -> VerifiedDomain:
+        dns_acquired_at = _now()
+        if isinstance(self._dns_resolver, AsyncDNSResolver):
+            read = self._dns_resolver.async_fetch_txt(f"_dnsid.{domain}")
+        else:
+            future = self._submit_verification(
+                lambda: self._dns_resolver.fetch_txt(f"_dnsid.{domain}"),
+            )
+            read = async_wait_for_verification(future)
+        try:
+            records, dnssec_state = await read
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            records, dnssec_state = [], DNSSECState.UNKNOWN
+        except dns.exception.ValidationFailure:
+            records, dnssec_state = [], DNSSECState.FAILED
+        except VerificationError:
+            raise
+        except Exception as exc:
+            raise VerificationError(
+                VerificationCode.DNS_RESOLUTION,
+                f"DNS lookup failed for {domain!r}: {exc}",
+                transient=True,
+            ) from exc
+        record, dns_ttl, dns_expires_at = self._record_from_dns(
+            domain, records, dnssec_state, dns_acquired_at,
+        )
+        ek_jwks, ek_tls_cert = await self._async_fetch_key_set(
+            record.ek, allowed_host=_ek_pinning_host(record.gi, record.ek), domain_boundary=True,
+            revalidate=revalidate,
+        )
+        signing_key = self._authenticate_record(record, ek_jwks)
+        (jwks, tls_cert, log_reader, key_bound_at), status = await async_run_concurrently(
+            lambda: self._async_verify_identity_evidence(
+                domain, record, ek_jwks, signing_key, revalidate=revalidate,
+            ),
+            lambda: self._async_fetch_active_status(record.su, revalidate=revalidate),
+        )
+        return self._cache_verification(VerifiedDomain(
+            domain=domain,
+            record=record,
+            jwks=jwks,
+            signing_key=signing_key,
+            tls_cert=tls_cert,
+            registry_status=status,
+            verified_at=_now(),
+            dns_ttl=dns_ttl,
+            dns_expires_at=dns_expires_at,
+            key_bound_at=key_bound_at,
+            last_status_check_at=_now(),
+            dnssec_state=dnssec_state,
+            log_reader=log_reader,
+            record_signing_jwks=ek_jwks,
+            record_signing_tls_cert=ek_tls_cert,
+        ), cache_result=cache_result)
+
+    def _record_from_dns(
+        self, domain: str, records: list[TXTRecord], dnssec_state: DNSSECState,
+        dns_acquired_at: datetime.datetime,
+    ) -> tuple[DnsIdTxtRecord, int, datetime.datetime]:
+        dnssec_mode = self._config.verification.dnssec_mode
         if not isinstance(dnssec_state, DNSSECState):
             raise VerificationError(
                 VerificationCode.DNSSEC_FAILED,
@@ -1590,6 +2115,11 @@ class IdentityManager:
             raise VerificationError(
                 VerificationCode.DNSSEC_FAILED,
                 f"DNSSEC required but state is {dnssec_state.name}",
+            )
+        if not records:
+            raise VerificationError(
+                VerificationCode.RECORD_NOT_FOUND,
+                "no _dnsid TXT record found",
             )
         if len(records) != 1:
             raise VerificationError(
@@ -1626,11 +2156,12 @@ class IdentityManager:
                 cause=exc,
             ) from exc
 
-        # -- Step 2: Fetch ek and authenticate the TXT record -------------
-        ek_allowed_host = _ek_pinning_host(record.gi, record.ek)
-        ek_jwks, ek_tls_cert = self._fetch_key_set(
-            record.ek, allowed_host=ek_allowed_host, domain_boundary=True
-        )
+        return record, dns_ttl, dns_expires_at
+
+    @staticmethod
+    def _authenticate_record(record: DnsIdTxtRecord, ek_jwks: JWKS) -> JWK:
+        from ._utils import b64url_decode_strict
+
         signing_key = ek_jwks.current_record_signing_key(record.v)
 
         # Draft 01 sg is bare unpadded base64url raw signature bytes. The exact
@@ -1654,45 +2185,23 @@ class IdentityManager:
                 "_dnsid record signature invalid",
             )
 
-        # sg is authenticated: record-derived locations (ku, lr, su) may now be
-        # followed. The ku/lifecycle-log branch and the status fetch are
-        # independent, so they run concurrently; the first definitive failure
-        # cancels the sibling and error precedence is fixed (identity > status
-        # > cancellation). Both must succeed before any result is built.
-        (jwks, tls_cert, log_reader, key_bound_at), status = run_concurrently(
-            lambda: self._verify_identity_evidence(domain, record, ek_jwks, signing_key),
-            lambda: self._fetch_active_status(record.su),
-        )
+        return signing_key
 
-        result = VerifiedDomain(
-            domain=domain,
-            record=record,
-            jwks=jwks,
-            signing_key=signing_key,
-            tls_cert=tls_cert,
-            registry_status=status,
-            verified_at=_now(),
-            dns_ttl=dns_ttl,
-            dns_expires_at=dns_expires_at,
-            key_bound_at=key_bound_at,
-            last_status_check_at=_now(),
-            dnssec_state=dnssec_state,
-            log_reader=log_reader,
-            record_signing_jwks=ek_jwks,
-            record_signing_tls_cert=ek_tls_cert,
-        )
+    def _cache_verification(
+        self, result: VerifiedDomain, *, cache_result: bool = True,
+    ) -> VerifiedDomain:
         self._require_fresh_evidence(result, fresh_dns_lookup=True)
+        # Private zero-TTL retries must not overwrite a concurrent explicit refresh.
+        if not cache_result:
+            return result
         with self._coordination_lock:
-            if dns_ttl > 0:
-                self._cache.put(domain, result)
+            if result.dns_ttl > 0:
+                self._cache.put(result.domain, result)
             else:
-                self._cache.evict(domain)
+                self._cache.evict(result.domain)
         return result
 
-    def _verify_identity_evidence(
-        self, domain: str, record: DnsIdTxtRecord, ek_jwks: JWKS, signing_key: Any
-    ) -> tuple[JWKS, Any, LogReader, datetime.datetime]:
-        """Post-sg identity branch: ku fetch, two-key separation, lifecycle binding, key age."""
+    def _identity_log_reader(self, domain: str, record: DnsIdTxtRecord) -> LogReader:
         from ._utils import parse_ledger_ref
 
         # -- Step 3: Fetch the authenticated runtime key set --------------
@@ -1709,16 +2218,12 @@ class IdentityManager:
             method, _ = parse_ledger_ref(record.lr)
             log_reader = NoopLogReader(method=method)
 
-        # The lifecycle history depends only on the sg-authenticated lr and the
-        # ek signing key, not on ku contents, so readers that support it warm
-        # their history concurrently with the ku fetch. Error precedence is
-        # unchanged: a ku failure wins, then the log failure that
-        # verify_bilateral_binding would have raised anyway.
-        preload = getattr(log_reader, "preload_history", None)
-        (jwks, tls_cert), _ = run_concurrently(
-            lambda: self._fetch_key_set(record.ku, allowed_host=domain),
-            (lambda: preload(domain, signing_key)) if callable(preload) else lambda: None,
-        )
+        return log_reader
+
+    @staticmethod
+    def _separate_operational_key(
+        record: DnsIdTxtRecord, ek_jwks: JWKS, jwks: JWKS, signing_key: JWK,
+    ) -> JWK:
         operational_key = jwks.current_operational_signing_key(record.v)
 
         ek_thumbprints = {k.thumbprint() for k in ek_jwks.keys}
@@ -1735,6 +2240,26 @@ class IdentityManager:
                 VerificationCode.RECORD_INVALID,
                 "draft 01 ek and ku keys must be distinct",
             )
+        return operational_key
+
+    def _verify_identity_evidence(
+        self, domain: str, record: DnsIdTxtRecord, ek_jwks: JWKS, signing_key: Any,
+        *, revalidate: bool = False,
+    ) -> tuple[JWKS, Any, LogReader, datetime.datetime]:
+        """Post-sg identity branch: ku fetch, two-key separation, lifecycle binding, key age."""
+        log_reader = self._identity_log_reader(domain, record)
+
+        # The lifecycle history depends only on the sg-authenticated lr and the
+        # ek signing key, not on ku contents, so readers that support it warm
+        # their history concurrently with the ku fetch. Error precedence is
+        # unchanged: a ku failure wins, then the log failure that
+        # verify_bilateral_binding would have raised anyway.
+        preload = getattr(log_reader, "preload_history", None)
+        (jwks, tls_cert), _ = run_concurrently(
+            lambda: self._fetch_key_set(record.ku, allowed_host=domain, revalidate=revalidate),
+            (lambda: preload(domain, signing_key)) if callable(preload) else lambda: None,
+        )
+        operational_key = self._separate_operational_key(record, ek_jwks, jwks, signing_key)
         binding = _require_log_method(log_reader, "verify_bilateral_binding")(
             record, signing_key, operational_key
         )
@@ -1748,12 +2273,7 @@ class IdentityManager:
         key_bound_at = _ZERO_TIME
         if record.ka:
             key_bound_at = log_reader.key_timestamp(domain, operational_key.thumbprint())
-            ka_duration = _parse_ka_duration(record.ka)
-            if _now() - key_bound_at > ka_duration:
-                raise VerificationError(
-                    VerificationCode.KEY_AGE_EXCEEDED,
-                    f"signing key exceeds maximum key age {record.ka}",
-                )
+            self._check_key_age(record, key_bound_at)
 
         # -- Step 6: Policy flags are enforced per caller by verify_domain --
         # -- Step 8: Operation-level logchk is caller policy ---------------
@@ -1764,9 +2284,67 @@ class IdentityManager:
         # (e.g. verify_non_revocation) before such operations.
         return jwks, tls_cert, log_reader, key_bound_at
 
-    def _fetch_active_status(self, su: str) -> Any:
+    async def _async_verify_identity_evidence(
+        self, domain: str, record: DnsIdTxtRecord, ek_jwks: JWKS, signing_key: JWK,
+        *, revalidate: bool = False,
+    ) -> tuple[JWKS, Any, LogReader, datetime.datetime]:
+        log_reader = self._identity_log_reader(domain, record)
+
+        async def preload() -> None:
+            if isinstance(log_reader, AsyncLogReader):
+                await log_reader.async_preload_history(domain, signing_key)
+            else:
+                method = getattr(log_reader, "preload_history", None)
+                if callable(method):
+                    await self._async_run_blocking(lambda: method(domain, signing_key))
+
+        (jwks, tls_cert), _ = await async_run_concurrently(
+            lambda: self._async_fetch_key_set(
+                record.ku, allowed_host=domain, revalidate=revalidate,
+            ), preload,
+        )
+        operational_key = self._separate_operational_key(record, ek_jwks, jwks, signing_key)
+        binding = await self._async_log_call(
+            log_reader, "verify_bilateral_binding", record, signing_key, operational_key,
+        )
+        await self._async_log_call(
+            log_reader, "verify_operational_continuity", domain,
+            binding.initial_operational_thumbprint, operational_key.thumbprint(),
+        )
+        key_bound_at = _ZERO_TIME
+        if record.ka:
+            key_bound_at = await self._async_log_call(
+                log_reader, "key_timestamp", domain, operational_key.thumbprint(),
+            )
+            self._check_key_age(record, key_bound_at)
+        return jwks, tls_cert, log_reader, key_bound_at
+
+    async def _async_log_call(self, log_reader: LogReader, name: str, *args: Any) -> Any:
+        if isinstance(log_reader, AsyncLogReader):
+            return await getattr(log_reader, "async_" + name)(*args)
+        return await self._async_run_blocking(
+            lambda: _require_log_method(log_reader, name)(*args),
+        )
+
+    @staticmethod
+    def _check_key_age(record: DnsIdTxtRecord, key_bound_at: datetime.datetime) -> None:
+        if _now() - key_bound_at > _parse_ka_duration(record.ka):
+            raise VerificationError(
+                VerificationCode.KEY_AGE_EXCEEDED,
+                f"signing key exceeds maximum key age {record.ka}",
+            )
+
+    def _fetch_active_status(self, su: str, *, revalidate: bool = False) -> Any:
         """Post-sg status branch (Step 7): fetch su and require ACTIVE."""
-        status = self._fetch_status(su)
+        return self._require_active_status(self._fetch_status(su, revalidate=revalidate))
+
+    async def _async_fetch_active_status(self, su: str, *, revalidate: bool = False) -> Any:
+        return self._require_active_status(
+            await self._async_fetch_status(su, revalidate=revalidate),
+        )
+
+    @staticmethod
+    def _require_active_status(status: Any) -> Any:
         if status.state != "ACTIVE":
             raise VerificationError(
                 VerificationCode.STATUS_NOT_ACTIVE,
@@ -1820,14 +2398,16 @@ class IdentityManager:
         return DomainLog(domain=vd.domain, events=list(events))
 
     def _fetch_key_set(
-        self, uri: str, allowed_host: str, domain_boundary: bool = False
+        self, uri: str, allowed_host: str, domain_boundary: bool = False,
+        *, revalidate: bool = False,
     ) -> tuple[JWKS, Any]:
         """Fetch a JWKS pinned to an exact host or DNS domain boundary."""
         if self._https_fetcher is not None:
             from ._crypto import jwk_from_dict
 
             raw_jwks, tls_cert = self._https_fetcher.fetch_strict_json(
-                uri, allowed_host=allowed_host, domain_boundary=domain_boundary
+                uri, allowed_host=allowed_host, domain_boundary=domain_boundary,
+                revalidate=revalidate,
             )
             return JWKS(keys=[jwk_from_dict(k) for k in raw_jwks.get("keys", [])]), tls_cert
         kwargs = {"domain_boundary": True} if domain_boundary else {}
@@ -1836,10 +2416,61 @@ class IdentityManager:
             allowed_host=allowed_host,
             transport=self._transport_config,
             client=self._http_client,
+            revalidate=revalidate,
             **kwargs,
         )
 
-    def _fetch_status(self, su: str) -> Any:
+    async def _async_fetch_key_set(
+        self, uri: str, allowed_host: str, domain_boundary: bool = False,
+        *, revalidate: bool = False,
+    ) -> tuple[JWKS, Any]:
+        if isinstance(self._https_fetcher, AsyncHTTPSFetcher):
+            from ._crypto import jwk_from_dict
+
+            raw, tls_cert = await self._https_fetcher.async_fetch_strict_json(
+                uri, allowed_host=allowed_host, domain_boundary=domain_boundary,
+                revalidate=revalidate,
+            )
+            return JWKS(keys=[jwk_from_dict(k) for k in raw.get("keys", [])]), tls_cert
+        if self._https_fetcher is not None:
+            return await self._async_run_blocking(
+                lambda: self._fetch_key_set(
+                    uri, allowed_host, domain_boundary, revalidate=revalidate,
+                ),
+            )
+        # shortcut: per-read clients; pool with a single-event-loop contract.
+        return await async_fetch_jwks(
+            uri, allowed_host=allowed_host, domain_boundary=domain_boundary,
+            transport=make_ssrf_safe_async_transport(self._transport_config),
+            revalidate=revalidate,
+        )
+
+    async def _async_fetch_status(self, su: str, *, revalidate: bool = False) -> Any:
+        if (self._https_fetcher is not None
+                and not isinstance(self._https_fetcher, AsyncHTTPSFetcher)):
+            return await self._async_run_blocking(
+                lambda: self._fetch_status(su, revalidate=revalidate),
+            )
+        with _status_fetch_boundary():
+            if isinstance(self._https_fetcher, AsyncHTTPSFetcher):
+                from ._https_client import _parse_agent_status_from_dict
+
+                raw, _ = await self._https_fetcher.async_fetch_strict_json(
+                    su, revalidate=revalidate,
+                )
+                status = _parse_agent_status_from_dict(raw)
+            else:
+                status = await async_fetch_agent_status(
+                    su, transport=make_ssrf_safe_async_transport(self._transport_config),
+                    revalidate=revalidate,
+                )
+            status.validate()
+        return status
+
+    async def _async_run_blocking(self, work: Callable[[], _T]) -> _T:
+        return await async_wait_for_verification(self._submit_verification(work))
+
+    def _fetch_status(self, su: str, *, revalidate: bool = False) -> Any:
         """Fetch the status endpoint using the injected HTTPSFetcher or the default transport.
 
         A transport-level fetch failure (DNS, connect, TLS handshake, 5xx)
@@ -1852,45 +2483,121 @@ class IdentityManager:
         is additionally remapped even without the flag, so an injected fetcher
         that omits it cannot leak a raw network error past this taxonomy.
         """
-        try:
+        with _status_fetch_boundary():
             if self._https_fetcher is not None:
                 from ._https_client import _parse_agent_status_from_dict
 
-                raw, _ = self._https_fetcher.fetch_strict_json(su)
+                raw, _ = self._https_fetcher.fetch_strict_json(su, revalidate=revalidate)
                 status = _parse_agent_status_from_dict(raw)
             else:
                 status = _fetch_strict_json_status(
-                    su, transport=self._transport_config, client=self._http_client
+                    su, transport=self._transport_config, client=self._http_client,
+                    revalidate=revalidate,
                 )
-        except VerificationError as exc:
-            if exc.transient or exc.code == VerificationCode.DNS_RESOLUTION:
-                raise VerificationError(
-                    VerificationCode.STATUS_UNAVAILABLE,
-                    f"status endpoint unavailable: {exc}",
-                    transient=True,
-                    cause=exc,
-                ) from exc
-            raise
-        try:
             status.validate()
-        except ValidationError as exc:
-            raise VerificationError(
-                VerificationCode.RECORD_INVALID,
-                "invalid agent status document",
-                cause=exc,
-            ) from exc
         return status
 
-    def close(self) -> None:
-        """Close manager-owned HTTP resources.
+    @contextmanager
+    def _verification_call(self) -> Iterator[None]:
+        call: Future[None] = Future()
+        with self._coordination_lock:
+            if self._closing or self._closed:
+                raise RuntimeError("IdentityManager is closing or closed")
+            self._active_verifications.add(call)
+        try:
+            yield
+        finally:
+            with self._coordination_lock:
+                self._active_verifications.remove(call)
+            call.set_result(None)
 
-        Closing is idempotent. The manager must not be closed while verification
-        calls are active. Injected HTTPSFetcher instances remain caller-owned.
+    def _track_verification_worker(self, future: Future[Any]) -> None:
+        with self._coordination_lock:
+            self._verification_workers.add(future)
+
+        def finished(done: Future[Any]) -> None:
+            with self._coordination_lock:
+                self._verification_workers.discard(done)
+
+        future.add_done_callback(finished)
+
+    def _submit_verification(self, work: Callable[[], _T]) -> Future[_T]:
+        context = verification_work_context(self._track_verification_worker)
+        future = self._verification_executor.submit(context.run, work)
+        self._track_verification_worker(future)
+        return future
+
+    def _pending_verification_work(self) -> set[Future[Any]]:
+        return {
+            future for future in (
+                self._active_verifications | self._verification_workers
+                | set(self._verification_futures.values()) | set(self._status_futures.values())
+                | set(self._refresh_futures.values())
+            ) if not future.done()
+        }
+
+    def close(self) -> None:
+        """Drain owned verification work and close resources synchronously.
+
+        Raises RuntimeError rather than blocking an event loop when work is
+        active; use ``await aclose()`` or ``async with`` there. Closing is
+        idempotent. Injected dependencies remain caller-owned.
         """
-        if not self._closed:
+        with self._close_lock:
+            with self._coordination_lock:
+                if self._closed:
+                    return
+                pending = self._pending_verification_work()
+                if pending:
+                    try:
+                        asyncio.get_running_loop()
+                    except RuntimeError:
+                        pass
+                    else:
+                        raise RuntimeError("verification is active; await aclose() to drain it")
+                self._closing = True
+            while pending:
+                wait(pending)
+                with self._coordination_lock:
+                    pending = self._pending_verification_work()
+            self._verification_executor.shutdown(wait=True)
             if self._http_client is not None:
                 self._http_client.close()
-            self._closed = True
+            with self._coordination_lock:
+                self._closed = True
+
+    async def aclose(self) -> None:
+        """Reject new verification calls, drain owned work, then close resources.
+
+        Includes shared refreshes, workers and unfinished fan-out branches left
+        after a caller cancels or fails. Existing calls keep their own deadlines.
+        Injected blocking adapters must honor verification budgets. Cancellation
+        of ``aclose()`` leaves the manager closing; await it again to finish.
+        Injected dependencies remain caller-owned. Closing is idempotent.
+        """
+        with self._coordination_lock:
+            self._closing = True
+        while True:
+            with self._coordination_lock:
+                pending = self._pending_verification_work()
+            if not pending:
+                break
+            await asyncio.gather(
+                *(async_wait_for_verification(future) for future in pending),
+                return_exceptions=True,
+            )
+        self.close()
+
+    async def __aenter__(self) -> IdentityManager:
+        """Return this manager for async context-manager use."""
+        with self._coordination_lock:
+            if self._closing or self._closed:
+                raise RuntimeError("IdentityManager is closing or closed")
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        """Drain background verification and close owned resources on context exit."""
+        await self.aclose()
 
     def __enter__(self) -> IdentityManager:
         """Return this manager for synchronous context-manager use."""
@@ -1976,6 +2683,29 @@ def sign_event_with_provider(
         event.signing_kid = key_provider.signing_key().kid
         event.sig = b64url_encode(key_provider.sign(canonical))
     return event
+
+
+@contextmanager
+def _status_fetch_boundary() -> Iterator[None]:
+    try:
+        yield
+    except VerificationError as exc:
+        if exc.code == VerificationCode.DEADLINE_EXCEEDED:
+            raise
+        if exc.transient or exc.code == VerificationCode.DNS_RESOLUTION:
+            raise VerificationError(
+                VerificationCode.STATUS_UNAVAILABLE,
+                f"status endpoint unavailable: {exc}",
+                transient=True,
+                cause=exc,
+            ) from exc
+        raise
+    except ValidationError as exc:
+        raise VerificationError(
+            VerificationCode.RECORD_INVALID,
+            "invalid agent status document",
+            cause=exc,
+        ) from exc
 
 
 def _required_log_signatures(event: LogEvent) -> list[LogSignerRole]:
@@ -2209,6 +2939,7 @@ def _fetch_jwks(
     transport: TransportConfig | None = None,
     domain_boundary: bool = False,
     client: httpx.Client | None = None,
+    *, revalidate: bool = False,
 ) -> tuple[JWKS, Any]:
     from ._https_client import fetch_jwks
 
@@ -2220,6 +2951,7 @@ def _fetch_jwks(
         transport=sdk_transport,
         domain_boundary=domain_boundary,
         client=client,
+        revalidate=revalidate,
     )
 
 
@@ -2227,11 +2959,14 @@ def _fetch_strict_json_status(
     su: str,
     transport: TransportConfig | None = None,
     client: httpx.Client | None = None,
+    *, revalidate: bool = False,
 ) -> Any:
     from ._https_client import fetch_agent_status
 
     sdk_transport = _make_sdk_transport(transport) if client is None else None
-    return fetch_agent_status(su, verify=True, transport=sdk_transport, client=client)
+    return fetch_agent_status(
+        su, verify=True, transport=sdk_transport, client=client, revalidate=revalidate
+    )
 
 
 def _make_async_sdk_transport(config: TransportConfig | None) -> httpx.AsyncBaseTransport:
@@ -2267,25 +3002,6 @@ def _make_async_sdk_transport(config: TransportConfig | None) -> httpx.AsyncBase
     return _AsyncHttpcoreTransport(pool)
 
 
-def _resolve_a(host: str, dns_host: str, dns_port: int) -> str:
-    import ipaddress
-
-    try:
-        ipaddress.ip_address(host)
-        return host
-    except ValueError:
-        pass
-    try:
-        import dns.resolver
-
-        r = dns.resolver.Resolver(configure=False)
-        r.nameservers = [dns_host]
-        r.port = dns_port
-        return str(r.resolve(host, "A")[0])
-    except Exception:
-        return host
-
-
 def _AsyncDnsRoutingBackend(dns_host: str, dns_port: int) -> httpcore.AsyncNetworkBackend:
     import httpcore
     from httpcore._backends.base import SOCKET_OPTION
@@ -2305,9 +3021,9 @@ def _AsyncDnsRoutingBackend(dns_host: str, dns_port: int) -> httpcore.AsyncNetwo
             local_address: str | None = None,
             socket_options: Iterable[SOCKET_OPTION] | None = None,
         ) -> httpcore.AsyncNetworkStream:
-            resolved = _resolve_a(host, _h, _p)
+            addresses = await _async_resolve_addresses(host, _h, _p)
             return await self._delegate.connect_tcp(
-                resolved, port, timeout, local_address, socket_options
+                addresses[0], port, timeout, local_address, socket_options
             )
 
         async def connect_unix_socket(
@@ -2322,45 +3038,6 @@ def _AsyncDnsRoutingBackend(dns_host: str, dns_port: int) -> httpcore.AsyncNetwo
             await self._delegate.sleep(seconds)
 
     return _Backend()
-
-
-def _AsyncHttpcoreTransport(pool: httpcore.AsyncConnectionPool) -> httpx.AsyncBaseTransport:
-    from collections.abc import AsyncIterable
-
-    import httpcore
-    import httpx
-    from httpx._transports.default import AsyncResponseStream, map_httpcore_exceptions
-
-    class _Transport(httpx.AsyncBaseTransport):
-        _pool = pool
-
-        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-            req = httpcore.Request(
-                method=request.method,
-                url=httpcore.URL(
-                    scheme=request.url.raw_scheme,
-                    host=request.url.raw_host,
-                    port=request.url.port,
-                    target=request.url.raw_path,
-                ),
-                headers=request.headers.raw,
-                content=request.stream,
-                extensions=request.extensions,
-            )
-            with map_httpcore_exceptions():
-                resp = await self._pool.handle_async_request(req)
-            async_stream: AsyncIterable[bytes] = resp.stream  # type: ignore[assignment]
-            return httpx.Response(
-                status_code=resp.status,
-                headers=resp.headers,
-                stream=AsyncResponseStream(async_stream),
-                extensions=resp.extensions,
-            )
-
-        async def aclose(self) -> None:
-            await self._pool.aclose()
-
-    return _Transport()
 
 
 def _build_unsigned_txt_record(config: IdentityConfig) -> DnsIdTxtRecord:

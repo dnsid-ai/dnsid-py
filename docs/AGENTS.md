@@ -45,6 +45,9 @@ docs.dnsid.ai) under `src/content/docs/reference/py/`, and
 - Application profiles (JOSE, HTTP Message Signatures, Web Bot Auth, OIDC)
   are explicitly **not part of the core DNSid
   protocol** — preserve that framing wherever profiles are described.
-- The public API is synchronous by design; async support is limited to
-  the httpx transport plumbing and `async_retry_transient`. Don't
-  document methods as async-capable.
+- Domain and HTTP-signature verification and registry HTTP operations have
+  async entry points. Async-led cold reads use native async adapters; registry
+  requests use a pool on one event loop. Sync-led verification, sync-only
+  adapters, atomic checkpoint stores, and manager lifecycle workflows still
+  use workers; document these limits. Do not describe synchronous-only profile
+  or manager APIs as async-capable.

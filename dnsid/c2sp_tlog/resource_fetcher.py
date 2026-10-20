@@ -2,18 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlsplit
 
 import httpx
 
-from .._verification_budget import remaining_seconds, verification_operation
-from ..exceptions import ArgumentError
+from .._bounded_response import ACCEPT_ENCODING, BoundedBody
+from .._verification_budget import (
+    async_verification_operation,
+    remaining_seconds,
+    verification_operation,
+)
+from ..exceptions import ArgumentError, VerificationError
 from ..models import TransportConfig
-from ..safe_transport import SSRF_BLOCK_MARKER, make_ssrf_safe_transport
+from ..safe_transport import (
+    SSRF_BLOCK_MARKER,
+    make_ssrf_safe_async_transport,
+    make_ssrf_safe_transport,
+)
 from .errors import C2spTlogTransportError
 
 
@@ -41,6 +53,20 @@ class C2spBoundedResourceFetcher(Protocol):
 
     def security_guarantees(self) -> C2spResourceFetchGuarantees:
         """Declare the public-read security capabilities enforced by the fetcher."""
+        ...
+
+
+class AsyncC2spBoundedResourceFetcher(C2spBoundedResourceFetcher, Protocol):
+    """Optional native async capability of a synchronous bounded fetcher.
+
+    Apply the same URL, decoded-byte, DNS/TLS and redirect guarantees. Honor the
+    verification budget and close in-progress responses on cancellation. Injected
+    resources remain caller-owned and must support concurrent calls on their
+    supported event loops.
+    """
+
+    async def async_fetch_bounded(self, url: str, max_bytes: int) -> bytes:
+        """Fetch bounded decoded bytes, closing the response on cancellation."""
         ...
 
 
@@ -73,6 +99,8 @@ class SafeC2spResourceFetcher:
             raise ArgumentError("c2sp-tlog timeout_seconds must be a finite positive number")
         self._timeout_seconds = float(timeout_seconds)
         self._clock = time.monotonic
+        self._transport_config = transport_config
+        self._allow_loopback_host = allow_loopback_host
         self._client = httpx.Client(
             transport=make_ssrf_safe_transport(
                 transport_config, allow_loopback_host=allow_loopback_host
@@ -90,42 +118,26 @@ class SafeC2spResourceFetcher:
         deadline = self._clock() + timeout
         try:
             with self._client.stream(
-                "GET", url, headers={"Cache-Control": "no-cache"}, timeout=timeout,
+                "GET", url,
+                headers={"Cache-Control": "no-cache", "Accept-Encoding": ACCEPT_ENCODING},
+                timeout=timeout,
             ) as response:
-                if response.is_redirect:
-                    raise C2spTlogTransportError(
-                        f"C2SP resource redirect rejected for {url}",
-                        transient=False,
-                    )
-                if response.status_code != 200:
-                    raise C2spTlogTransportError(
-                        f"C2SP resource returned HTTP {response.status_code}: {url}",
-                        transient=response.status_code >= 500,
-                        status_code=response.status_code,
-                    )
-                content_length = response.headers.get("content-length")
-                if content_length is not None:
-                    try:
-                        declared_length = int(content_length)
-                    except ValueError:
-                        declared_length = None
-                    if declared_length is not None and declared_length > max_bytes:
-                        raise _response_limit_error(url, max_bytes)
-
-                body = bytearray()
-                # iter_bytes() yields decoded bytes, so compression cannot evade
-                # this limit even when Content-Length describes encoded bytes.
-                for chunk in response.iter_bytes():
+                _validate_resource_response(response, url, max_bytes)
+                body = BoundedBody(
+                    response, max_bytes, lambda: _response_limit_error(url, max_bytes),
+                    invalid=lambda detail: C2spTlogTransportError(detail, transient=False),
+                )
+                chunks = (response.iter_bytes() if response.is_stream_consumed
+                          else response.iter_raw())
+                for chunk in chunks:
                     remaining_seconds()
                     if self._clock() > deadline:
                         raise C2spTlogTransportError(
                             f"deadline exceeded fetching C2SP resource: {url}",
                             transient=True,
                         )
-                    body.extend(chunk)
-                    if len(body) > max_bytes:
-                        raise _response_limit_error(url, max_bytes)
-                return bytes(body)
+                    body.append(chunk)
+                return body.finish()
         except C2spTlogTransportError:
             raise
         except httpx.ConnectError as exc:
@@ -140,11 +152,60 @@ class SafeC2spResourceFetcher:
                 transient=True,
                 cause=exc,
             ) from exc
-        except httpx.TransportError as exc:
+        except (httpx.TransportError, httpx.TooManyRedirects) as exc:
             raise C2spTlogTransportError(
                 f"failed to fetch C2SP resource: {url}",
                 transient=False if isinstance(exc, httpx.TooManyRedirects) else True,
                 cause=exc,
+            ) from exc
+
+    @async_verification_operation
+    async def async_fetch_bounded(self, url: str, max_bytes: int) -> bytes:
+        """Read natively with the sync guarantees and a per-call owned client.
+
+        Clients are not shared between event loops. Closing this fetcher closes
+        only its synchronous pool; each async call closes its own resources.
+        """
+        _require_positive_integer(max_bytes, "max_bytes")
+        _validate_resource_url(url)
+        timeout = remaining_seconds(self._timeout_seconds)
+        try:
+            async with asyncio.timeout(timeout):
+                async with httpx.AsyncClient(
+                    transport=make_ssrf_safe_async_transport(
+                        self._transport_config, allow_loopback_host=self._allow_loopback_host,
+                    ),
+                    follow_redirects=False,
+                    timeout=timeout,
+                ) as client:
+                    async with client.stream(
+                        "GET", url,
+                        headers={"Cache-Control": "no-cache", "Accept-Encoding": ACCEPT_ENCODING},
+                        timeout=timeout,
+                    ) as response:
+                        _validate_resource_response(response, url, max_bytes)
+                        body = BoundedBody(
+                            response, max_bytes, lambda: _response_limit_error(url, max_bytes),
+                            invalid=lambda detail: C2spTlogTransportError(detail, transient=False),
+                        )
+                        chunks = (response.aiter_bytes() if response.is_stream_consumed
+                                  else response.aiter_raw())
+                        async for chunk in chunks:
+                            body.append(chunk)
+                        return body.finish()
+        except httpx.ConnectError as exc:
+            raise C2spTlogTransportError(
+                f"failed to connect while fetching C2SP resource: {url}",
+                transient=SSRF_BLOCK_MARKER not in str(exc), cause=exc,
+            ) from exc
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            raise C2spTlogTransportError(
+                f"timed out fetching C2SP resource: {url}", transient=True, cause=exc,
+            ) from exc
+        except (httpx.TransportError, httpx.TooManyRedirects) as exc:
+            raise C2spTlogTransportError(
+                f"failed to fetch C2SP resource: {url}",
+                transient=not isinstance(exc, httpx.TooManyRedirects), cause=exc,
             ) from exc
 
     def security_guarantees(self) -> C2spResourceFetchGuarantees:
@@ -220,6 +281,24 @@ def validate_resource_fetcher_capabilities(fetcher: object) -> None:
 @verification_operation
 def fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -> bytes:
     """Invoke a validated fetcher and defensively enforce its returned length."""
+    with _resource_fetch_boundary(fetcher, url, max_bytes) as fetch:
+        return _checked_resource_response(fetch(url, max_bytes), url, max_bytes)
+
+
+@async_verification_operation
+async def async_fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -> bytes:
+    """Invoke a validated fetcher and defensively enforce its returned length."""
+    from ._async import call_async
+
+    with _resource_fetch_boundary(fetcher, url, max_bytes):
+        response = await call_async(fetcher, "fetch_bounded", url, max_bytes)
+        return _checked_resource_response(response, url, max_bytes)
+
+
+@contextmanager
+def _resource_fetch_boundary(
+    fetcher: object, url: str, max_bytes: int,
+) -> Iterator[Callable[[str, int], bytes]]:
     _require_positive_integer(max_bytes, "max_bytes")
     method = getattr(fetcher, "fetch_bounded", None)
     if not callable(method):
@@ -228,8 +307,8 @@ def fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -> bytes:
             transient=False,
         )
     try:
-        response = method(url, max_bytes)
-    except C2spTlogTransportError:
+        yield method
+    except (C2spTlogTransportError, VerificationError):
         raise
     except httpx.ConnectError as exc:
         raise C2spTlogTransportError(
@@ -257,6 +336,9 @@ def fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -> bytes:
             transient=False,
             cause=exc,
         ) from exc
+
+
+def _checked_resource_response(response: object, url: str, max_bytes: int) -> bytes:
     if not isinstance(response, bytes):
         raise C2spTlogTransportError(
             f"C2SP resource fetcher returned a non-bytes response: {url}",
@@ -265,6 +347,28 @@ def fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -> bytes:
     if len(response) > max_bytes:
         raise _response_limit_error(url, max_bytes)
     return response
+
+
+def _validate_resource_response(response: httpx.Response, url: str, max_bytes: int) -> None:
+    if response.is_redirect:
+        raise C2spTlogTransportError(
+            f"C2SP resource redirect rejected for {url}",
+            transient=False,
+        )
+    if response.status_code != 200:
+        raise C2spTlogTransportError(
+            f"C2SP resource returned HTTP {response.status_code}: {url}",
+            transient=response.status_code >= 500,
+            status_code=response.status_code,
+        )
+    content_length = response.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError:
+            declared_length = None
+        if declared_length is not None and declared_length > max_bytes:
+            raise _response_limit_error(url, max_bytes)
 
 
 def _validate_resource_url(url: str) -> None:

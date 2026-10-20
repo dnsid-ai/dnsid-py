@@ -44,7 +44,11 @@ SDK_CONFORMANCE = SDKConformance(
     ),
     specification_status="internet-draft",
     log_bindings=MappingProxyType({"c2sp-tlog": _C2SP_TLOG_BINDING}),
-    known_deviations=(),
+    known_deviations=(
+        "JOSE, HTTP Message Signatures, and OIDC profiles retain mutable caller configuration.",
+        "The JWT bearer profile is exported as WebBotAuthProfile; "
+        "Web Bot Auth naming is reserved for RFC 9421.",
+    ),
 )
 
 

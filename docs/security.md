@@ -196,56 +196,34 @@ re-checks `su` each time before returning a cached identity. Call
 `IdentityManager.evict_domain(domain)` after operator-driven DNS/JWKS/status
 changes when a process must observe the new state before cache expiry.
 
-### Persistent transparency-log trust and recovery
+### Transparency-log trust and recovery
 
-**The default checkpoint store is in memory.** It rejects rollback/forks only
-within the lifetime of that store. Restarting loses continuity, even though
-signature, witness, and freshness checks still apply. There is no runtime warning
-for this default; configure persistent storage explicitly in production.
+**The built-in checkpoint store is in memory.** It rejects rollback/forks only
+within the lifetime of that store instance. Restarting or recreating the store
+loses remembered trust, even though signature, witness, and freshness checks still
+apply. There is no runtime warning for this default. Reuse registries and stores;
+the SDK provides no durable adapter or administrative recovery API.
 
-`SQLiteCheckpointStore` uses Python's standard-library SQLite transactions rather
-than a custom file-replacement/locking implementation. It commits trusted state
-before returning success, serializing read/verify/advance across threads and
-processes. The lock covers the **whole database**, including consistency-proof
-fetches in a verification callback, not just one origin. Contention beyond five
-seconds fails closed; shard independent origins into separate stores if needed.
-Do not re-enter the same store from its verification callback.
+Applications needing cross-restart protection implement `CheckpointStore`.
+Generic and managed verification options accept `trusted_checkpoint_store=store`;
+raw reader and portable bundle options accept `checkpoint_store=store`. Construct
+the registry in code and inject it into
+`IdentityManagerDependencies(log_registry=registry)`. Deployment files and SDK
+environment variables do not initialize or configure checkpoint storage.
 
-Provision a private directory on a persistent **local** filesystem with reliable
-SQLite locking and sync behavior. Initialize a new store once, deliberately:
+Custom stores must validate checkpoint tuples, return immutable snapshots, and
+serialize verification and advancement against the exact current state. Lock waits
+and publication must honor the invocation's verification budget; canceled work
+must not remain queued to publish later. Do not re-enter a store from its
+verification callback.
 
-```python
-from dnsid.c2sp_tlog import SQLiteCheckpointStore
-
-SQLiteCheckpointStore("/var/lib/my-agent/checkpoints.sqlite3", create=True)
-```
-
-`create=True` fails if the file already exists. On every ordinary startup, open
-without `create=True`; missing, corrupt, or unsupported state is an error, never
-an automatic reset to first contact:
-
-```python
-from dnsid.c2sp_tlog import (
-    DnsidManagedVerificationOptions,
-    SQLiteCheckpointStore,
-    create_dnsid_managed_verification_registry,
-)
-
-store = SQLiteCheckpointStore("/var/lib/my-agent/checkpoints.sqlite3")
-registry = create_dnsid_managed_verification_registry(
-    DnsidManagedVerificationOptions(trusted_checkpoint_store=store)
-)
-# Inject registry into IdentityManagerDependencies(log_registry=registry).
-```
-
-Generic verification options also accept `trusted_checkpoint_store=store`; raw
-reader and portable bundle options accept `checkpoint_store=store`. No open
-connection is retained between operations. Protect the database directory and
-SQLite journal files; do not delete journals or copy a live database without
-SQLite's backup API. Storage durability depends on the filesystem/hardware
-honoring sync. An empty store uses first-contact trust: if that is inappropriate,
-seed `put()` with an independently authenticated checkpoint during provisioning.
-Do not routinely seed on startup or automatically recreate a lost database.
+Durable adapters must explicitly separate initialization from opening existing
+storage, distinguish unseen origins from lost records, and acknowledge success
+only after atomic durable commit. Missing, unreadable, corrupt, or unsupported
+existing storage must fail closed, never recreate empty trust or substitute an
+in-memory store. Document locking, contention, backup, and recovery assumptions,
+and test competing processes, crashes, and uncertain commits. Protect checkpoint
+state and signed evidence outside the verified service's rollback boundary.
 
 #### Checkpoint failures
 
@@ -270,34 +248,29 @@ can have an uncertain outcome: reopen and inspect state before retrying.
 
 #### Authorized re-baseline procedure
 
-1. Stop affected verification/signing workflows and coordinate all processes
-   sharing the store. Preserve old checkpoints, signed evidence, and a consistent
-   database backup in an external incident archive. Restoring an old database
-   backup also weakens continuity; do not do that casually.
-2. Have the deployment's incident/security owner independently confirm recovery
-   through an authenticated operator channel. Demand the affected origin, old/new
-   sizes and roots, recovery reason, and an explicit authorization/evidence
-   reference. Verify replacement log signatures, witness quorum, and freshness
-   against approved trust roots. Do **not** use the failed response alone as
-   authorization, and do not invent an SDK-verifiable recovery statement: no such
-   platform protocol is implemented here.
-3. Review the exact current `TrustedCheckpoint` and construct the independently
-   authenticated replacement. Call
-   `store.rebaseline(replacement, expected=reviewed_checkpoint,
-   authorized_by="incident/security owner", evidence="incident/evidence reference")`
-   from a separately authorized operator action, never a verification exception
-   handler. `expected` must match the stored checkpoint; concurrent advancement
-   aborts the reset and requires review again. Origins must match. `put()` cannot
-   lower a tree size and is **not** the recovery operation.
-4. The replacement and audit record commit together. The `rebaselines` SQL table
-   retains origin, previous/new sizes, roots and witness times, authorizer,
-   evidence reference, and UTC recording time. This is an audit trail, not a
-   tamper-proof authorization mechanism; keep the independent incident archive.
-5. Recreate managers/readers (clearing cached verified identities/history), verify
-   the recovered environment end to end, and only then resume service. A reset
-   explicitly abandons continuity across the recovery boundary; future forks and
-   rollback must still fail closed. Prefer restoring the original append-only
-   history over re-baselining whenever possible.
+Recovery is deployment-owned and separate from verification. A signed checkpoint,
+announced restore, retry, or restart does not authorize a continuity break.
+
+1. Stop and drain or fence affected verification and lifecycle writers across all
+   processes. Preserve the old trusted tuple, observed signed checkpoints, witness
+   evidence, failed proofs, and incident logs in an independently protected archive.
+2. Obtain independently authenticated recovery-authority approval for the exact
+   origin, old and replacement size/root/time tuples, and trust policy. Record the
+   approver, authorization time, reason, and evidence references before replacement.
+   The failed log cannot authorize its own reset.
+3. Independently verify the replacement's log signature, witness quorum, origin,
+   and freshness against the approved policy. Check recovered lifecycle state
+   separately; replacing checkpoint trust does not repair lost history.
+4. Use deployment tooling to replace only the exact reviewed old tuple, without
+   automatic reload/retry on stale state or storage failure. `put()` is a seeding
+   primitive, not recovery authorization. If the adapter prohibits replacement,
+   explicitly initialize and seed a separate namespace, retain the old namespace,
+   and switch fenced consumers. Require durable acknowledgment for durable stores
+   and read back the replacement before resuming.
+5. Retain an audit record linking both tuples, authorization/evidence references,
+   replacement time, and reconciled outcome. Discard affected caches and retained
+   verified objects, rebuild managers/readers, and complete fresh identity and
+   lifecycle verification before resuming service.
 
 ### Proxy, TLS, and trust-store posture
 

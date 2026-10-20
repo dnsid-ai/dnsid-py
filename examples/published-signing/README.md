@@ -121,11 +121,10 @@ validates configuration, builds the selected trust binding, and opens the
 existing provider. AWS loading calls `GetPublicKey` and validates key usage
 and algorithm. Log-policy loading may perform HTTPS requests.
 
-On this branch, construction does **not** automatically verify the published
-identity or compare its operational key with the provider. The example
-therefore calls `verify_domain` on its own domain, which verifies the public
-record, JWKS, lifecycle binding, and ACTIVE status. It then requires one current
-operational key and compares both `kid` and RFC 7638 thumbprint before signing.
+Construction verifies the local public record, JWKS, lifecycle binding, and
+ACTIVE status, then compares the selected provider's key with the current
+published key by `kid`, algorithm, and RFC 7638 thumbprint before returning.
+The example uses this shared check rather than repeating it.
 Any failure stops signing; there is no recovery or fallback. Identities with
 `fl=mtls` also require a real peer TLS certificate for verification; this minimal
 example does not supply one.

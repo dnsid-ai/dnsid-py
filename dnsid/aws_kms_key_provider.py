@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat,
 
 from ._crypto import jwk_from_dict
 from ._utils import b64url_encode
-from .exceptions import ArgumentError
+from .exceptions import ArgumentError, NoActiveSigningKeyError
 from .interfaces import KeyProvider
 from .models import JWK
 
@@ -286,8 +286,13 @@ class AwsKmsKeyProvider(KeyProvider):
             config: Provider configuration and initial key lifecycle state.
 
         Raises:
-            ArgumentError: If any configured key ID is empty or contains '#'.
+            ArgumentError: If an algorithm/key spec is unsupported or mismatched,
+                or any configured key ID is empty or contains '#'.
         """
+        if config.algorithm not in {"ECDSA_SHA_256", "ED25519_SHA_512"}:
+            raise ArgumentError("unsupported AWS KMS signing algorithm")
+        if config.key_spec is not None and config.key_spec != _default_key_spec(config.algorithm):
+            raise ArgumentError("AWS KMS key spec does not match the signing algorithm")
         self._client = client
         self._state = _state_from_config(config)
         self._algorithm: AwsKmsSigningAlgorithm = config.algorithm
@@ -334,9 +339,9 @@ class AwsKmsKeyProvider(KeyProvider):
     # ------------------------------------------------------------------
 
     def signing_key(self) -> JWK:
-        """Return the public JWK of the current active signing key."""
+        """Return the active public JWK; raise NoActiveSigningKeyError if absent."""
         if not self._state.active_key_id:
-            raise ArgumentError("provider has no active signing key")
+            raise NoActiveSigningKeyError("provider has no active signing key")
         return self._public_jwk(self._state.active_key_id)
 
     def jwk(self, kid: str) -> JWK:
@@ -424,6 +429,10 @@ class AwsKmsKeyProvider(KeyProvider):
     # ------------------------------------------------------------------
     # KeyProvider management methods
     # ------------------------------------------------------------------
+
+    def generation_algorithm(self) -> str:
+        """Return the configured JOSE generation algorithm, even without an active key."""
+        return _jose_alg_for_aws(self._algorithm)
 
     def generate_key(self) -> str:
         """Generate a new KMS key in the pending state.

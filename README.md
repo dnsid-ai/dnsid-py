@@ -79,7 +79,54 @@ method or trust root; configure a matching reader (see the
 
 **Import surface.** Everything is importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. The transparency-log integration is the exception: import it from `dnsid.c2sp_tlog`.
 
-**Synchronous by design.** Verification and most public operations are synchronous. Async support includes `RegistryClient.async_wait_for_status()` (which polls synchronously), signed `httpx.AsyncClient` transport plumbing, and `async_retry_transient`. Call blocking SDK operations from async code via `asyncio.to_thread` or an executor.
+**Async verification.** Use `await manager.async_verify_domain(domain)` and
+`await http_signer.async_verify_signed_http_request(request)` in middleware.
+Fresh identity-cache hits, coalesced waits, and default stale-status refreshes
+use no worker threads; policy and signature checks still run on every request.
+Async-led cold verification uses native TXT, JWKS, status and C2SP bundle,
+tile and predecessor reads. Optional `AsyncDNSResolver`, `AsyncHTTPSFetcher`
+and `AsyncLogReader` capabilities are awaited; keep synchronous methods for
+synchronous callers. Sync-only adapters, substantial C2SP validation, and atomic
+checkpoint-store operations use bounded workers. Network reads remain native
+async. Mixed sync/async calls share whichever evidence leader starts first; sync-led work retains synchronous adapters in workers.
+Injected resources remain caller-owned. Core verification, registry, and C2SP
+readers bound gzip/deflate output during decompression and reject other codings.
+Shared evidence has its own 30-second budget. Caller cancellation or deadlines
+stop only that caller's wait. Reuse one manager for the application lifetime;
+use `async with manager` or `await manager.aclose()` at shutdown to drain work
+and close owned resources. `verification_budget(5)` limits a request to five
+seconds; expiry raises `VerificationError` with `DEADLINE_EXCEEDED` and
+`transient=True`. Synchronous APIs remain available.
+
+Use `await manager.async_refresh_domain(domain)` for a full verification that
+bypasses the identity cache and revalidates HTTP evidence. Concurrent explicit
+refreshes share work, but do not reuse ordinary lookups. Peer binding, acceptance,
+and freshness are enforced for each caller.
+
+Signed `httpx.AsyncClient` requests offload synchronous signing (including KMS).
+`create_signed_async_http_client(transport=...)` accepts a custom outbound
+transport, including `httpx.MockTransport`; the returned client owns and closes it.
+Other blocking SDK operations still need `asyncio.to_thread` or an executor.
+See the runnable [async verification example](examples/async-verification/) for
+configuration, request deadlines, error handling, and cleanup.
+
+**Async registry I/O.** Every registry operation has an `async_` variant,
+including `async_register_agent()`, `async_get_agent_status()`, and
+`async_wait_for_status()`. These use pooled native async HTTP with the same
+validation and error handling as synchronous calls:
+
+```python
+from dnsid import registry_client_from_environment
+
+async with registry_client_from_environment() as registry:
+    status = await registry.async_get_agent_status("agent.example")
+```
+
+Reuse the client on one event loop and finish requests before closing it.
+Use `await registry.aclose()` if you do not use `async with`.
+Cancellation cannot undo mutations already accepted by the server; reconcile
+the result and reuse the same request and idempotency key when retrying.
+Manager-level publication and rotation workflows still need a worker.
 
 ## Documentation
 
@@ -517,6 +564,24 @@ policy parsing, custom source construction, registration, and checkpoint-store
 injection remain available
 for advanced deployments.
 
+The SDK supplies only in-memory checkpoint storage, matching the Go and TypeScript
+SDKs. Reuse the same registry/store to retain observed trust. Applications that
+need cross-restart protection implement the `CheckpointStore` interface and inject
+it through `C2spTlogVerificationOptions(trusted_checkpoint_store=store, ...)` or
+`DnsidManagedVerificationOptions(trusted_checkpoint_store=store)`, then inject the
+registry into `IdentityManagerDependencies(log_registry=registry)`. Deployment
+files and SDK environment variables do not configure storage.
+
+Checkpoint failures expose stable `category` values through `VerificationError`.
+Its typed `__cause__` retains continuity diagnostics or the storage failure.
+Cancellation is cooperative through the invocation budget and prevents publication
+when observed beforehand. Custom stores must preserve atomicity and cancellation,
+fail closed on lost or corrupt state, and acknowledge durable writes only after
+commit. A failed write may already have published; reconcile actual stored state
+before recovery. Recovery requires independently authenticated authorization,
+retained signed evidence, and fresh verification, not an automatic trust reset.
+See [checkpoint implementation checks](docs/checkpoint-continuity.md).
+
 The reader authenticates checkpoints against the pinned log and witness keys
 (with anti-rollback via a checkpoint store), verifies Merkle inclusion, and
 for records using `dnsid-draft-01` or pre-RFC `DNSid1` verifies the logged
@@ -613,15 +678,35 @@ Deployment files can select an existing operational key with `keySource.provider
 `keySource.keyRef`, and non-secret `keySource.settings`. Known cloud factories load
 only the selected optional package; missing packages fail without file fallback.
 Constructors never generate keys. Local file selection warns against production use.
+Configuration-selected signers must match verified local publication before return;
+initial unpublished setup requires explicitly injected providers.
 
 `RegistryClient.get_organization_onboarding()` explicitly reads existing account
 proof/delegation status; it does not create an identity or promise permanent replay.
-Pending proofs are not verified bindings, and this response supplies no entity JWKS URL.
+Pass `expected_org_id` and `expected_gi` to compare saved account bindings. The
+returned `bindings_ready` is true only for matching, verified governance proof
+and verified entity delegation. Pending proofs remain pending; no entity JWKS URL
+is inferred from this response.
+
+Initial issuance requires one durable coordinator and one retry owner. The SDK
+provides preparation, signing, and submission primitives, not a complete issuance
+coordinator. See [integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
 
 To move an established signer, use explicit `rotate_operational_key()` with a
-`target_key_provider` and stable old/target provider references. Recovery reuses those
-references and exact signed bytes. Activation requires verified current publication
-and rotation continuity; application signing stays paused until durable reconciliation.
+`target_key_provider` and stable old/target provider references. To change the signing
+algorithm, explicitly pass `target_algorithm="ES256"` (or `"EdDSA"`) and configure the
+target provider for that algorithm. The target may have no active key if it supports
+pending-key generation. The generated key must match before preparation.
+Recovery reuses the saved references and exact signed bytes, and validates both
+providers before submission or activation. Reopen their saved state; do not create
+replacement stores. If the manager already uses the target, pass the saved source
+as `previous_key_provider` to recovery methods. A removed source key is valid only
+with saved acceptance and the exact target already active; a distinct source must
+have no active signing key, but may retain unrelated historical keys. Custom providers
+must raise `NoActiveSigningKeyError` only for an absent active key, not a key-access
+failure, and override `generation_algorithm()` if generation does not use an active key.
+Activation requires verified current publication and
+rotation continuity; application signing stays paused until durable reconciliation.
 Changing deployment configuration alone neither rotates nor imports a private key.
 
 ## Configuration reference
@@ -740,7 +825,8 @@ Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/
 | [examples/local-key-provider/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/local-key-provider) | File-backed local key provider demo | None — fully self-contained |
 | [examples/published-signing/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/published-signing) | Load deployment config, verify an existing identity, and sign with AWS KMS or file custody | Published identity and its existing operational key |
 | [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Local registry (Docker + DNSid CLI) |
-| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | Network access — defaults to a hosted sandbox identity and the managed production log |
+| [examples/validate-domain/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/validate-domain) | Verify a domain's DNSid identity | Published identity and network access |
+| [examples/async-verification/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/async-verification) | Async verification with deadlines, error handling, and cleanup | Published identity and network access |
 | [examples/webbotauth/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/webbotauth) | Sign and verify bot HTTP requests with `WebBotAuthProfile` | None — fully self-contained |
 | [examples/oidc/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/oidc) | Mint and inspect a DNSid OIDC assertion with `OIDCProfile` | None offline; published identity + OIDC endpoint for opt-in exchange |
 

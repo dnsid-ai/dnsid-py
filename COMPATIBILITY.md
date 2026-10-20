@@ -141,8 +141,46 @@ SDK cannot guarantee prompt return from arbitrary caller code.
 
 Standalone bundle migration rejection remains an API limitation rather than a
 design deviation: configured readers recursively verify predecessor histories.
-Durable initial-issuance coordinator recovery remains deployment-owned and is
-not established by these verification tests.
+Managed log-trust construction uses the factory's fixed defaults, as required by
+design 12. Applications that need custom transport or durable checkpoint storage
+construct and inject their log registry explicitly.
+
+## Configuration and Lifecycle Boundaries
+
+Configuration-selected operational and entity signers must match verified local
+publication (kid, algorithm, and RFC 7638 thumbprint) before construction returns.
+Provider availability/settings are checked before policy fetch or discovery.
+Local publication validation checks protocol evidence, including ACTIVE status,
+but has no application peer or counterparty acceptance decision. Public
+`verify_domain` and `refresh_domain` still enforce both on every invocation.
+Injected providers still take precedence and remain their workflow's responsibility.
+Initial setup without existing ACTIVE publication must use explicitly injected
+providers, not configuration-selected signers.
+
+`RegistryClient.get_organization_onboarding(expected_org_id=..., expected_gi=...)`
+compares saved account bindings and adds locally derived `bindings_ready` to the
+returned dictionary. Missing/pending proof or delegation keeps this value false;
+registry authorization and unavailable-service errors are preserved.
+
+`PreparedC2spTlogEvent.event_id` is locally derived from canonical signed bytes.
+It is not a signed envelope member and does not change when signatures are added.
+
+The SDK exposes initial-issuance preparation, signing, and submission primitives,
+not a complete durable issuance coordinator. The application or registry owns
+one coordinator and one retry owner. It must persist intent and exact signed
+bytes, verify external publication, bind acceptance to the submitted hash and
+reference, and converge ACTIVE status idempotently after acceptance. SDK tests
+do not establish deployment-owned persistence or recovery.
+
+### Known Design Deviations
+
+`SDK_CONFORMANCE.known_deviations` records these remaining differences:
+
+- JOSE, HTTP Message Signatures, and OIDC profiles retain caller-owned mutable
+  configuration. Do not mutate their configuration after construction.
+- The JWT bearer helper is still exported as `WebBotAuthProfile`, although the
+  design reserves Web Bot Auth naming for RFC 9421. Its bearer tokens do not
+  authenticate HTTP method, URI, or content.
 
 ## Consistency Reference
 

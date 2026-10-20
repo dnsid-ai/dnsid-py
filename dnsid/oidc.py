@@ -894,39 +894,39 @@ def _post_form_json(
     loopback_host = _loopback_http_host(url)
     if loopback_host is not None and not allow_http_loopback:
         raise ArgumentError("OIDC loopback HTTP requires explicit opt-in")
+
+    def read(client: httpx.Client) -> dict[str, Any]:
+        with client.stream(
+            "POST", url, data=form, headers={"Accept": "application/json"},
+            follow_redirects=False,
+            timeout=bounded_http_timeout(timeout if timeout is not None else client.timeout),
+        ) as response:
+            if response.is_redirect:
+                raise NetworkError("OIDC token endpoint redirects are not allowed")
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                remaining_seconds()
+                if len(body) + len(chunk) > _MAX_BODY_BYTES:
+                    raise NetworkError("OIDC response body too large")
+                body.extend(chunk)
+            buffered = httpx.Response(response.status_code, content=bytes(body))
+            if response.status_code != 200:
+                try:
+                    data = buffered.json()
+                except Exception:
+                    data = {}
+                raise OAuthError(
+                    str(data.get("error") or ""), str(data.get("error_description") or "")
+                )
+            return _response_json(buffered)
+
     try:
         if http_client is not None:
-            if timeout is not None:
-                response = http_client.post(
-                    url,
-                    data=form,
-                    headers={"Accept": "application/json"},
-                    follow_redirects=False,
-                    timeout=timeout,
-                )
-            else:
-                response = http_client.post(
-                    url,
-                    data=form,
-                    headers={"Accept": "application/json"},
-                    follow_redirects=False,
-                )
-        else:
-            with _client(
-                transport_config, timeout, loopback_host
-            ) as client:
-                response = client.post(url, data=form, headers={"Accept": "application/json"})
+            return read(http_client)
+        with _client(transport_config, timeout, loopback_host) as client:
+            return read(client)
     except httpx.TransportError as exc:
         raise NetworkError(f"OIDC token POST failed for {url!r}: {exc}") from exc
-    if response.is_redirect:
-        raise NetworkError("OIDC token endpoint redirects are not allowed")
-    if response.status_code != 200:
-        try:
-            data = response.json()
-        except Exception:
-            data = {}
-        raise OAuthError(str(data.get("error") or ""), str(data.get("error_description") or ""))
-    return _response_json(response)
 
 
 def _response_json(response: httpx.Response) -> dict[str, Any]:

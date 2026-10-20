@@ -152,17 +152,16 @@ def _join(threads: list[threading.Thread]) -> None:
         assert not thread.is_alive()
 
 
-def _counting_future(expected_waiters: int):
-    count = 0
+def _counting_future(expected_followers: int):
+    waiters: set[int] = set()
     lock = threading.Lock()
     ready = threading.Event()
 
     class CountingFuture(Future[VerifiedDomain]):
         def result(self, timeout=None):
-            nonlocal count
             with lock:
-                count += 1
-                if count == expected_waiters:
+                waiters.add(threading.get_ident())
+                if len(waiters) == expected_followers + 1:
                     ready.set()
             return super().result(timeout)
 
@@ -390,7 +389,9 @@ class _InjectedFetcher(HTTPSFetcher):
     def __init__(self) -> None:
         self.close = MagicMock()
 
-    def fetch_strict_json(self, url, allowed_host=None, domain_boundary=False):
+    def fetch_strict_json(
+        self, url, allowed_host=None, domain_boundary=False, *, revalidate=False,
+    ):
         raise NotImplementedError
 
 

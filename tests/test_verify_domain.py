@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 from unittest.mock import MagicMock, patch
 
+import dns.resolver
 import pytest
 
 from dnsid import JWKS, DnsidConfig, DnsIdTxtRecord, IdentityManager, IdentityManagerDependencies
@@ -464,7 +465,8 @@ class TestVerifyDomain:
             with pytest.raises(VerificationError) as exc_info:
                 manager.verify_domain("service.example.com")
         fetch_txt.assert_called_once_with("_dnsid.service.example.com")
-        assert exc_info.value.code == VerificationCode.RECORD_INVALID
+        assert exc_info.value.code == VerificationCode.RECORD_NOT_FOUND
+        assert exc_info.value.transient is False
 
     @pytest.mark.parametrize(
         ("mode", "state", "allowed"),
@@ -495,8 +497,9 @@ class TestVerifyDomain:
         with pytest.raises(VerificationError) as exc_info:
             manager.verify_domain("service.example.com")
 
-        expected = VerificationCode.RECORD_INVALID if allowed else VerificationCode.DNSSEC_FAILED
+        expected = VerificationCode.RECORD_NOT_FOUND if allowed else VerificationCode.DNSSEC_FAILED
         assert exc_info.value.code == expected
+        assert exc_info.value.transient is False
 
     def test_invalid_dnssec_mode_fails_at_construction(self, ec_provider):
         resolver = MockDNSResolver()
@@ -534,7 +537,47 @@ class TestVerifyDomain:
 
         with pytest.raises(VerificationError) as exc_info:
             mgr.verify_domain(target)
-        assert exc_info.value.code == VerificationCode.RECORD_INVALID
+        assert exc_info.value.code == VerificationCode.RECORD_NOT_FOUND
+        assert exc_info.value.transient is False
+
+    @pytest.mark.parametrize(
+        "absence",
+        [([], DNSSECState.UNKNOWN), dns.resolver.NXDOMAIN(), dns.resolver.NoAnswer()],
+        ids=["empty", "nxdomain", "nodata"],
+    )
+    def test_record_can_be_published_after_absence(self, ec_pair, ec_provider, absence):
+        from dnsid import retry_transient
+
+        private, pub_jwk = ec_pair
+        target = "service.example.com"
+        resolver = MockDNSResolver()
+        resolver.fetch_txt = MagicMock(side_effect=[absence])
+        manager = _build_verifier(ec_provider, dns_resolver=resolver)
+
+        with pytest.raises(VerificationError) as exc_info:
+            retry_transient(lambda: manager.verify_domain(target))
+        assert exc_info.value.code == VerificationCode.RECORD_NOT_FOUND
+        assert resolver.fetch_txt.call_count == 1
+        assert manager._cache.get(target) is None
+        assert not manager._verification_futures
+
+        raw = _make_signed_txt_record(private, pub_jwk, target)
+        resolver.fetch_txt.side_effect = None
+        resolver.fetch_txt.return_value = ([_make_txt_record(raw)], DNSSECState.UNKNOWN)
+        status = AgentStatus(state="ACTIVE", last_transition_at=_now())
+        cert = TLSCertificate(
+            not_after=_now() + datetime.timedelta(days=365), san_dns_names=[target]
+        )
+        with (
+            patch("dnsid.manager._fetch_jwks",
+                  side_effect=_split_jwks_fetch(JWKS(keys=[pub_jwk]), target, cert)),
+            patch("dnsid.manager._fetch_strict_json_status", return_value=status),
+        ):
+            result = manager.verify_domain(target)
+
+        assert result.domain == target
+        assert resolver.fetch_txt.call_count == 2
+        assert manager._cache.get(target) is not None
 
     def test_wrong_signature_raises(self, ec_pair, ec_provider):
         target = "service.example.com"
@@ -998,7 +1041,9 @@ class TestVerifyDomain:
         ku_uri = f"https://{target}/.well-known/jwks.json"
 
         class FlaglessFetcher(HTTPSFetcher):
-            def fetch_strict_json(self, url, allowed_host=None, domain_boundary=False):
+            def fetch_strict_json(
+                self, url, allowed_host=None, domain_boundary=False, *, revalidate=False,
+            ):
                 if url == ku_uri:
                     return {"keys": [ku_jwk._raw]}, tls_cert
                 if url.endswith("/status"):

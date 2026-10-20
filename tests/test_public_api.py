@@ -8,6 +8,12 @@ import pytest
 import dnsid
 
 
+def test_record_not_found_code_is_public():
+    from dnsid import VerificationCode
+
+    assert VerificationCode.RECORD_NOT_FOUND.name == "RECORD_NOT_FOUND"
+
+
 def test_all_names_are_accessible():
     """Every name in dnsid.__all__ must be an attribute of the dnsid package."""
     missing = [name for name in dnsid.__all__ if not hasattr(dnsid, name)]
@@ -77,6 +83,11 @@ def test_c2sp_spec_revision_metadata_exported():
 
 
 def test_sdk_conformance_metadata_exported_and_immutable():
+    assert dnsid.SDK_CONFORMANCE.known_deviations == (
+        "JOSE, HTTP Message Signatures, and OIDC profiles retain mutable caller configuration.",
+        "The JWT bearer profile is exported as WebBotAuthProfile; "
+        "Web Bot Auth naming is reserved for RFC 9421.",
+    )
     assert dnsid.SDK_CONFORMANCE == dnsid.SDKConformance(
         publish_profile="dnsid-draft-01",
         verification_profiles={
@@ -85,7 +96,7 @@ def test_sdk_conformance_metadata_exported_and_immutable():
         },
         specification_status="internet-draft",
         log_bindings=dnsid.SDK_CONFORMANCE.log_bindings,
-        known_deviations=(),
+        known_deviations=dnsid.SDK_CONFORMANCE.known_deviations,
     )
     assert dnsid.SDK_CONFORMANCE.log_bindings["c2sp-tlog"] == (
         "profile=1;"

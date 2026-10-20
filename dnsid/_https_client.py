@@ -10,11 +10,16 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from ._verification_budget import remaining_seconds, verification_operation
+from ._bounded_response import ACCEPT_ENCODING, BoundedBody
+from ._verification_budget import (
+    async_verification_operation,
+    remaining_seconds,
+    verification_operation,
+)
 from .enums import VerificationCode
 from .exceptions import VerificationError
 from .models import JWKS, AgentStatus, TLSCertificate
-from .safe_transport import SSRF_BLOCK_MARKER
+from .safe_transport import SSRF_BLOCK_MARKER, make_ssrf_safe_async_transport
 
 _MAX_REDIRECTS = 5
 _TIMEOUT = 10.0
@@ -37,6 +42,7 @@ def fetch_jwks(
     transport: httpx.BaseTransport | None = None,
     domain_boundary: bool = False,
     client: httpx.Client | None = None,
+    *, revalidate: bool = False,
 ) -> tuple[JWKS, TLSCertificate]:
     """Fetch a bounded JWKS with redirects pinned to a host or domain boundary.
 
@@ -44,8 +50,6 @@ def fetch_jwks(
     client is created and closed for this call. A supplied *transport* handles TLS
     and DNS routing, so *verify* is then ignored.
     """
-    from ._crypto import jwk_from_dict
-
     _assert_https_redirect(ku)
     owned_client = client is None
     if client is None:
@@ -55,9 +59,13 @@ def fetch_jwks(
     try:
         for _ in range(_MAX_REDIRECTS + 1):
             try:
-                with client.stream("GET", url, headers={"Cache-Control": "no-cache"},
-                                   follow_redirects=False,
-                                   timeout=remaining_seconds(10.0)) as response:
+                with client.stream(
+                    "GET", url,
+                    headers={"Accept-Encoding": ACCEPT_ENCODING,
+                             **({"Cache-Control": "no-cache"} if revalidate else {})},
+                    follow_redirects=False,
+                    timeout=remaining_seconds(10.0),
+                ) as response:
                     if response.is_redirect:
                         location = urljoin(url, response.headers.get("location", ""))
                         _assert_same_host_https_redirect(location, allowed_host, domain_boundary)
@@ -79,28 +87,10 @@ def fetch_jwks(
                     )
             except VerificationError:
                 raise
-            except httpx.ConnectError as exc:
-                raise VerificationError(
-                    VerificationCode.TLS_ERROR,
-                    f"TLS/connection error fetching JWKS at {url!r}: {exc}",
-                    transient=SSRF_BLOCK_MARKER not in str(exc),
-                ) from exc
             except httpx.TransportError as exc:
-                raise VerificationError(
-                    VerificationCode.DNS_RESOLUTION,
-                    f"Network error fetching JWKS at {url!r}: {exc}",
-                    transient=True,
-                ) from exc
+                raise _jwks_transport_error(url, exc) from exc
 
-            try:
-                data: dict[str, Any] = json.loads(body)
-                keys = [jwk_from_dict(k) for k in data.get("keys", [])]
-            except Exception as exc:
-                raise VerificationError(
-                    VerificationCode.RECORD_INVALID,
-                    f"JWKS response is not valid JSON for {url!r}",
-                ) from exc
-            return JWKS(keys=keys), tls_cert
+            return _parse_jwks_body(body, url), tls_cert
     finally:
         if owned_client:
             client.close()
@@ -108,6 +98,94 @@ def fetch_jwks(
     raise VerificationError(
         VerificationCode.TLS_ERROR,
         f"Too many redirects fetching JWKS at {ku!r}",
+    )
+
+
+@async_verification_operation
+async def async_fetch_jwks(
+    ku: str,
+    allowed_host: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    domain_boundary: bool = False,
+    client: httpx.AsyncClient | None = None,
+    revalidate: bool = False,
+) -> tuple[JWKS, TLSCertificate]:
+    """Fetch bounded key sets asynchronously with the synchronous HTTPS rules.
+
+    Redirects stay within the exact host or selected domain boundary. The
+    default transport enforces SSRF protection. A supplied client remains
+    caller-owned; otherwise this call closes its client, including on cancellation.
+    When ``revalidate=True``, require HTTP cache revalidation on every redirect hop.
+    """
+    _assert_https_redirect(ku)
+    owned_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(
+            transport=transport if transport is not None else make_ssrf_safe_async_transport(),
+            follow_redirects=False, timeout=_TIMEOUT,
+        )
+    url = ku
+    try:
+        for _ in range(_MAX_REDIRECTS + 1):
+            try:
+                async with client.stream(
+                    "GET", url, headers={"Accept-Encoding": ACCEPT_ENCODING,
+                                         **({"Cache-Control": "no-cache"} if revalidate else {})},
+                    follow_redirects=False, timeout=remaining_seconds(10.0),
+                ) as response:
+                    if response.is_redirect:
+                        location = urljoin(url, response.headers.get("location", ""))
+                        _assert_same_host_https_redirect(location, allowed_host, domain_boundary)
+                        url = location
+                        continue
+                    tls_cert = _extract_tls_cert(response)
+                    if response.status_code != 200:
+                        raise VerificationError(
+                            VerificationCode.TLS_ERROR,
+                            f"JWKS fetch returned HTTP {response.status_code} for {url!r}",
+                        )
+                    body = await _async_read_limited(
+                        response, _MAX_JWKS_BODY_BYTES, VerificationCode.RECORD_INVALID,
+                        f"JWKS response body too large for {url!r}",
+                    )
+            except httpx.TransportError as exc:
+                raise _jwks_transport_error(url, exc) from exc
+            return _parse_jwks_body(body, url), tls_cert
+    finally:
+        if owned_client:
+            await client.aclose()
+    raise VerificationError(
+        VerificationCode.TLS_ERROR,
+        f"Too many redirects fetching JWKS at {ku!r}",
+    )
+
+
+def _parse_jwks_body(body: bytes, url: str) -> JWKS:
+    from ._crypto import jwk_from_dict
+
+    try:
+        data: dict[str, Any] = json.loads(body)
+        keys = [jwk_from_dict(k) for k in data.get("keys", [])]
+    except Exception as exc:
+        raise VerificationError(
+            VerificationCode.RECORD_INVALID,
+            f"JWKS response is not valid JSON for {url!r}",
+        ) from exc
+    return JWKS(keys=keys)
+
+
+def _jwks_transport_error(url: str, exc: httpx.TransportError) -> VerificationError:
+    if isinstance(exc, httpx.ConnectError):
+        return VerificationError(
+            VerificationCode.TLS_ERROR,
+            f"TLS/connection error fetching JWKS at {url!r}: {exc}",
+            transient=SSRF_BLOCK_MARKER not in str(exc),
+        )
+    return VerificationError(
+        VerificationCode.DNS_RESOLUTION,
+        f"Network error fetching JWKS at {url!r}: {exc}",
+        transient=True,
     )
 
 
@@ -122,6 +200,7 @@ def fetch_agent_status(
     verify: _Verify = True,
     transport: httpx.BaseTransport | None = None,
     client: httpx.Client | None = None,
+    *, revalidate: bool = False,
 ) -> AgentStatus:
     """Fetch and parse the bounded agent status endpoint over strict HTTPS.
 
@@ -140,7 +219,10 @@ def fetch_agent_status(
                 with client.stream(
                     "GET",
                     url,
-                    headers={"Accept": "application/json", "Cache-Control": "no-cache"},
+                    headers={
+                        "Accept": "application/json", "Accept-Encoding": ACCEPT_ENCODING,
+                        **({"Cache-Control": "no-cache"} if revalidate else {}),
+                    },
                     follow_redirects=False,
                     timeout=remaining_seconds(10.0),
                 ) as response:
@@ -165,34 +247,10 @@ def fetch_agent_status(
                     )
             except VerificationError:
                 raise
-            except httpx.ConnectError as exc:
-                if SSRF_BLOCK_MARKER in str(exc):
-                    raise VerificationError(
-                        VerificationCode.TLS_ERROR,
-                        f"status endpoint {url!r} rejected: resolves to a "
-                        "non-public address (SSRF guard)",
-                        transient=False,
-                    ) from exc
-                raise VerificationError(
-                    VerificationCode.TLS_ERROR,
-                    f"TLS/connection error fetching status at {url!r}: {exc}",
-                    transient=True,
-                ) from exc
             except httpx.TransportError as exc:
-                raise VerificationError(
-                    VerificationCode.DNS_RESOLUTION,
-                    f"Network error fetching status at {url!r}: {exc}",
-                    transient=True,
-                ) from exc
+                raise _status_transport_error(url, exc) from exc
 
-            try:
-                data: dict[str, Any] = json.loads(body)
-            except Exception as exc:
-                raise VerificationError(
-                    VerificationCode.STATUS_NOT_ACTIVE,
-                    f"Status endpoint returned non-JSON response for {url!r}",
-                ) from exc
-            return _parse_agent_status_from_dict(data)
+            return _parse_status_body(body, url)
     finally:
         if owned_client:
             client.close()
@@ -201,6 +259,97 @@ def fetch_agent_status(
         VerificationCode.TLS_ERROR,
         f"Too many redirects fetching status at {su!r}",
     )
+
+
+@async_verification_operation
+async def async_fetch_agent_status(
+    su: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    client: httpx.AsyncClient | None = None,
+    revalidate: bool = False,
+) -> AgentStatus:
+    """Fetch bounded status asynchronously with the synchronous HTTPS rules.
+
+    A supplied client remains caller-owned. Otherwise this call owns its client
+    and closes every response and connection, including on cancellation.
+    When ``revalidate=True``, require HTTP cache revalidation on every redirect hop.
+    """
+    _assert_https_redirect(su)
+    owned_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(
+            transport=transport if transport is not None else make_ssrf_safe_async_transport(),
+            follow_redirects=False, timeout=_TIMEOUT,
+        )
+    url = su
+    try:
+        for _ in range(_MAX_REDIRECTS + 1):
+            try:
+                async with client.stream(
+                    "GET", url, headers={
+                        "Accept": "application/json", "Accept-Encoding": ACCEPT_ENCODING,
+                        **({"Cache-Control": "no-cache"} if revalidate else {}),
+                    },
+                    follow_redirects=False, timeout=remaining_seconds(10.0),
+                ) as response:
+                    if response.is_redirect:
+                        location = urljoin(url, response.headers.get("location", ""))
+                        _assert_https_redirect(location)
+                        url = location
+                        continue
+                    if response.status_code != 200:
+                        raise VerificationError(
+                            VerificationCode.STATUS_NOT_ACTIVE,
+                            f"Status endpoint returned HTTP {response.status_code} for {url!r}",
+                            transient=response.status_code >= 500,
+                        )
+                    body = await _async_read_limited(
+                        response, _MAX_STATUS_BODY_BYTES, VerificationCode.STATUS_NOT_ACTIVE,
+                        f"Status response body too large for {url!r}",
+                    )
+            except httpx.TransportError as exc:
+                raise _status_transport_error(url, exc) from exc
+            return _parse_status_body(body, url)
+    finally:
+        if owned_client:
+            await client.aclose()
+    raise VerificationError(
+        VerificationCode.TLS_ERROR,
+        f"Too many redirects fetching status at {su!r}",
+    )
+
+
+def _status_transport_error(url: str, exc: httpx.TransportError) -> VerificationError:
+    if isinstance(exc, httpx.ConnectError):
+        if SSRF_BLOCK_MARKER in str(exc):
+            return VerificationError(
+                VerificationCode.TLS_ERROR,
+                f"status endpoint {url!r} rejected: resolves to a "
+                "non-public address (SSRF guard)",
+                transient=False,
+            )
+        return VerificationError(
+            VerificationCode.TLS_ERROR,
+            f"TLS/connection error fetching status at {url!r}: {exc}",
+            transient=True,
+        )
+    return VerificationError(
+        VerificationCode.DNS_RESOLUTION,
+        f"Network error fetching status at {url!r}: {exc}",
+        transient=True,
+    )
+
+
+def _parse_status_body(body: bytes | bytearray, url: str) -> AgentStatus:
+    try:
+        data = json.loads(body)
+    except Exception as exc:
+        raise VerificationError(
+            VerificationCode.STATUS_NOT_ACTIVE,
+            f"Status endpoint returned non-JSON response for {url!r}",
+        ) from exc
+    return _parse_agent_status_from_dict(data)
 
 
 def _parse_agent_status_from_dict(data: object) -> AgentStatus:
@@ -254,18 +403,29 @@ def _read_limited(
     message: str,
     *, decode_content: bool = True,
 ) -> bytes:
-    """Read bounded content bytes, optionally preserving the received coding."""
-    body = bytearray()
-    chunks = (
-        response.iter_bytes() if decode_content or response.is_stream_consumed
-        else response.iter_raw()
+    """Read bounded bytes, including bounded gzip/deflate decompression."""
+    body = BoundedBody(
+        response, limit, lambda: VerificationError(code, message),
+        invalid=lambda detail: VerificationError(code, detail), decode_content=decode_content,
     )
+    chunks = response.iter_bytes() if response.is_stream_consumed else response.iter_raw()
     for chunk in chunks:
-        remaining_seconds()
-        if len(body) + len(chunk) > limit:
-            raise VerificationError(code, message)
-        body.extend(chunk)
-    return bytes(body)
+        body.append(chunk)
+    return body.finish()
+
+
+async def _async_read_limited(
+    response: httpx.Response, limit: int, code: VerificationCode, message: str,
+) -> bytes:
+    """Read decoded async bytes with a bound on decompression allocations."""
+    body = BoundedBody(
+        response, limit, lambda: VerificationError(code, message),
+        invalid=lambda detail: VerificationError(code, detail),
+    )
+    chunks = response.aiter_bytes() if response.is_stream_consumed else response.aiter_raw()
+    async for chunk in chunks:
+        body.append(chunk)
+    return body.finish()
 
 
 def _assert_https_redirect(location: str) -> None:

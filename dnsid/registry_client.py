@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+from collections.abc import Generator
 from dataclasses import replace
-from typing import Any
+from typing import Any, TypeVar, cast
 from urllib.parse import urlsplit
 
 import httpx
 
-from ._verification_budget import remaining_seconds
+from ._bounded_response import ACCEPT_ENCODING
+from ._verification_budget import async_verification_operation, remaining_seconds
 from .enums import RegistryRevocationReason
 from .interfaces import AbstractRegistryClient
 from .models import (
@@ -40,10 +43,6 @@ def _is_ready_for_publication(status: str) -> bool:
     return status == "VERIFIED"
 
 
-def _is_published_status(status: str) -> bool:
-    return status in ("READY", "PUBLISHED", "ACTIVE", "READY_FOR_PUBLICATION")
-
-
 def _is_failed_status(status: str) -> bool:
     return status in ("ERROR", "REJECTED", "CANCELLED")
 
@@ -53,6 +52,24 @@ def _is_terminal_status(status: str) -> bool:
 
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_T = TypeVar("_T")
+
+
+class _RegistryCall:
+    def __init__(self, method: str, *args: Any, **kwargs: Any) -> None:
+        self.method = method
+        self.args = args
+        self.kwargs = kwargs
+
+
+def _buffer_response(response: httpx.Response, body: bytes) -> httpx.Response:
+    headers = response.headers.copy()
+    # The body is decoded; do not decode it again or retain its compressed length.
+    headers.pop("content-encoding", None)
+    headers.pop("content-length", None)
+    return httpx.Response(
+        response.status_code, headers=headers, content=body, request=response.request,
+    )
 
 
 class RegistryClient(AbstractRegistryClient):
@@ -81,7 +98,14 @@ class RegistryClient(AbstractRegistryClient):
     may expose a proof challenge. A configured credential is sent on all reads.
     The credential is never included in ``repr()``/``str()``, exceptions, or logs.
     Requests share a protected connection pool, including when transport settings
-    are omitted. Use a ``with`` block or call ``close()`` after the last request.
+    are omitted. Every registry operation has an ``async_`` variant using
+    native async HTTP and the same validation, credentials and error handling.
+    Use a ``with`` block or ``close()`` for synchronous use; use ``async with``
+    or ``await aclose()`` after async use. Async requests share a separate pool
+    on one event loop. Finish outstanding requests before closing either pool.
+    Cancellation stops the local request, not mutations already accepted by
+    the server. Reconcile uncertain results before retrying with the same
+    request and idempotency key; methods never retry mutations automatically.
 
     Restore/reactivation operations (un-retiring or un-revoking an agent) are
     deliberately not exposed: the registry treats RETIRED and REVOKED as
@@ -153,6 +177,8 @@ class RegistryClient(AbstractRegistryClient):
         self._api_key = stripped
         self._transport_config = copy.deepcopy(transport_config)
         self._http_client: httpx.Client | None = None
+        self._async_http_client: httpx.AsyncClient | None = None
+        self._async_loop: asyncio.AbstractEventLoop | None = None
 
     def __repr__(self) -> str:
         """Return a repr that reports whether a credential is set, never its value."""
@@ -165,7 +191,9 @@ class RegistryClient(AbstractRegistryClient):
     __str__ = __repr__
 
     def close(self) -> None:
-        """Close pooled registry connections after the last request."""
+        """Close synchronous connections; use aclose after async requests."""
+        if self._async_http_client is not None and not self._async_http_client.is_closed:
+            raise RuntimeError("async registry connections are open; use await aclose()")
         if self._http_client is not None:
             self._http_client.close()
 
@@ -176,6 +204,100 @@ class RegistryClient(AbstractRegistryClient):
     def __exit__(self, *args: Any) -> None:
         """Close pooled connections on leaving a ``with`` block."""
         self.close()
+
+    async def aclose(self) -> None:
+        """Close both pools after the last request, on the async pool's event loop."""
+        if self._async_http_client is not None:
+            self._require_async_loop()
+        try:
+            if self._async_http_client is not None:
+                await self._async_http_client.aclose()
+        finally:
+            if self._http_client is not None:
+                await asyncio.to_thread(self._http_client.close)
+
+    async def __aenter__(self) -> RegistryClient:
+        """Return this client for native async registry operations."""
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        """Close registry connections on leaving an async context."""
+        await self.aclose()
+
+    def _require_async_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self._async_loop is not None and self._async_loop is not loop:
+            raise RuntimeError("async registry client must remain on one event loop")
+        self._async_loop = loop
+
+    def _run_registry(self, steps: Generator[_RegistryCall, Any, _T]) -> _T:
+        # Resume outside exception handlers so redacted errors cannot inherit credentials.
+        try:
+            call = next(steps)
+            while True:
+                failure: Exception | None = None
+                try:
+                    result = getattr(self, call.method)(*call.args, **call.kwargs)
+                except Exception as exc:
+                    failure = exc
+                if failure is not None:
+                    call = steps.throw(failure)
+                else:
+                    call = steps.send(result)
+        except StopIteration as done:
+            return cast(_T, done.value)
+        finally:
+            steps.close()
+
+    async def _async_run_registry(self, steps: Generator[_RegistryCall, Any, _T]) -> _T:
+        try:
+            call = next(steps)
+            while True:
+                method = (
+                    "_async_" + call.method[1:] if call.method.startswith("_")
+                    else "async_" + call.method
+                )
+                failure: Exception | None = None
+                try:
+                    result = await getattr(self, method)(*call.args, **call.kwargs)
+                except Exception as exc:
+                    failure = exc
+                if failure is not None:
+                    call = steps.throw(failure)
+                else:
+                    call = steps.send(result)
+        except StopIteration as done:
+            return cast(_T, done.value)
+        finally:
+            steps.close()
+
+    @async_verification_operation
+    async def _async_http_request(
+        self, method: str, url: str, **kwargs: Any,
+    ) -> httpx.Response:
+        from ._https_client import _async_read_limited
+        from .enums import VerificationCode
+        from .safe_transport import make_ssrf_safe_async_transport
+
+        self._require_async_loop()
+        kwargs["timeout"] = remaining_seconds(kwargs.pop("timeout", 10.0))
+        if self._async_http_client is None:
+            self._async_http_client = httpx.AsyncClient(
+                transport=make_ssrf_safe_async_transport(
+                    self._transport_config,
+                    allow_loopback_host=urlsplit(self._base_url).hostname
+                    if self._is_loopback else None,
+                ),
+                trust_env=False,
+                follow_redirects=False,
+            )
+        kwargs["headers"] = {"Accept-Encoding": ACCEPT_ENCODING, **kwargs.get("headers", {})}
+        async with self._async_http_client.stream(method, url, **kwargs) as response:
+            body = await _async_read_limited(
+                response, 4 * 1024 * 1024, VerificationCode.LOG_ERROR,
+                "registry response resource limit exceeded",
+            )
+            return _buffer_response(response, body)
 
     def _http_request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         from ._https_client import _read_limited
@@ -194,18 +316,13 @@ class RegistryClient(AbstractRegistryClient):
                 trust_env=False,
                 follow_redirects=False,
             )
+        kwargs["headers"] = {"Accept-Encoding": ACCEPT_ENCODING, **kwargs.get("headers", {})}
         with self._http_client.stream(method, url, **kwargs) as response:
             body = _read_limited(
                 response, 4 * 1024 * 1024, VerificationCode.LOG_ERROR,
                 "registry response resource limit exceeded",
             )
-            headers = response.headers.copy()
-            # The body is decoded; do not decode it again or retain its compressed length.
-            headers.pop("content-encoding", None)
-            headers.pop("content-length", None)
-            return httpx.Response(
-                response.status_code, headers=headers, content=body, request=response.request,
-            )
+            return _buffer_response(response, body)
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
@@ -261,6 +378,17 @@ class RegistryClient(AbstractRegistryClient):
         registration_response (known creation facts), without exposing credentials.
         The returned publication snapshot does not establish counterparty trust.
         """
+        return self._run_registry(self._register_agent_steps(input, idempotency_key))
+
+    async def async_register_agent(
+        self, input: AgentRegistrationInput, idempotency_key: str | None = None
+    ) -> AgentRegistration:
+        """Async variant of :meth:`register_agent` with the same validation and errors."""
+        return await self._async_run_registry(self._register_agent_steps(input, idempotency_key))
+
+    def _register_agent_steps(
+        self, input: AgentRegistrationInput, idempotency_key: str | None = None
+    ) -> Generator[_RegistryCall, Any, AgentRegistration]:
         self._require_auth("register_agent")
         from copy import deepcopy
 
@@ -317,7 +445,8 @@ class RegistryClient(AbstractRegistryClient):
 
         data: dict[str, Any] | None = None
         try:
-            data = self._post(
+            data = yield _RegistryCall(
+                "_post",
                 "/api/v1/agent",
                 body,
                 extra_headers={"Idempotency-Key": key} if key else None,
@@ -344,7 +473,11 @@ class RegistryClient(AbstractRegistryClient):
                 raise ValidationError("registry register response has invalid oidc_issuer_url")
             if issuer:
                 _parse_https_uri_host(issuer, field_name="oidc_issuer_url")
-            registration = self.get_agent_detail(domain)
+            registration: AgentRegistration | None = (
+                yield _RegistryCall(
+                    "get_agent_detail", domain,
+                )
+            )
             if registration is None:
                 raise ValidationError("registry created the agent but returned no registration")
             if registration.domain != domain:
@@ -377,6 +510,19 @@ class RegistryClient(AbstractRegistryClient):
         bytes; use the derived :attr:`LiveProvisioningResponse.domain` for the
         proof route.
         """
+        return self._run_registry(self._register_live_agent_steps(input, idempotency_key))
+
+    async def async_register_live_agent(
+        self, input: LiveAgentRegistrationInput, idempotency_key: str
+    ) -> LiveProvisioningResponse:
+        """Async variant of :meth:`register_live_agent` with the same validation and errors."""
+        return await self._async_run_registry(
+            self._register_live_agent_steps(input, idempotency_key),
+        )
+
+    def _register_live_agent_steps(
+        self, input: LiveAgentRegistrationInput, idempotency_key: str
+    ) -> Generator[_RegistryCall, Any, LiveProvisioningResponse]:
         self._require_auth("register_live_agent")
         from .exceptions import ArgumentError
 
@@ -394,7 +540,8 @@ class RegistryClient(AbstractRegistryClient):
             body["capabilities_url"] = input.capabilities_url
         if input.name:
             body["name"] = input.name
-        data = self._post(
+        data = yield _RegistryCall(
+            "_post",
             "/api/v1/agent",
             body,
             extra_headers={"Idempotency-Key": idempotency_key},
@@ -407,15 +554,22 @@ class RegistryClient(AbstractRegistryClient):
 
         ``POST /api/v1/agent/{domain}/verify``
         """
+        return self._run_registry(self._verify_agent_steps(domain))
+
+    async def async_verify_agent(self, domain: str) -> AgentRegistration:
+        """Async variant of :meth:`verify_agent` with the same validation and errors."""
+        return await self._async_run_registry(self._verify_agent_steps(domain))
+
+    def _verify_agent_steps(self, domain: str) -> Generator[_RegistryCall, Any, AgentRegistration]:
         self._require_auth("verify_agent")
         from urllib.parse import quote
 
-        data = self._post(f"/api/v1/agent/{quote(domain, safe='')}/verify")
+        data = (yield _RegistryCall("_post", f"/api/v1/agent/{quote(domain, safe='')}/verify"))
         # fqdn is optional in the verify response; fall back to the requested
         # domain when the registry omits it.
         raw_fqdn = data.get("fqdn")
         fqdn = raw_fqdn if isinstance(raw_fqdn, str) and raw_fqdn else domain
-        registration = self.get_registration(fqdn)
+        registration: AgentRegistration | None = (yield _RegistryCall("get_registration", fqdn))
         if registration is None:
             from .exceptions import ValidationError
 
@@ -447,6 +601,23 @@ class RegistryClient(AbstractRegistryClient):
         Raises:
             ArgumentError: If *reason* is not a ``RegistryRevocationReason``.
         """
+        return self._run_registry(self._revoke_agent_steps(domain, agent_id, reason))
+
+    async def async_revoke_agent(
+        self,
+        domain: str,
+        agent_id: str,
+        reason: RegistryRevocationReason,
+    ) -> LifecycleResult:
+        """Async variant of :meth:`revoke_agent` with the same validation and errors."""
+        return await self._async_run_registry(self._revoke_agent_steps(domain, agent_id, reason))
+
+    def _revoke_agent_steps(
+        self,
+        domain: str,
+        agent_id: str,
+        reason: RegistryRevocationReason,
+    ) -> Generator[_RegistryCall, Any, LifecycleResult]:
         self._require_auth("revoke_agent")
         from urllib.parse import quote
 
@@ -454,7 +625,8 @@ class RegistryClient(AbstractRegistryClient):
 
         if not isinstance(reason, RegistryRevocationReason):
             raise ArgumentError("revocation reason must be a RegistryRevocationReason")
-        data = self._post(
+        data = yield _RegistryCall(
+            "_post",
             f"/api/v1/agent/{quote(domain, safe='')}/revoke",
             {"agent_id": agent_id, "reason": reason.value},
         )
@@ -465,10 +637,20 @@ class RegistryClient(AbstractRegistryClient):
 
         ``POST /api/v1/agent/{domain}/retire`` with the immutable *agent_id*.
         """
+        return self._run_registry(self._retire_agent_steps(domain, agent_id))
+
+    async def async_retire_agent(self, domain: str, agent_id: str) -> LifecycleResult:
+        """Async variant of :meth:`retire_agent` with the same validation and errors."""
+        return await self._async_run_registry(self._retire_agent_steps(domain, agent_id))
+
+    def _retire_agent_steps(
+        self, domain: str, agent_id: str,
+    ) -> Generator[_RegistryCall, Any, LifecycleResult]:
         self._require_auth("retire_agent")
         from urllib.parse import quote
 
-        data = self._post(
+        data = yield _RegistryCall(
+            "_post",
             f"/api/v1/agent/{quote(domain, safe='')}/retire",
             {"agent_id": agent_id},
         )
@@ -482,10 +664,17 @@ class RegistryClient(AbstractRegistryClient):
         is the transition that removes it. Mirrors ``cancelAgent`` in the
         TypeScript SDK and ``CancelAgent`` in Go.
         """
+        return self._run_registry(self._cancel_agent_steps(domain))
+
+    async def async_cancel_agent(self, domain: str) -> LifecycleResult:
+        """Async variant of :meth:`cancel_agent` with the same validation and errors."""
+        return await self._async_run_registry(self._cancel_agent_steps(domain))
+
+    def _cancel_agent_steps(self, domain: str) -> Generator[_RegistryCall, Any, LifecycleResult]:
         self._require_auth("cancel_agent")
         from urllib.parse import quote
 
-        data = self._post(f"/api/v1/agent/{quote(domain, safe='')}/cancel")
+        data = (yield _RegistryCall("_post", f"/api/v1/agent/{quote(domain, safe='')}/cancel"))
         return _lifecycle_result_from_response(data)
 
     def submit_challenge_signature(
@@ -509,6 +698,19 @@ class RegistryClient(AbstractRegistryClient):
             signature: Raw signature bytes (base64url-encoded automatically),
                 or an already base64url-encoded signature string.
         """
+        return self._run_registry(self._submit_challenge_signature_steps(domain, nonce, signature))
+
+    async def async_submit_challenge_signature(
+        self, domain: str, nonce: str, signature: bytes | str
+    ) -> LifecycleResult:
+        """Async variant of :meth:`submit_challenge_signature`."""
+        return await self._async_run_registry(
+            self._submit_challenge_signature_steps(domain, nonce, signature),
+        )
+
+    def _submit_challenge_signature_steps(
+        self, domain: str, nonce: str, signature: bytes | str
+    ) -> Generator[_RegistryCall, Any, LifecycleResult]:
         self._require_auth("submit_challenge_signature")
         from urllib.parse import quote
 
@@ -520,7 +722,8 @@ class RegistryClient(AbstractRegistryClient):
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/challenge"
         _transport_err: Exception | None = None
         try:
-            resp = self._http_request(
+            resp = yield _RegistryCall(
+                "_http_request",
                 "POST", url,
                 json={"nonce": nonce, "signature": sig_text},
                 headers=self._auth_headers(),
@@ -575,11 +778,23 @@ class RegistryClient(AbstractRegistryClient):
         credentials, not an agent bearer token. ``request.request_id`` is sent
         as the required ``Idempotency-Key`` header.
         """
+        return self._run_registry(self._submit_live_proof_steps(domain, request))
+
+    async def async_submit_live_proof(
+        self, domain: str, request: LiveProofRequest
+    ) -> LiveProofResponse:
+        """Async variant of :meth:`submit_live_proof` with the same validation and errors."""
+        return await self._async_run_registry(self._submit_live_proof_steps(domain, request))
+
+    def _submit_live_proof_steps(
+        self, domain: str, request: LiveProofRequest
+    ) -> Generator[_RegistryCall, Any, LiveProofResponse]:
         self._require_auth("submit_live_proof")
         _validate_tlog_idempotency_key(request.request_id)
         from urllib.parse import quote
 
-        data = self._post(
+        data = yield _RegistryCall(
+            "_post",
             f"/api/v1/agent/{quote(domain, safe='')}/proof",
             {
                 "request_id": request.request_id,
@@ -609,13 +824,25 @@ class RegistryClient(AbstractRegistryClient):
         The replacement challenge supersedes every earlier challenge; only the
         latest message may be signed.
         """
+        return self._run_registry(self._reissue_live_proof_steps(domain, request))
+
+    async def async_reissue_live_proof(
+        self, domain: str, request: LiveProofReissueRequest
+    ) -> LiveProofReissueResponse:
+        """Async variant of :meth:`reissue_live_proof` with the same validation and errors."""
+        return await self._async_run_registry(self._reissue_live_proof_steps(domain, request))
+
+    def _reissue_live_proof_steps(
+        self, domain: str, request: LiveProofReissueRequest
+    ) -> Generator[_RegistryCall, Any, LiveProofReissueResponse]:
         self._require_auth("reissue_live_proof")
         _validate_tlog_idempotency_key(request.request_id)
         _live_public_jwk_dict(request.public_key_jwk)
         expected_key_id = request.public_key_jwk.thumbprint()
         from urllib.parse import quote
 
-        data = self._post(
+        data = yield _RegistryCall(
+            "_post",
             f"/api/v1/agent/{quote(domain, safe='')}/proof/reissue",
             {"request_id": request.request_id},
             extra_headers={"Idempotency-Key": request.request_id},
@@ -632,6 +859,15 @@ class RegistryClient(AbstractRegistryClient):
         or ``None`` if the agent is not registered (HTTP 404). Live status
         requires owner/session/API-key authentication; legacy status is public.
         """
+        return self._run_registry(self._get_status_steps(domain))
+
+    async def async_get_status(self, domain: str) -> str | None:
+        """Async variant of :meth:`get_status` with the same validation and errors."""
+        return await self._async_run_registry(self._get_status_steps(domain))
+
+    def _get_status_document_steps(
+        self, domain: str,
+    ) -> Generator[_RegistryCall, Any, dict[str, Any] | None]:
         from urllib.parse import quote
 
         import httpx
@@ -639,7 +875,11 @@ class RegistryClient(AbstractRegistryClient):
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
         _transport_err: Exception | None = None
         try:
-            resp = self._http_request("GET", url, headers=self._auth_headers(), timeout=10.0)
+            resp = (
+                yield _RegistryCall(
+                    "_http_request", "GET", url, headers=self._auth_headers(), timeout=10.0,
+                )
+            )
         except httpx.TransportError as exc:
             from .enums import VerificationCode
             from .exceptions import VerificationError
@@ -663,7 +903,12 @@ class RegistryClient(AbstractRegistryClient):
                 transient=resp.status_code >= 500,
             )
 
-        data = _parse_json(resp, f"registry status response for {domain!r}")
+        return _parse_json(resp, f"registry status response for {domain!r}")
+
+    def _get_status_steps(self, domain: str) -> Generator[_RegistryCall, Any, str | None]:
+        data = yield from self._get_status_document_steps(domain)
+        if data is None:
+            return None
         raw = data.get("status") or data.get("state")
         return str(raw).upper() if raw is not None else None
 
@@ -677,38 +922,18 @@ class RegistryClient(AbstractRegistryClient):
         Returns a :class:`RegistryAgentStatus` with computed boolean flags that
         mirror the TypeScript ``RegistryAgentStatus`` interface.
         """
-        from urllib.parse import quote
+        return self._run_registry(self._get_agent_status_steps(domain))
 
-        import httpx
+    async def async_get_agent_status(self, domain: str) -> RegistryAgentStatus | None:
+        """Async variant of :meth:`get_agent_status` with the same validation and errors."""
+        return await self._async_run_registry(self._get_agent_status_steps(domain))
 
-        url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
-        _transport_err: Exception | None = None
-        try:
-            resp = self._http_request("GET", url, headers=self._auth_headers(), timeout=10.0)
-        except httpx.TransportError as exc:
-            from .enums import VerificationCode
-            from .exceptions import VerificationError
-
-            _transport_err = VerificationError(
-                VerificationCode.LOG_ERROR,
-                f"Registry status request failed for {domain!r}: {self._transport_detail(exc)}",
-                transient=True,
-            )
-        if _transport_err is not None:
-            raise _transport_err from None
-        if resp.status_code == 404:
+    def _get_agent_status_steps(
+        self, domain: str,
+    ) -> Generator[_RegistryCall, Any, RegistryAgentStatus | None]:
+        data = yield from self._get_status_document_steps(domain)
+        if data is None:
             return None
-        if not resp.is_success:
-            from .enums import VerificationCode
-            from .exceptions import VerificationError
-
-            raise VerificationError(
-                VerificationCode.LOG_ERROR,
-                f"Registry status returned HTTP {resp.status_code} for {domain!r}",
-                transient=resp.status_code >= 500,
-            )
-
-        data = _parse_json(resp, f"registry status response for {domain!r}")
         raw_status = str(data.get("status") or data.get("state") or "").upper()
         raw_dns_published = data.get("dns_published", data.get("dnsPublished"))
         dns_published = raw_dns_published if isinstance(raw_dns_published, bool) else None
@@ -726,12 +951,31 @@ class RegistryClient(AbstractRegistryClient):
             raw=data,
         )
 
-    def get_organization_onboarding(self) -> dict[str, Any]:
+    def get_organization_onboarding(
+        self, *, expected_org_id: str | None = None, expected_gi: str | None = None
+    ) -> dict[str, Any]:
         """Read account/GI proofs and delegation using authenticated effective transport.
 
+        Compare saved/configured IDs when supplied; derive ``bindings_ready``
+        only from matching verified GI proof and verified entity delegation.
         Pending proofs are not ready bindings. This read supplies no entity JWKS
         URL and makes no claim about named creation or permanent replay support.
         """
+        return self._run_registry(self._get_organization_onboarding_steps(
+            expected_org_id=expected_org_id, expected_gi=expected_gi,
+        ))
+
+    async def async_get_organization_onboarding(
+        self, *, expected_org_id: str | None = None, expected_gi: str | None = None
+    ) -> dict[str, Any]:
+        """Async variant of :meth:`get_organization_onboarding`."""
+        return await self._async_run_registry(self._get_organization_onboarding_steps(
+            expected_org_id=expected_org_id, expected_gi=expected_gi,
+        ))
+
+    def _get_organization_onboarding_steps(
+        self, *, expected_org_id: str | None = None, expected_gi: str | None = None
+    ) -> Generator[_RegistryCall, Any, dict[str, Any]]:
         import httpx
 
         from .enums import VerificationCode
@@ -740,7 +984,8 @@ class RegistryClient(AbstractRegistryClient):
         self._require_auth("get_organization_onboarding")
         path = "/api/v1/org/onboarding"
         try:
-            response = self._http_request(
+            response = yield _RegistryCall(
+                "_http_request",
                 "GET",
                 f"{self._base_url}{path}",
                 headers=self._auth_headers(),
@@ -753,7 +998,42 @@ class RegistryClient(AbstractRegistryClient):
             ) from None
         if not response.is_success:
             raise RegistryRequestError(path, response.status_code, _registry_error_code(response))
-        return _parse_json(response, "organization onboarding")
+        data = _parse_json(response, "organization onboarding")
+        from ._utils import normalize_fqdn
+        from .exceptions import ValidationError
+
+        org_id = data.get("org_id")
+        if not isinstance(org_id, str) or not org_id.strip():
+            raise ValidationError("onboarding org_id must be nonempty")
+        if expected_org_id is not None and org_id != expected_org_id:
+            raise ValidationError("onboarding organization ID changed")
+        governance = data.get("governance_domain")
+        if governance is not None and not isinstance(governance, str):
+            raise ValidationError("onboarding governance_domain must be a domain")
+        gi = normalize_fqdn(governance) if governance is not None else None
+        if expected_gi is not None and gi != normalize_fqdn(expected_gi):
+            raise ValidationError("onboarding governance ID changed")
+        proof = data.get("gi")
+        delegation = data.get("ek")
+        if proof is not None and not isinstance(proof, dict):
+            raise ValidationError("onboarding gi must be an object")
+        if delegation is not None and not isinstance(delegation, dict):
+            raise ValidationError("onboarding ek must be an object")
+        if proof and proof.get("domain") is not None:
+            if not isinstance(proof["domain"], str):
+                raise ValidationError("onboarding gi.domain must be a domain")
+            if normalize_fqdn(proof["domain"]) != gi:
+                raise ValidationError("onboarding governance proof domain mismatch")
+        data["bindings_ready"] = bool(
+            gi
+            and proof
+            and proof.get("domain")
+            and proof.get("state") == "verified"
+            and proof.get("gate_authorized") is True
+            and delegation
+            and delegation.get("status") == "verified"
+        )
+        return data
 
     def get_registration(self, domain: str) -> AgentRegistration | None:
         """Read authenticated management status without conflating status namespaces.
@@ -761,6 +1041,15 @@ class RegistryClient(AbstractRegistryClient):
         Owner credentials are required on hosted registries. Failed authenticated
         reads are never retried anonymously. This is not the public protocol su route.
         """
+        return self._run_registry(self._get_registration_steps(domain))
+
+    async def async_get_registration(self, domain: str) -> AgentRegistration | None:
+        """Async variant of :meth:`get_registration` with the same validation and errors."""
+        return await self._async_run_registry(self._get_registration_steps(domain))
+
+    def _get_registration_steps(
+        self, domain: str,
+    ) -> Generator[_RegistryCall, Any, AgentRegistration | None]:
         self._require_auth("get_registration")
         from urllib.parse import quote
 
@@ -768,7 +1057,11 @@ class RegistryClient(AbstractRegistryClient):
 
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
         try:
-            resp = self._http_request("GET", url, headers=self._auth_headers(), timeout=10.0)
+            resp = (
+                yield _RegistryCall(
+                    "_http_request", "GET", url, headers=self._auth_headers(), timeout=10.0,
+                )
+            )
         except httpx.TransportError as exc:
             from .enums import VerificationCode
             from .exceptions import VerificationError
@@ -799,6 +1092,10 @@ class RegistryClient(AbstractRegistryClient):
         GET /api/v1/agent/{domain}. This does not read the public protocol su URL.
         """
         return self.get_registration(domain)
+
+    async def async_get_agent_detail(self, domain: str) -> AgentRegistration | None:
+        """Async variant of :meth:`get_agent_detail` with the same validation and errors."""
+        return await self.async_get_registration(domain)
 
     def wait_for_status(
         self,
@@ -865,8 +1162,8 @@ class RegistryClient(AbstractRegistryClient):
     ) -> RegistryAgentStatus:
         """Async variant of :meth:`wait_for_status`.
 
-        Sleeps with ``asyncio.sleep`` between polls so the event loop is not
-        blocked.  The status fetch itself is synchronous (httpx).
+        Uses native async HTTP and sleeps without blocking the event loop.
+        Cancellation closes the current response and stops polling.
         """
         import asyncio
         import time
@@ -876,7 +1173,7 @@ class RegistryClient(AbstractRegistryClient):
 
         deadline = time.monotonic() + timeout
         while True:
-            status = self.get_agent_status(domain)
+            status = await self.async_get_agent_status(domain)
             if status is None:
                 raise VerificationError(
                     VerificationCode.LOG_ERROR,
@@ -908,6 +1205,13 @@ class RegistryClient(AbstractRegistryClient):
 
         ``DELETE /api/v1/agent/{domain}``
         """
+        return self._run_registry(self._unregister_agent_steps(domain))
+
+    async def async_unregister_agent(self, domain: str) -> None:
+        """Async variant of :meth:`unregister_agent` with the same validation and errors."""
+        return await self._async_run_registry(self._unregister_agent_steps(domain))
+
+    def _unregister_agent_steps(self, domain: str) -> Generator[_RegistryCall, Any, None]:
         self._require_auth("unregister_agent")
         from urllib.parse import quote
 
@@ -916,7 +1220,11 @@ class RegistryClient(AbstractRegistryClient):
         url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}"
         _transport_err: Exception | None = None
         try:
-            resp = self._http_request("DELETE", url, headers=self._auth_headers(), timeout=10.0)
+            resp = (
+                yield _RegistryCall(
+                    "_http_request", "DELETE", url, headers=self._auth_headers(), timeout=10.0,
+                )
+            )
         except httpx.TransportError as exc:
             from .enums import VerificationCode
             from .exceptions import VerificationError
@@ -953,11 +1261,28 @@ class RegistryClient(AbstractRegistryClient):
         byte string and the registry's view of the active signing key ID.
         The SDK MUST validate both before signing; this response is not trusted input.
         """
+        return self._run_registry(self._canonical_record_content_steps(domain, signing_kid))
+
+    async def async_canonical_record_content(
+        self, domain: str, signing_kid: str
+    ) -> CanonicalRecordContentResponse:
+        """Async variant of :meth:`canonical_record_content` with the same validation and errors."""
+        return await self._async_run_registry(
+            self._canonical_record_content_steps(domain, signing_kid),
+        )
+
+    def _canonical_record_content_steps(
+        self, domain: str, signing_kid: str
+    ) -> Generator[_RegistryCall, Any, CanonicalRecordContentResponse]:
         self._require_auth("canonical_record_content")
         from urllib.parse import quote
 
         fqdn_enc = quote(domain, safe="")
-        data = self._post(f"/api/v1/agent/{fqdn_enc}/record", {"signingKid": signing_kid})
+        data = (
+            yield _RegistryCall(
+                "_post", f"/api/v1/agent/{fqdn_enc}/record", {"signingKid": signing_kid},
+            )
+        )
         canonical = _require_str(data, "canonicalContent", "registry record response")
         registry_kid = _require_str(data, "signingKid", "registry record response")
         return CanonicalRecordContentResponse(canonical=canonical, signing_kid=registry_kid)
@@ -970,11 +1295,24 @@ class RegistryClient(AbstractRegistryClient):
         *sig* MUST be the profile-owned sg value.  For draft 01 this is the bare
         unpadded base64url signature bytes.
         """
+        return self._run_registry(self._publish_signature_steps(domain, sig))
+
+    async def async_publish_signature(self, domain: str, sig: str) -> PublishedRecord:
+        """Async variant of :meth:`publish_signature` with the same validation and errors."""
+        return await self._async_run_registry(self._publish_signature_steps(domain, sig))
+
+    def _publish_signature_steps(
+        self, domain: str, sig: str,
+    ) -> Generator[_RegistryCall, Any, PublishedRecord]:
         self._require_auth("publish_signature")
         from urllib.parse import quote
 
         fqdn_enc = quote(domain, safe="")
-        data = self._post(f"/api/v1/agent/{fqdn_enc}/signature", {"signature": sig})
+        data = (
+            yield _RegistryCall(
+                "_post", f"/api/v1/agent/{fqdn_enc}/signature", {"signature": sig},
+            )
+        )
         return _published_record_from_response(domain, data)
 
     # ------------------------------------------------------------------
@@ -988,6 +1326,17 @@ class RegistryClient(AbstractRegistryClient):
         body. Both the response bytes and ``DNSID-Log-Reference`` header are
         untrusted and must be validated by the C2SP prepared-event binding.
         """
+        return self._run_registry(self._prepare_issuance_steps(domain, idempotency_key))
+
+    async def async_prepare_issuance(
+        self, domain: str, idempotency_key: str,
+    ) -> PreparedRegistryEvent:
+        """Async variant of :meth:`prepare_issuance` with the same validation and errors."""
+        return await self._async_run_registry(self._prepare_issuance_steps(domain, idempotency_key))
+
+    def _prepare_issuance_steps(
+        self, domain: str, idempotency_key: str,
+    ) -> Generator[_RegistryCall, Any, PreparedRegistryEvent]:
         self._require_auth("prepare_issuance")
         _validate_tlog_idempotency_key(idempotency_key)
 
@@ -1000,7 +1349,8 @@ class RegistryClient(AbstractRegistryClient):
 
         path = f"/api/v1/agent/{quote(domain, safe='')}/tlog/issuance/prepare"
         try:
-            response = self._http_request(
+            response = yield _RegistryCall(
+                "_http_request",
                 "POST", f"{self._base_url}{path}",
                 headers={
                     **self._auth_headers(),
@@ -1055,6 +1405,27 @@ class RegistryClient(AbstractRegistryClient):
         the signed bytes, and verify domain, previous key, new key, log
         context, and stream-chain fields before adding any signature.
         """
+        return self._run_registry(
+            self._prepare_key_rotation_steps(domain, request, idempotency_key),
+        )
+
+    async def async_prepare_key_rotation(
+        self,
+        domain: str,
+        request: KeyRotationPreparationRequest,
+        idempotency_key: str,
+    ) -> PreparedRegistryEvent:
+        """Async variant of :meth:`prepare_key_rotation` with the same validation and errors."""
+        return await self._async_run_registry(
+            self._prepare_key_rotation_steps(domain, request, idempotency_key),
+        )
+
+    def _prepare_key_rotation_steps(
+        self,
+        domain: str,
+        request: KeyRotationPreparationRequest,
+        idempotency_key: str,
+    ) -> Generator[_RegistryCall, Any, PreparedRegistryEvent]:
         self._require_auth("prepare_key_rotation")
         from urllib.parse import quote
 
@@ -1078,7 +1449,8 @@ class RegistryClient(AbstractRegistryClient):
 
         path = f"/api/v1/agent/{quote(domain, safe='')}/tlog/key-rotation/prepare"
         try:
-            response = self._http_request(
+            response = yield _RegistryCall(
+                "_http_request",
                 "POST", f"{self._base_url}{path}",
                 json={
                     "previous_key_id": request.previous_key_id,
@@ -1130,6 +1502,27 @@ class RegistryClient(AbstractRegistryClient):
         (identity, key, byte-hash) triple and rejects key reuse with
         different bytes.
         """
+        return self._run_registry(
+            self._submit_prepared_event_steps(domain, entry_bytes, idempotency_key),
+        )
+
+    async def async_submit_prepared_event(
+        self,
+        domain: str,
+        entry_bytes: bytes,
+        idempotency_key: str,
+    ) -> SubmissionResult:
+        """Async variant of :meth:`submit_prepared_event` with the same validation and errors."""
+        return await self._async_run_registry(
+            self._submit_prepared_event_steps(domain, entry_bytes, idempotency_key),
+        )
+
+    def _submit_prepared_event_steps(
+        self,
+        domain: str,
+        entry_bytes: bytes,
+        idempotency_key: str,
+    ) -> Generator[_RegistryCall, Any, SubmissionResult]:
         self._require_auth("submit_prepared_event")
         from urllib.parse import quote
 
@@ -1147,7 +1540,8 @@ class RegistryClient(AbstractRegistryClient):
         fqdn_enc = quote(domain, safe="")
         path = f"/api/v1/agent/{fqdn_enc}/tlog/events"
         try:
-            response = self._http_request(
+            response = yield _RegistryCall(
+                "_http_request",
                 "POST", f"{self._base_url}{path}",
                 content=entry_bytes,
                 headers={
@@ -1225,6 +1619,26 @@ class RegistryClient(AbstractRegistryClient):
         extra_headers: dict[str, str] | None = None,
         expected_status: int | None = None,
     ) -> dict[str, Any]:
+        return self._run_registry(self._post_steps(path, body, extra_headers, expected_status))
+
+    async def _async_post(
+        self,
+        path: str,
+        body: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
+        expected_status: int | None = None,
+    ) -> dict[str, Any]:
+        return await self._async_run_registry(
+            self._post_steps(path, body, extra_headers, expected_status),
+        )
+
+    def _post_steps(
+        self,
+        path: str,
+        body: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
+        expected_status: int | None = None,
+    ) -> Generator[_RegistryCall, Any, dict[str, Any]]:
         import httpx
 
         from .enums import VerificationCode
@@ -1237,9 +1651,17 @@ class RegistryClient(AbstractRegistryClient):
         _transport_err: Exception | None = None
         try:
             if body is not None:
-                resp = self._http_request("POST", url, json=body, headers=headers, timeout=10.0)
+                resp = (
+                    yield _RegistryCall(
+                        "_http_request", "POST", url, json=body, headers=headers, timeout=10.0,
+                    )
+                )
             else:
-                resp = self._http_request("POST", url, headers=headers, timeout=10.0)
+                resp = (
+                    yield _RegistryCall(
+                        "_http_request", "POST", url, headers=headers, timeout=10.0,
+                    )
+                )
         except httpx.TransportError as exc:
             _transport_err = VerificationError(
                 VerificationCode.LOG_ERROR,

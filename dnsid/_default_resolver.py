@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
-from ._verification_budget import remaining_seconds, verification_operation
+from ._bounded_response import ACCEPT_ENCODING
+from ._verification_budget import (
+    async_verification_operation,
+    remaining_seconds,
+    verification_operation,
+)
 from .enums import DNSSECState, VerificationCode
+from .exceptions import VerificationError
 from .interfaces import DNSResolver
-from .models import TXTRecord
+from .models import TransportConfig, TXTRecord
 
 if TYPE_CHECKING:
-    pass
+    import httpx
+
+_MAX_DOH_BODY_BYTES = 64 * 1024
 
 
 class DefaultDNSResolver(DNSResolver):
@@ -37,47 +46,89 @@ class DefaultDNSResolver(DNSResolver):
 
     @verification_operation
     def fetch_txt(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
-        if self._dns_server:
-            if self._dns_server.startswith("http://") or self._dns_server.startswith("https://"):
-                return self._fetch_via_doh(name)
-            return self._fetch_via_standard_dns(name)
-        return self._fetch_via_system(name)
+        if self._dns_server.startswith(("http://", "https://")):
+            return self._fetch_via_doh(name)
+        return self._fetch_via_dns(name)
+
+    @async_verification_operation
+    async def async_fetch_txt(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
+        """Fetch TXT records with native async DNS or the configured JSON DoH API.
+
+        DNSSEC reporting matches fetch_txt. No search-domain expansion is used.
+        Each DoH call owns and closes its async client, including on cancellation.
+        """
+        if self._dns_server.startswith(("http://", "https://")):
+            return await self._async_fetch_via_doh(name)
+
+        import dns.asyncresolver
+        import dns.exception
+        import dns.resolver
+
+        try:
+            resolver = dns.asyncresolver.Resolver(configure=not bool(self._dns_server))
+            if self._dns_server:
+                host, _, port_str = self._dns_server.rpartition(":")
+                resolver.nameservers = [host or self._dns_server]
+                resolver.port = int(port_str) if port_str else 53
+            answers = await resolver.resolve(
+                name, "TXT", lifetime=remaining_seconds(10.0), search=False
+            )
+            return [
+                TXTRecord(strings=list(rdata.strings), ttl=int(answers.ttl)) for rdata in answers
+            ], DNSSECState.UNKNOWN
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            return [], DNSSECState.UNKNOWN
+        except dns.exception.ValidationFailure:
+            return [], DNSSECState.FAILED
+        except VerificationError:
+            raise
+        except dns.exception.Timeout as exc:
+            raise VerificationError(
+                VerificationCode.DNS_RESOLUTION,
+                f"DNS lookup timed out for {name!r}",
+                transient=True,
+            ) from exc
+        except Exception as exc:
+            raise VerificationError(
+                VerificationCode.DNS_RESOLUTION,
+                f"DNS lookup error for {name!r}: {exc}",
+                transient=True,
+            ) from exc
 
     # ------------------------------------------------------------------
-    # Standard DNS path (host:port address)
+    # Standard DNS path (system or host:port resolver)
     # ------------------------------------------------------------------
 
-    def _fetch_via_standard_dns(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
+    def _fetch_via_dns(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
         try:
             import dns.exception
             import dns.resolver
         except ImportError as exc:
             raise ImportError(
-                "dnspython is required for the standard DNS resolver path. "
+                "dnspython is required for DNS resolution. "
                 "Install it with: pip install dnspython"
             ) from exc
 
-        from .exceptions import VerificationError
-
-        raw = self._dns_server
-        host, _, port_str = raw.rpartition(":")
-        dns_host = host or raw
-        dns_port = int(port_str) if port_str else 53
-
-        resolver = dns.resolver.Resolver(configure=False)
-        resolver.nameservers = [dns_host]
-        resolver.port = dns_port
+        resolve = dns.resolver.resolve
+        if self._dns_server:
+            host, _, port_str = self._dns_server.rpartition(":")
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = [host or self._dns_server]
+            resolver.port = int(port_str) if port_str else 53
+            resolve = resolver.resolve
 
         try:
-            answers = resolver.resolve(name, "TXT", lifetime=remaining_seconds(10.0))
+            answers = resolve(name, "TXT", lifetime=remaining_seconds(10.0), search=False)
             txt_records: list[TXTRecord] = [
                 TXTRecord(strings=list(rdata.strings), ttl=int(answers.ttl)) for rdata in answers
             ]
             return txt_records, DNSSECState.UNKNOWN
-        except dns.resolver.NXDOMAIN:
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
             return [], DNSSECState.UNKNOWN
-        except dns.resolver.NoAnswer:
-            return [], DNSSECState.UNKNOWN
+        except dns.exception.ValidationFailure:
+            return [], DNSSECState.FAILED
+        except VerificationError:
+            raise
         except dns.exception.Timeout as exc:
             raise VerificationError(
                 VerificationCode.DNS_RESOLUTION,
@@ -98,36 +149,23 @@ class DefaultDNSResolver(DNSResolver):
     def _fetch_via_doh(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
         import httpx
 
-        from .exceptions import VerificationError
+        from ._https_client import _read_limited
+        from .safe_transport import make_ssrf_safe_transport
 
         url = f"{self._dns_server}/dns-query?name={name}&type=TXT"
-        from urllib.parse import urlparse
-
-        from .models import TransportConfig
-        from .safe_transport import _is_ip_literal, make_ssrf_safe_transport
-
-        doh_host = urlparse(url).hostname or ""
-        # Allowlist entries are hostnames only; an IP-literal DoH server is
-        # checked as a literal by the guard and must not be listed here.
-        allow = frozenset() if _is_ip_literal(doh_host) else frozenset([doh_host])
-        config = TransportConfig(private_address_hosts=allow)
         try:
-            with httpx.Client(transport=make_ssrf_safe_transport(config)) as client:
+            with httpx.Client(transport=make_ssrf_safe_transport(self._doh_config())) as client:
                 with client.stream(
                     "GET",
                     url,
-                    headers={"Accept": "application/dns-json"},
+                    headers={"Accept": "application/dns-json", "Accept-Encoding": ACCEPT_ENCODING},
                     timeout=remaining_seconds(10.0),
                 ) as response:
-                    body = bytearray()
-                    for chunk in response.iter_bytes():
-                        remaining_seconds()
-                        if len(body) + len(chunk) > 64 * 1024:
-                            raise VerificationError(
-                                VerificationCode.DNS_RESOLUTION, "DoH response body too large"
-                            )
-                        body.extend(chunk)
-                    resp = httpx.Response(response.status_code, content=bytes(body))
+                    body = _read_limited(
+                        response, _MAX_DOH_BODY_BYTES, VerificationCode.DNS_RESOLUTION,
+                        "DoH response body too large",
+                    )
+                    resp = httpx.Response(response.status_code, content=body)
         except httpx.TransportError as exc:
             raise VerificationError(
                 VerificationCode.DNS_RESOLUTION,
@@ -135,6 +173,49 @@ class DefaultDNSResolver(DNSResolver):
                 transient=True,
             ) from exc
 
+        return self._parse_doh_response(resp, name)
+
+    async def _async_fetch_via_doh(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
+        import httpx
+
+        from ._https_client import _async_read_limited
+        from .safe_transport import make_ssrf_safe_async_transport
+
+        url = f"{self._dns_server}/dns-query?name={name}&type=TXT"
+        try:
+            async with httpx.AsyncClient(
+                transport=make_ssrf_safe_async_transport(self._doh_config()),
+                follow_redirects=False,
+            ) as client:
+                async with client.stream(
+                    "GET", url,
+                    headers={"Accept": "application/dns-json", "Accept-Encoding": ACCEPT_ENCODING},
+                    timeout=remaining_seconds(10.0),
+                ) as response:
+                    body = await _async_read_limited(
+                        response, _MAX_DOH_BODY_BYTES, VerificationCode.DNS_RESOLUTION,
+                        "DoH response body too large",
+                    )
+                    resp = httpx.Response(response.status_code, content=body)
+        except httpx.TransportError as exc:
+            raise VerificationError(
+                VerificationCode.DNS_RESOLUTION,
+                f"DoH query failed for {name!r}: {exc}",
+                transient=True,
+            ) from exc
+        return self._parse_doh_response(resp, name)
+
+    def _doh_config(self) -> TransportConfig:
+        from .safe_transport import _is_ip_literal
+
+        host = urlparse(self._dns_server).hostname or ""
+        # The address guard checks IP literals directly; allowlist entries are hostnames only.
+        allow = frozenset() if _is_ip_literal(host) else frozenset([host])
+        return TransportConfig(private_address_hosts=allow)
+
+    def _parse_doh_response(
+        self, resp: httpx.Response, name: str
+    ) -> tuple[list[TXTRecord], DNSSECState]:
         if not resp.is_success:
             raise VerificationError(
                 VerificationCode.DNS_RESOLUTION,
@@ -142,93 +223,47 @@ class DefaultDNSResolver(DNSResolver):
                 transient=resp.status_code >= 500,
             )
 
-        _MAX_DOH_BODY = 64 * 1024
-        if len(resp.content) > _MAX_DOH_BODY:
-            raise VerificationError(
-                VerificationCode.DNS_RESOLUTION,
-                f"DoH response body too large for {name!r}",
-            )
-
-        data: dict[str, Any] = resp.json()
-
-        status = data.get("Status", 0)
-        if status != 0:
-            raise VerificationError(
-                VerificationCode.DNS_RESOLUTION,
-                f"DoH query returned DNS status {status} for {name!r}",
-                transient=status == 2,
-            )
-
-        dnssec_state = (
-            DNSSECState.VALID
-            if self._dns_server.startswith("https://") and data.get("AD")
-            else DNSSECState.UNKNOWN
-        )
-
-        txt_records: list[TXTRecord] = []
-        for answer in data.get("Answer", []):
-            if answer.get("type") == 16:  # DNS TXT record type number
-                strings = _parse_doh_txt_strings(answer.get("data", ""))
-                txt_records.append(
-                    TXTRecord(
-                        strings=[s.encode("ascii") for s in strings],
-                        ttl=answer.get("TTL", 300),
-                    )
+        try:
+            data = resp.json()
+            if not isinstance(data, dict) or type(data.get("Status", 0)) is not int:
+                raise ValueError("invalid DNS response")
+            status = data.get("Status", 0)
+            if status not in (0, 3):
+                raise VerificationError(
+                    VerificationCode.DNS_RESOLUTION,
+                    f"DoH query returned DNS status {status} for {name!r}",
+                    transient=status == 2,
                 )
-
-        return txt_records, dnssec_state
-
-    # ------------------------------------------------------------------
-    # System resolver path (dnspython)
-    # ------------------------------------------------------------------
-
-    def _fetch_via_system(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
-        try:
-            import dns.exception
-            import dns.resolver
-        except ImportError as exc:
-            raise ImportError(
-                "dnspython is required for the system DNS resolver path. "
-                "Install it with: pip install dnspython"
-            ) from exc
-
-        from .exceptions import VerificationError
-
-        try:
-            answers = dns.resolver.resolve(name, "TXT", lifetime=remaining_seconds(10.0))
-            txt_records: list[TXTRecord] = [
-                TXTRecord(strings=list(rdata.strings), ttl=int(answers.ttl)) for rdata in answers
-            ]
-            # System resolver does not expose the AD bit — always UNKNOWN.
-            return txt_records, DNSSECState.UNKNOWN
-
-        except dns.resolver.NXDOMAIN:
-            return [], DNSSECState.UNKNOWN
-
-        except dns.resolver.NoAnswer:
-            return [], DNSSECState.UNKNOWN
-
-        except dns.resolver.NoNameservers as exc:
-            # NoNameservers covers SERVFAIL; treat conservatively as transient.
+            if "AD" in data and type(data["AD"]) is not bool:
+                raise ValueError("invalid AD bit")
+            state = (
+                DNSSECState.VALID
+                if self._dns_server.startswith("https://") and data.get("AD") is True
+                else DNSSECState.UNKNOWN
+            )
+            if status == 3:  # NXDOMAIN retains the response's DNSSEC state.
+                return [], state
+            answers = data.get("Answer", [])
+            if not isinstance(answers, list):
+                raise ValueError("invalid DNS answers")
+            txt_records: list[TXTRecord] = []
+            for answer in answers:
+                if not isinstance(answer, dict):
+                    raise ValueError("invalid DNS answer")
+                if answer.get("type") == 16:
+                    strings = _parse_doh_txt_strings(answer.get("data", ""))
+                    ttl = answer.get("TTL", 0)
+                    if type(ttl) is not int or ttl < 0:
+                        raise ValueError("invalid DNS TTL")
+                    txt_records.append(TXTRecord(
+                        strings=[s.encode("ascii") for s in strings], ttl=ttl,
+                    ))
+        except (ValueError, TypeError, AttributeError) as exc:
             raise VerificationError(
                 VerificationCode.DNS_RESOLUTION,
-                f"DNS lookup failed for {name!r}: {exc}",
-                transient=True,
+                f"Invalid DoH JSON response for {name!r}: {exc}",
             ) from exc
-
-        except dns.exception.Timeout as exc:
-            raise VerificationError(
-                VerificationCode.DNS_RESOLUTION,
-                f"DNS lookup timed out for {name!r}",
-                transient=True,
-            ) from exc
-
-        except Exception as exc:
-            raise VerificationError(
-                VerificationCode.DNS_RESOLUTION,
-                f"DNS lookup error for {name!r}: {exc}",
-                transient=True,
-            ) from exc
+        return txt_records, state
 
 
 # ---------------------------------------------------------------------------

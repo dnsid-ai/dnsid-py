@@ -7,6 +7,63 @@ description: "LogReader for C2SP tile-log transparency logs (dnsid.c2sp_tlog)."
 
 Everything on this page is imported from `dnsid.c2sp_tlog`. The subpackage is wire-compatible with the other DNSid SDKs' c2sp-tlog implementations.
 
+## `AsyncC2spBoundedResourceFetcher`
+
+```python
+from dnsid.c2sp_tlog import AsyncC2spBoundedResourceFetcher
+```
+
+*Bases:* `C2spBoundedResourceFetcher`, `Protocol`
+
+Optional native async capability of a synchronous bounded fetcher.
+
+Apply the same URL, decoded-byte, DNS/TLS and redirect guarantees. Honor the
+verification budget and close in-progress responses on cancellation. Injected
+resources remain caller-owned and must support concurrent calls on their
+supported event loops.
+
+### `async_fetch_bounded`
+
+```python
+AsyncC2spBoundedResourceFetcher.async async_fetch_bounded(url: str, max_bytes: int) -> bytes
+```
+
+Fetch bounded decoded bytes, closing the response on cancellation.
+
+## `AsyncC2spTlogSource`
+
+```python
+from dnsid.c2sp_tlog import AsyncC2spTlogSource
+```
+
+*Bases:* `C2spTlogSource`, `Protocol`
+
+Optional async evidence reads with the same guarantees as C2spTlogSource.
+
+### `async_fetch_checkpoint`
+
+```python
+AsyncC2spTlogSource.async async_fetch_checkpoint(reference: ParsedC2spTlogLr) -> bytes
+```
+
+Fetch the raw signed checkpoint bytes without blocking.
+
+### `async_read_entry`
+
+```python
+AsyncC2spTlogSource.async async_read_entry(reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry
+```
+
+Return bounded, untrusted inclusion evidence without blocking.
+
+### `async_load_stream`
+
+```python
+AsyncC2spTlogSource.async async_load_stream(reference: ParsedC2spTlogLr, fqdn: str) -> C2spStreamEvidence
+```
+
+Return the same complete evidence as load_stream without blocking.
+
 ## `C2SP_SPEC_REVISIONS`
 
 ```python
@@ -286,6 +343,10 @@ LogReader over a C2SP tile log, verified against a local trust policy.
 
 Read paths authenticate the checkpoint and select the signed lifecycle
 from either a strictly verified per-domain bundle or a complete raw scan.
+AsyncLogReader methods use native async source/fetcher capabilities, with
+worker fallback for sync-only injected adapters. Both APIs share verified
+history caches and deterministic validation. Async checkpoint-store calls
+run atomically in tracked workers. Injected resources remain caller-owned.
 
 For a draft 01 record this reader performs the binding-level lifecycle
 checks verify_domain requires:
@@ -446,6 +507,70 @@ C2spTlogReader.rebuild_history_through(domain: str, final_entry_ref: str, entity
 ```
 
 Verify this stream through exactly *final_entry_ref*.
+
+### `async_preload_history`
+
+```python
+C2spTlogReader.async async_preload_history(domain: str, entity_key: JWK) -> None
+```
+
+Load authenticated history through native reads or sync-adapter fallback.
+
+### `async_key_timestamp`
+
+```python
+C2spTlogReader.async async_key_timestamp(domain: str, key_thumbprint: str) -> datetime.datetime
+```
+
+Return the same verified key introduction time as key_timestamp.
+
+### `async_verify_bilateral_binding`
+
+```python
+C2spTlogReader.async async_verify_bilateral_binding(record: object, entity_key: JWK, operational_key: JWK) -> BilateralBindingResult
+```
+
+Verify both anchors against asynchronously loaded lifecycle evidence.
+
+### `async_verify_operational_continuity`
+
+```python
+C2spTlogReader.async async_verify_operational_continuity(domain: str, initial_operational_thumbprint: str, current_operational_thumbprint: str) -> None
+```
+
+Verify rotations under the same lifecycle rules as the sync reader.
+
+### `async_verify_non_revocation`
+
+```python
+C2spTlogReader.async async_verify_non_revocation(domain: str, at: datetime.datetime) -> LoggedStateEvidence
+```
+
+Verify fresh, complete, non-terminal history through at.
+
+### `async_rebuild_history`
+
+```python
+C2spTlogReader.async async_rebuild_history(domain: str) -> list[AnyLogEvent]
+```
+
+Rebuild authenticated history, including recursive predecessor reads.
+
+### `async_rebuild_history_through`
+
+```python
+C2spTlogReader.async async_rebuild_history_through(domain: str, final_entry_ref: str, entity_key: JWK, *, max_depth: int, max_events: int, max_response_bytes: int, seen_log_references: frozenset[str]) -> VerifiedCutoffHistory
+```
+
+Verify the exact signed cutoff under cumulative migration bounds.
+
+### `async_read_event`
+
+```python
+C2spTlogReader.async async_read_event(ref: LogRef) -> AnyLogEvent
+```
+
+Verify an exact occurrence, its inclusion proof and lifecycle authority.
 
 ## `C2spTlogReaderOptions`
 
@@ -667,7 +792,7 @@ from dnsid.c2sp_tlog import CheckpointStore
 
 *Bases:* `ABC`
 
-Durable record of the highest trusted checkpoint per origin.
+Record of the highest trusted checkpoint per origin.
 
 Implementations MUST be safe for concurrent use.  Consistency enforcement
 and advancement MUST be atomic per origin (see `verify_and_advance`):
@@ -705,6 +830,11 @@ Atomically check consistency and advance the trusted checkpoint.
 Under the per-origin lock: load the trusted checkpoint, call *verify*
 with it (which MUST raise if *candidate* is a rollback or fork of that
 trusted state), then record *candidate* if it advances the tree.
+Implementations must validate inputs and stored records, return immutable
+snapshots, and check the invocation budget before publication and while
+waiting for locks. Storage failures raise C2spCheckpointStoreError;
+callback failures retain their original type and cause.
+
 Holding the lock across verify and advance serializes concurrent
 verifications of one origin, so an equivocating log cannot get two
 forked extensions accepted against the same trusted checkpoint.
@@ -741,13 +871,12 @@ from dnsid.c2sp_tlog import InMemoryCheckpointStore
 
 Process-lifetime trusted-checkpoint store (the default).
 
-Resists rollback and fork *within a process*.  It does NOT survive a
-restart: afterward the first checkpoint for an origin is trusted on first
-contact, so a rollback served post-restart would be accepted.  A verifier
-that must resist cross-restart rollback MUST inject a durable
-``CheckpointStore`` such as `SQLiteCheckpointStore`. The SDK does not
-emit a runtime warning when this in-memory default is selected; production
-deployments must explicitly configure and monitor persistent trust storage.
+Resists rollback and fork only while this same store instance is retained.
+Creating a new store or registry loses remembered trust even without a
+process restart; the next checkpoint is trusted on first contact. A verifier
+that must resist cross-restart rollback MUST inject a deployment-provided
+durable ``CheckpointStore``; the SDK supplies only in-memory storage. It does
+not emit a runtime warning when this default is selected.
 
 ### `InMemoryCheckpointStore` constructor
 
@@ -763,7 +892,7 @@ Create an empty store with no trusted checkpoints.
 InMemoryCheckpointStore.get(origin: str) -> TrustedCheckpoint | None
 ```
 
-Return the trusted checkpoint for *origin*, or None if unseen.
+Return the immutable trusted checkpoint for *origin*, or None if unseen.
 
 ### `put`
 
@@ -771,7 +900,7 @@ Return the trusted checkpoint for *origin*, or None if unseen.
 InMemoryCheckpointStore.put(checkpoint: TrustedCheckpoint) -> None
 ```
 
-Record *checkpoint* if it advances its origin, without verifying.
+Seed advancing state without proof checks; reject equal-size conflicts.
 
 ### `verify_and_advance`
 
@@ -832,6 +961,10 @@ Treated as immutable apart from adding a role signature (via
 preserves unknown signed fields; ``signed_bytes`` is the canonical JCS of
 the envelope with the top-level ``sigs`` member removed.
 
+**Attributes:**
+
+- `event_id` (`str`): Locally derived logical ID, independent of lifecycle signatures.
+
 ### `missing_signatures`
 
 ```python
@@ -839,105 +972,6 @@ PreparedC2spTlogEvent.missing_signatures() -> list[C2spSignerRole]
 ```
 
 Roles still absent from the envelope's sigs object.
-
-## `SQLiteCheckpointStore`
-
-```python
-from dnsid.c2sp_tlog import SQLiteCheckpointStore
-```
-
-*Bases:* `CheckpointStore`
-
-Durable checkpoint store shared by threads and processes.
-
-SQLite transactions serialize verification and advancement and commit before
-success. Uses rollback journaling with ``synchronous=EXTRA`` and enables
-``fullfsync`` where SQLite supports it. Use a local persistent filesystem
-with working SQLite locks and sync semantics, not a network filesystem.
-
-Open an existing store by default; ``create=True`` exclusively initializes a
-NEW file. Never automatically recreate a missing/corrupt store on startup:
-losing the database loses the trust history. An empty store still uses first
-contact trust; seed an independently authenticated checkpoint with ``put``
-if that is unsuitable. ``put`` does not authorize lowering a trusted size.
-
-Transactions lock the whole database, including during the verification
-callback. Callbacks must not re-enter this store. Operations wait up to five
-seconds for contention, then fail closed. No connection is retained between
-calls and no explicit close is needed.
-
-### `SQLiteCheckpointStore` constructor
-
-```python
-SQLiteCheckpointStore(path: Path | str, *, create: bool = False) -> None
-```
-
-Open or explicitly initialize persistent trust state.
-
-**Arguments:**
-
-- `path` (`Path | str`): Database path in an existing, access-controlled directory.
-- `create` (`bool`): Exclusively create a new database; fails if it exists. — default `False`
-
-**Raises:**
-
-- `C2spCheckpointStoreError`: Creation/opening or schema validation fails.
-
-### `get`
-
-```python
-SQLiteCheckpointStore.get(origin: str) -> TrustedCheckpoint | None
-```
-
-Read the trusted checkpoint; storage failures never become first contact.
-
-### `put`
-
-```python
-SQLiteCheckpointStore.put(checkpoint: TrustedCheckpoint) -> None
-```
-
-Seed externally authenticated state if its size advances (or equals) trust.
-
-Bypasses proof verification. A smaller size is ignored; an equal-size
-conflicting root is rejected. Use ``rebaseline`` to explicitly reset trust.
-
-### `verify_and_advance`
-
-```python
-SQLiteCheckpointStore.verify_and_advance(candidate: TrustedCheckpoint, verify: Callable[[TrustedCheckpoint | None], None]) -> None
-```
-
-Verify and durably advance in one transaction, rolling back on failure.
-
-### `rebaseline`
-
-```python
-SQLiteCheckpointStore.rebaseline(checkpoint: TrustedCheckpoint, *, expected: TrustedCheckpoint, authorized_by: str, evidence: str) -> None
-```
-
-Explicitly replace trust after independently authorized operator recovery.
-
-NEVER call automatically on verification failure. This method records the
-operator's assertion of authorization; it cannot authenticate a person or
-recovery evidence. The caller must do that independently beforehand.
-
-**Arguments:**
-
-- `checkpoint` (`TrustedCheckpoint`): Independently authenticated replacement checkpoint.
-- `expected` (`TrustedCheckpoint`): Exact previous checkpoint reviewed by the operator. A concurrent change aborts the reset rather than overwriting it.
-- `authorized_by` (`str`): Nonempty identity of the authorizing incident/security owner.
-- `evidence` (`str`): Nonempty incident/evidence reference justifying this trust change.
-
-**Raises:**
-
-- `ValueError`: Invalid checkpoint, origin mismatch, or missing audit fields.
-- `C2spCheckpointStoreError`: Stored state changed or persistence failed.
-
-The previous and replacement checkpoints, authorization, evidence reference,
-and UTC time are appended to the ``rebaselines`` SQL table in the SAME
-transaction as the replacement. Preserve an external incident archive too:
-someone with filesystem write access can alter this database and its audit.
 
 ## `SafeC2spResourceFetcher`
 
@@ -968,6 +1002,17 @@ SafeC2spResourceFetcher.fetch_bounded(url: str, max_bytes: int) -> bytes
 ```
 
 Fetch one HTTPS resource, requiring HTTP 200 and an exact byte bound.
+
+### `async_fetch_bounded`
+
+```python
+SafeC2spResourceFetcher.async async_fetch_bounded(url: str, max_bytes: int) -> bytes
+```
+
+Read natively with the sync guarantees and a per-call owned client.
+
+Clients are not shared between event loops. Closing this fetcher closes
+only its synchronous pool; each async call closes its own resources.
 
 ### `security_guarantees`
 
@@ -1025,6 +1070,14 @@ Fetch the checkpoint under *prefix* and scan every entry beneath it.
 - `C2spTlogParseError`: If the checkpoint or an entry bundle is malformed.
 - `C2spTlogVerificationError`: If checkpoint authentication fails, a configured size limit is exceeded, or a bundle width is wrong.
 
+### `async_load`
+
+```python
+ScanStreamSource.async async_load(prefix: str) -> StreamEvidence
+```
+
+Scan standard resources asynchronously, authenticating before tile reads.
+
 ### `security_guarantees`
 
 ```python
@@ -1056,6 +1109,30 @@ ScanStreamSource.read_entry(reference: ParsedC2spTlogLr, index: int) -> C2spProv
 ```
 
 Return one entry plus a proof derived from a complete scan.
+
+### `async_fetch_checkpoint`
+
+```python
+ScanStreamSource.async async_fetch_checkpoint(reference: ParsedC2spTlogLr) -> bytes
+```
+
+Fetch one bounded checkpoint using the native capability if present.
+
+### `async_load_stream`
+
+```python
+ScanStreamSource.async async_load_stream(reference: ParsedC2spTlogLr, fqdn: str) -> C2spStreamEvidence
+```
+
+Load complete raw evidence through native async resource reads.
+
+### `async_read_entry`
+
+```python
+ScanStreamSource.async async_read_entry(reference: ParsedC2spTlogLr, index: int) -> C2spProvenEntry
+```
+
+Build an inclusion proof from an asynchronously fetched full scan.
 
 ## `SignedNoteKey`
 

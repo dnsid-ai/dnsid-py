@@ -16,7 +16,10 @@ Holds one factory per log method; constructs bound LogReader instances on demand
 For C2SP, prefer ``create_dnsid_managed_verification_registry()`` or
 ``create_c2sp_tlog_verification_registry(...)`` over manual registration.
 IdentityManager uses the registry to bind the local log and to construct
-counterparty readers during verification.
+counterparty readers during verification. Factories remain synchronous and
+return LogReader instances; readers may additionally implement AsyncLogReader.
+Factory construction must not block the event loop when used by native async
+verification. Synchronous verification constructs readers in workers.
 
 ### `LogRegistry` constructor
 
@@ -99,7 +102,14 @@ requires the same owner authentication because it
 may expose a proof challenge. A configured credential is sent on all reads.
 The credential is never included in ``repr()``/``str()``, exceptions, or logs.
 Requests share a protected connection pool, including when transport settings
-are omitted. Use a ``with`` block or call ``close()`` after the last request.
+are omitted. Every registry operation has an ``async_`` variant using
+native async HTTP and the same validation, credentials and error handling.
+Use a ``with`` block or ``close()`` for synchronous use; use ``async with``
+or ``await aclose()`` after async use. Async requests share a separate pool
+on one event loop. Finish outstanding requests before closing either pool.
+Cancellation stops the local request, not mutations already accepted by
+the server. Reconcile uncertain results before retrying with the same
+request and idempotency key; methods never retry mutations automatically.
 
 Restore/reactivation operations (un-retiring or un-revoking an agent) are
 deliberately not exposed: the registry treats RETIRED and REVOKED as
@@ -132,7 +142,15 @@ Initialize the client with a registry base URL and optional credential.
 RegistryClient.close() -> None
 ```
 
-Close pooled registry connections after the last request.
+Close synchronous connections; use aclose after async requests.
+
+### `aclose`
+
+```python
+RegistryClient.async aclose() -> None
+```
+
+Close both pools after the last request, on the async pool's event loop.
 
 ### `register_agent`
 
@@ -152,6 +170,14 @@ SDK errors retain registration_request, registration_idempotency_key, and
 registration_response (known creation facts), without exposing credentials.
 The returned publication snapshot does not establish counterparty trust.
 
+### `async_register_agent`
+
+```python
+RegistryClient.async async_register_agent(input: AgentRegistrationInput, idempotency_key: str | None = None) -> AgentRegistration
+```
+
+Async variant of `register_agent` with the same validation and errors.
+
 ### `register_live_agent`
 
 ```python
@@ -165,6 +191,14 @@ discriminators. Sign the exact base64url-decoded ``challenge_message``
 bytes; use the derived `LiveProvisioningResponse.domain` for the
 proof route.
 
+### `async_register_live_agent`
+
+```python
+RegistryClient.async async_register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str) -> LiveProvisioningResponse
+```
+
+Async variant of `register_live_agent` with the same validation and errors.
+
 ### `verify_agent`
 
 ```python
@@ -174,6 +208,14 @@ RegistryClient.verify_agent(domain: str) -> AgentRegistration
 Request registry verification for a registered self-managed agent.
 
 ``POST /api/v1/agent/{domain}/verify``
+
+### `async_verify_agent`
+
+```python
+RegistryClient.async async_verify_agent(domain: str) -> AgentRegistration
+```
+
+Async variant of `verify_agent` with the same validation and errors.
 
 ### `revoke_agent`
 
@@ -202,6 +244,14 @@ convenience method does not prepare or append a second local event.
 
 - `ArgumentError`: If *reason* is not a ``RegistryRevocationReason``.
 
+### `async_revoke_agent`
+
+```python
+RegistryClient.async async_revoke_agent(domain: str, agent_id: str, reason: RegistryRevocationReason) -> LifecycleResult
+```
+
+Async variant of `revoke_agent` with the same validation and errors.
+
 ### `retire_agent`
 
 ```python
@@ -211,6 +261,14 @@ RegistryClient.retire_agent(domain: str, agent_id: str) -> LifecycleResult
 Retire an agent while retaining its key for historical verification.
 
 ``POST /api/v1/agent/{domain}/retire`` with the immutable *agent_id*.
+
+### `async_retire_agent`
+
+```python
+RegistryClient.async async_retire_agent(domain: str, agent_id: str) -> LifecycleResult
+```
+
+Async variant of `retire_agent` with the same validation and errors.
 
 ### `cancel_agent`
 
@@ -224,6 +282,14 @@ Cancel an agent that is still inside the registration workflow.
 revoked (the registry answers 409 ``INVALID_TRANSITION``); cancelling
 is the transition that removes it. Mirrors ``cancelAgent`` in the
 TypeScript SDK and ``CancelAgent`` in Go.
+
+### `async_cancel_agent`
+
+```python
+RegistryClient.async async_cancel_agent(domain: str) -> LifecycleResult
+```
+
+Async variant of `cancel_agent` with the same validation and errors.
 
 ### `submit_challenge_signature`
 
@@ -249,6 +315,14 @@ The nonce is single-use — a fresh one must be fetched before retrying.
 - `nonce` (`str`): Challenge nonce exactly as returned by the status endpoint.
 - `signature` (`bytes | str`): Raw signature bytes (base64url-encoded automatically), or an already base64url-encoded signature string.
 
+### `async_submit_challenge_signature`
+
+```python
+RegistryClient.async async_submit_challenge_signature(domain: str, nonce: str, signature: bytes | str) -> LifecycleResult
+```
+
+Async variant of `submit_challenge_signature`.
+
 ### `submit_live_proof`
 
 ```python
@@ -260,6 +334,14 @@ Submit signed proof for managed Live provisioning.
 ``POST /api/v1/agent/{domain}/proof`` requires owner/session/API-key
 credentials, not an agent bearer token. ``request.request_id`` is sent
 as the required ``Idempotency-Key`` header.
+
+### `async_submit_live_proof`
+
+```python
+RegistryClient.async async_submit_live_proof(domain: str, request: LiveProofRequest) -> LiveProofResponse
+```
+
+Async variant of `submit_live_proof` with the same validation and errors.
 
 ### `reissue_live_proof`
 
@@ -276,6 +358,14 @@ validated locally and binds the replacement transcript, but is not sent.
 The replacement challenge supersedes every earlier challenge; only the
 latest message may be signed.
 
+### `async_reissue_live_proof`
+
+```python
+RegistryClient.async async_reissue_live_proof(domain: str, request: LiveProofReissueRequest) -> LiveProofReissueResponse
+```
+
+Async variant of `reissue_live_proof` with the same validation and errors.
+
 ### `get_status`
 
 ```python
@@ -289,6 +379,14 @@ Fetch the raw lifecycle status string from the registry.
 Returns the uppercased status string (e.g. ``"ACTIVE"``, ``"VERIFIED"``),
 or ``None`` if the agent is not registered (HTTP 404). Live status
 requires owner/session/API-key authentication; legacy status is public.
+
+### `async_get_status`
+
+```python
+RegistryClient.async async_get_status(domain: str) -> str | None
+```
+
+Async variant of `get_status` with the same validation and errors.
 
 ### `get_agent_status`
 
@@ -305,16 +403,34 @@ requires owner/session/API-key authentication; legacy status is public.
 Returns a `RegistryAgentStatus` with computed boolean flags that
 mirror the TypeScript ``RegistryAgentStatus`` interface.
 
+### `async_get_agent_status`
+
+```python
+RegistryClient.async async_get_agent_status(domain: str) -> RegistryAgentStatus | None
+```
+
+Async variant of `get_agent_status` with the same validation and errors.
+
 ### `get_organization_onboarding`
 
 ```python
-RegistryClient.get_organization_onboarding() -> dict[str, Any]
+RegistryClient.get_organization_onboarding(*, expected_org_id: str | None = None, expected_gi: str | None = None) -> dict[str, Any]
 ```
 
 Read account/GI proofs and delegation using authenticated effective transport.
 
+Compare saved/configured IDs when supplied; derive ``bindings_ready``
+only from matching verified GI proof and verified entity delegation.
 Pending proofs are not ready bindings. This read supplies no entity JWKS
 URL and makes no claim about named creation or permanent replay support.
+
+### `async_get_organization_onboarding`
+
+```python
+RegistryClient.async async_get_organization_onboarding(*, expected_org_id: str | None = None, expected_gi: str | None = None) -> dict[str, Any]
+```
+
+Async variant of `get_organization_onboarding`.
 
 ### `get_registration`
 
@@ -327,6 +443,14 @@ Read authenticated management status without conflating status namespaces.
 Owner credentials are required on hosted registries. Failed authenticated
 reads are never retried anonymously. This is not the public protocol su route.
 
+### `async_get_registration`
+
+```python
+RegistryClient.async async_get_registration(domain: str) -> AgentRegistration | None
+```
+
+Async variant of `get_registration` with the same validation and errors.
+
 ### `get_agent_detail`
 
 ```python
@@ -337,6 +461,14 @@ Read authenticated management detail to obtain publication authority.
 
 The product exposes agent detail on the management status route, not
 GET /api/v1/agent/{domain}. This does not read the public protocol su URL.
+
+### `async_get_agent_detail`
+
+```python
+RegistryClient.async async_get_agent_detail(domain: str) -> AgentRegistration | None
+```
+
+Async variant of `get_agent_detail` with the same validation and errors.
 
 ### `wait_for_status`
 
@@ -366,8 +498,8 @@ RegistryClient.async async_wait_for_status(domain: str, *, timeout: float = 120.
 
 Async variant of `wait_for_status`.
 
-Sleeps with ``asyncio.sleep`` between polls so the event loop is not
-blocked.  The status fetch itself is synchronous (httpx).
+Uses native async HTTP and sleeps without blocking the event loop.
+Cancellation closes the current response and stops polling.
 
 ### `unregister_agent`
 
@@ -378,6 +510,14 @@ RegistryClient.unregister_agent(domain: str) -> None
 Best-effort unregister. Silently ignores 404 and 405.
 
 ``DELETE /api/v1/agent/{domain}``
+
+### `async_unregister_agent`
+
+```python
+RegistryClient.async async_unregister_agent(domain: str) -> None
+```
+
+Async variant of `unregister_agent` with the same validation and errors.
 
 ### `canonical_record_content`
 
@@ -393,6 +533,14 @@ Returns a `CanonicalRecordContentResponse` with the canonical
 byte string and the registry's view of the active signing key ID.
 The SDK MUST validate both before signing; this response is not trusted input.
 
+### `async_canonical_record_content`
+
+```python
+RegistryClient.async async_canonical_record_content(domain: str, signing_kid: str) -> CanonicalRecordContentResponse
+```
+
+Async variant of `canonical_record_content` with the same validation and errors.
+
 ### `publish_signature`
 
 ```python
@@ -406,6 +554,14 @@ Submit the record signature to complete the publish workflow.
 *sig* MUST be the profile-owned sg value.  For draft 01 this is the bare
 unpadded base64url signature bytes.
 
+### `async_publish_signature`
+
+```python
+RegistryClient.async async_publish_signature(domain: str, sig: str) -> PublishedRecord
+```
+
+Async variant of `publish_signature` with the same validation and errors.
+
 ### `prepare_issuance`
 
 ```python
@@ -417,6 +573,14 @@ Fetch exact raw ISSUANCE bytes for operational countersigning.
 ``POST /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
 body. Both the response bytes and ``DNSID-Log-Reference`` header are
 untrusted and must be validated by the C2SP prepared-event binding.
+
+### `async_prepare_issuance`
+
+```python
+RegistryClient.async async_prepare_issuance(domain: str, idempotency_key: str) -> PreparedRegistryEvent
+```
+
+Async variant of `prepare_issuance` with the same validation and errors.
 
 ### `prepare_key_rotation`
 
@@ -441,6 +605,14 @@ reference as UNTRUSTED input: the caller must parse both with the bound log impl
 the signed bytes, and verify domain, previous key, new key, log
 context, and stream-chain fields before adding any signature.
 
+### `async_prepare_key_rotation`
+
+```python
+RegistryClient.async async_prepare_key_rotation(domain: str, request: KeyRotationPreparationRequest, idempotency_key: str) -> PreparedRegistryEvent
+```
+
+Async variant of `prepare_key_rotation` with the same validation and errors.
+
 ### `submit_prepared_event`
 
 ```python
@@ -457,6 +629,14 @@ the same idempotency key.  The registry's durable idempotency mapping
 returns the original pending/accepted result for the same
 (identity, key, byte-hash) triple and rejects key reuse with
 different bytes.
+
+### `async_submit_prepared_event`
+
+```python
+RegistryClient.async async_submit_prepared_event(domain: str, entry_bytes: bytes, idempotency_key: str) -> SubmissionResult
+```
+
+Async variant of `submit_prepared_event` with the same validation and errors.
 
 ## `AgentRegistrationInput`
 
