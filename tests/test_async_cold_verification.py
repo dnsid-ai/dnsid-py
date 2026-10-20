@@ -7,6 +7,8 @@ from collections import Counter
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import dns.exception
+import dns.resolver
 import httpx
 import pytest
 import pytest_asyncio
@@ -105,7 +107,7 @@ async def native(request, monkeypatch):
             return self.answer()
 
     class Fetcher(HTTPSFetcher):
-        def answer(self, url, allowed_host=None, domain_boundary=False):
+        def answer(self, url, allowed_host=None, domain_boundary=False, *, revalidate=False):
             calls[url] += 1
             if url == record.ek:
                 assert allowed_host == "example" and domain_boundary is True
@@ -571,6 +573,49 @@ async def test_async_key_timestamp_enforces_key_age(native, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sync_only", [False, True])
+@pytest.mark.parametrize("failure,code,transient", [
+    (dns.resolver.NXDOMAIN(), VerificationCode.RECORD_NOT_FOUND, False),
+    (dns.resolver.NoAnswer(), VerificationCode.RECORD_NOT_FOUND, False),
+    (dns.exception.ValidationFailure(), VerificationCode.DNSSEC_FAILED, False),
+    (OSError("offline"), VerificationCode.DNS_RESOLUTION, True),
+])
+async def test_dns_failures_match_sync_classification(native, monkeypatch, sync_only,
+                                                     failure, code, transient):
+    if sync_only:
+        monkeypatch.setattr(type(native.resolver), "async_fetch_txt", None)
+        monkeypatch.setattr(native.resolver, "fetch_txt", MagicMock(side_effect=failure))
+    else:
+        monkeypatch.setattr(native.resolver, "async_fetch_txt", AsyncMock(side_effect=failure))
+    with pytest.raises(VerificationError) as error:
+        await native.manager.async_verify_domain(_DOMAIN)
+    assert error.value.code == code
+    assert error.value.transient == transient
+    assert not native.calls
+
+
+@pytest.mark.asyncio
+async def test_async_lookup_joins_explicit_refresh(native):
+    manager = native.manager
+    old = await manager.async_verify_domain(_DOMAIN)
+    native.resolver.sync_gate.clear()
+    refresh = asyncio.create_task(asyncio.to_thread(manager.refresh_domain, _DOMAIN))
+    try:
+        async with asyncio.timeout(2):
+            while not native.resolver.sync_started.is_set():
+                await asyncio.sleep(0)
+        lookup = asyncio.create_task(manager.async_verify_domain(_DOMAIN))
+        await asyncio.sleep(0)
+        assert not lookup.done()
+    finally:
+        native.resolver.sync_gate.set()
+    fresh = await refresh
+    assert await lookup is fresh
+    assert fresh is not old
+    assert native.calls["dns"] == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("count", [0, 2])
 async def test_dns_record_count_is_checked_before_https(native, count):
     native.resolver.records = [
@@ -578,7 +623,8 @@ async def test_dns_record_count_is_checked_before_https(native, count):
     ]
     with pytest.raises(VerificationError) as error:
         await native.manager.async_verify_domain(_DOMAIN)
-    assert error.value.code == VerificationCode.RECORD_INVALID
+    expected = VerificationCode.RECORD_NOT_FOUND if count == 0 else VerificationCode.RECORD_INVALID
+    assert error.value.code == expected
     assert native.calls == Counter(dns=1)
 
 

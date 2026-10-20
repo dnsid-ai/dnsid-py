@@ -664,6 +664,7 @@ class AsyncHTTPSFetcher(Protocol):
         url: str,
         allowed_host: str | None = None,
         domain_boundary: bool = False,
+        *, revalidate: bool = False,
     ) -> tuple[dict[str, Any], TLSCertificate]:
         """Fetch bounded JSON and its peer certificate under the sync HTTPS rules."""
         ...

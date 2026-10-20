@@ -134,7 +134,7 @@ implementations must support concurrent calls on their supported event loops.
 ### `async_fetch_strict_json`
 
 ```python
-AsyncHTTPSFetcher.async async_fetch_strict_json(url: str, allowed_host: str | None = None, domain_boundary: bool = False) -> tuple[dict[str, Any], TLSCertificate]
+AsyncHTTPSFetcher.async async_fetch_strict_json(url: str, allowed_host: str | None = None, domain_boundary: bool = False, *, revalidate: bool = False) -> tuple[dict[str, Any], TLSCertificate]
 ```
 
 Fetch bounded JSON and its peer certificate under the sync HTTPS rules.

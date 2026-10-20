@@ -50,7 +50,7 @@ async def test_short_async_leader_cannot_shorten_followers_deadline(verifier, mo
     if mode != "cold":
         manager.verify_domain(domain)
 
-    def fetch(*args):
+    def fetch(*args, **kwargs):
         observed.append((trace.get(), remaining_seconds()))
         started.set()
         assert release.wait(2)

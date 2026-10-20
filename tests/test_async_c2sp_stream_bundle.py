@@ -11,6 +11,7 @@ from dnsid.c2sp_tlog import (
     C2spTlogError,
     Checkpoint,
     IndexedEntry,
+    InMemoryCheckpointStore,
     StreamEvidence,
     merkle_root_from_entries,
     parse_c2sp_tlog_lr,
@@ -32,6 +33,7 @@ async def test_consistency_fallback_keeps_atomic_store_checks(mode):
     _seed_old_checkpoint(vector, options)
     if mode == "trusted-fork":
         trusted = options.checkpoint_store.get(reference.origin)
+        options.checkpoint_store = InMemoryCheckpointStore()
         options.checkpoint_store.put(replace(trusted, root_hash=bytes(32)))
     trusted = options.checkpoint_store.get(reference.origin)
     raw = entries

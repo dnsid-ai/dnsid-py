@@ -1527,7 +1527,10 @@ class IdentityManager:
 
     async def _async_reusable_verification(self, domain: str) -> VerifiedDomain:
         with self._coordination_lock:
-            future = self._verification_futures.get(domain) or self._status_futures.get(domain)
+            future = (
+                self._refresh_futures.get(domain)
+                or self._verification_futures.get(domain) or self._status_futures.get(domain)
+            )
         leader = False
         if future is None:
             cached = self._cache.get(domain)
@@ -1538,7 +1541,10 @@ class IdentityManager:
                 return cached
             pending = self._status_futures if cached is not None else self._verification_futures
             with self._coordination_lock:
-                future = self._verification_futures.get(domain) or self._status_futures.get(domain)
+                future = (
+                    self._refresh_futures.get(domain)
+                    or self._verification_futures.get(domain) or self._status_futures.get(domain)
+                )
                 if future is None:
                     future = Future()
                     pending[domain] = future
@@ -1557,12 +1563,7 @@ class IdentityManager:
         self, domain: str, result: VerifiedDomain,
     ) -> VerifiedDomain:
         if result.dns_ttl == 0:
-            future: Future[VerifiedDomain] = Future()
-            self._track_verification_worker(future)
-            self._start_async_verification(
-                domain, {}, future, lambda: self._async_verify_domain_uncached(domain),
-            )
-            return await async_wait_for_verification(future)
+            return await self._async_reusable_verification(domain)
         return result
 
     def _start_async_verification(
@@ -1731,10 +1732,9 @@ class IdentityManager:
 
     def _uncached_after_shared(self, domain: str, result: VerifiedDomain) -> VerifiedDomain:
         if result.dns_ttl == 0:
-            future: Future[VerifiedDomain] = self._submit_verification(
-                lambda: self._verify_domain_uncached(domain),
+            return self._coalesce(
+                domain, self._verification_futures, lambda: self._verify_domain_uncached(domain)
             )
-            return wait_for_verification(future)
         return result
 
     def _complete_verification(
@@ -1797,7 +1797,7 @@ class IdentityManager:
         latest = self._cache.get(domain)
         if latest is None:
             with self._coordination_lock:
-                future = self._verification_futures.get(domain)
+                future = self._refresh_futures.get(domain) or self._verification_futures.get(domain)
                 leader = future is None
                 if future is None:
                     future = Future()
@@ -1926,11 +1926,26 @@ class IdentityManager:
     async def _async_verify_domain_uncached(self, domain: str) -> VerifiedDomain:
         dns_acquired_at = _now()
         if isinstance(self._dns_resolver, AsyncDNSResolver):
-            records, dnssec_state = await self._dns_resolver.async_fetch_txt(f"_dnsid.{domain}")
+            read = self._dns_resolver.async_fetch_txt(f"_dnsid.{domain}")
         else:
-            records, dnssec_state = await self._async_run_blocking(
+            future = self._submit_verification(
                 lambda: self._dns_resolver.fetch_txt(f"_dnsid.{domain}"),
             )
+            read = async_wait_for_verification(future)
+        try:
+            records, dnssec_state = await read
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            records, dnssec_state = [], DNSSECState.UNKNOWN
+        except dns.exception.ValidationFailure:
+            records, dnssec_state = [], DNSSECState.FAILED
+        except VerificationError:
+            raise
+        except Exception as exc:
+            raise VerificationError(
+                VerificationCode.DNS_RESOLUTION,
+                f"DNS lookup failed for {domain!r}: {exc}",
+                transient=True,
+            ) from exc
         record, dns_ttl, dns_expires_at = self._record_from_dns(
             domain, records, dnssec_state, dns_acquired_at,
         )
@@ -2389,6 +2404,7 @@ class IdentityManager:
             future for future in (
                 self._active_verifications | self._verification_workers
                 | set(self._verification_futures.values()) | set(self._status_futures.values())
+                | set(self._refresh_futures.values())
             ) if not future.done()
         }
 

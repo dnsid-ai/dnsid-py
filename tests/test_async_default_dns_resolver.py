@@ -177,9 +177,30 @@ async def test_doh_matches_sync_and_preserves_txt_components(scheme, ad, state):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [0, 3])
+async def test_doh_absence_and_missing_ttl_match_sync(status):
+    payload = {"Status": status, "AD": True, "Answer": [
+        {"type": 16, "data": '"record"'},
+    ]}
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    resolver = DefaultDNSResolver("https://resolver.test")
+    with (
+        patch("dnsid.safe_transport.make_ssrf_safe_transport", return_value=transport),
+        patch("dnsid.safe_transport.make_ssrf_safe_async_transport", return_value=transport),
+    ):
+        records, state = await resolver.async_fetch_txt(_NAME)
+        assert (records, state) == resolver.fetch_txt(_NAME)
+    assert state == DNSSECState.VALID
+    if status == 3:
+        assert records == []
+    else:
+        assert records[0].ttl == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status,document,transient", [
     (302, {}, False), (400, {}, False), (503, {}, True),
-    (200, {"Status": 2}, True), (200, {"Status": 3}, False),
+    (200, {"Status": 2}, True),
     (200, b"invalid json", False), (200, [], False), (200, {"Status": "0"}, False),
     (200, {"AD": "true"}, False), (200, {"Answer": {}}, False),
     (200, {"Answer": [None]}, False),

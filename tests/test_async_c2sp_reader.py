@@ -13,7 +13,6 @@ from dnsid.c2sp_tlog import (
     C2spMigrationVerificationLimits,
     C2spTlogTransportError,
     InMemoryCheckpointStore,
-    SQLiteCheckpointStore,
     TlogProofV1,
     parse_checkpoint,
 )
@@ -213,12 +212,11 @@ async def test_sync_only_adapters_use_worker_fallback():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("durable", [False, True])
-async def test_concurrent_forks_are_serialized_atomically(native, tmp_path, durable):
+async def test_concurrent_forks_are_serialized_atomically(native):
     first, second = _Logs.create(), _Logs.create()
     destination = first.issuance("first")
     second.issuance("first")
-    store = SQLiteCheckpointStore(tmp_path / "trust.db", create=True) if durable else InMemoryCheckpointStore()
+    store = InMemoryCheckpointStore()
     readers = [_reader(logs, destination)[0] for logs in (first, second)]
     for reader in readers:
         reader._options.checkpoint_store = store

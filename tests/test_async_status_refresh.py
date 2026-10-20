@@ -203,7 +203,7 @@ async def test_injected_sync_fetcher_stays_off_the_event_loop(warmed):
     started, release = threading.Event(), threading.Event()
     manager._https_fetcher = MagicMock(spec=HTTPSFetcher)
 
-    def fetch(*args):
+    def fetch(*args, **kwargs):
         started.set()
         assert release.wait(2)
         return _ACTIVE, None
@@ -258,10 +258,14 @@ async def test_task_submission_failure_cleans_up_and_can_retry(warmed):
 
 
 class DualFetcher(HTTPSFetcher):
-    def fetch_strict_json(self, url, allowed_host=None, domain_boundary=False):
+    def fetch_strict_json(
+        self, url, allowed_host=None, domain_boundary=False, *, revalidate=False,
+    ):
         raise AssertionError("unexpected synchronous fetch")
 
-    async def async_fetch_strict_json(self, url, allowed_host=None, domain_boundary=False):
+    async def async_fetch_strict_json(
+        self, url, allowed_host=None, domain_boundary=False, *, revalidate=False,
+    ):
         return _ACTIVE, TLSCertificate()
 
 
@@ -368,4 +372,4 @@ def test_dual_fetcher_keeps_synchronous_status_path(warmed):
                      side_effect=AssertionError("unexpected async fetch")),
     ):
         assert manager.verify_domain(domain, peer_cert=cert).domain == domain
-    request.assert_called_once_with(cached.record.su)
+    request.assert_called_once_with(cached.record.su, revalidate=False)
