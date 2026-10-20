@@ -321,8 +321,6 @@ PAGES: list[dict] = [
             "PreparedRegistryEvent",
             "KeyRotationPreparationRequest",
             "KeyRotationResult",
-            "IssuanceOperation",
-            "resume_issuance",
             "SubmissionResult",
         ],
     },

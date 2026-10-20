@@ -99,6 +99,32 @@ def test_activated_record_requires_saved_acceptance():
         assert len(registry.submit_calls) == 1
 
 
+def test_same_provider_crash_between_activation_and_supersession():
+    provider = RotationProvider()
+    registry = FakeRotationRegistry()
+    hooks, saved, pauses = _hooks()
+    supersede = provider.supersede
+    provider.supersede = Mock(side_effect=RuntimeError("crash before supersession"))
+    with _manager(provider) as manager:
+        with pytest.raises(ManagedKeyRotationActivationError):
+            manager.rotate_operational_key(
+                registry, idempotency_key="rotation", **hooks
+            )
+    accepted = saved[-1]
+    assert accepted.submission.accepted and not accepted.activated
+    assert provider.signing_key().kid == accepted.new_kid
+    assert accepted.previous_kid in provider.list_key_ids()
+
+    provider.supersede = supersede
+    provider.activate = Mock(side_effect=AssertionError("must not activate twice"))
+    with _manager(provider) as restarted:
+        result = restarted.resume_key_rotation(registry, accepted, **hooks)
+    assert result.activated and not result.application_signing_paused
+    assert accepted.previous_kid not in provider.list_key_ids()
+    assert saved[-1] == result and pauses == [True, True, False]
+    assert len(registry.prepare_calls) == len(registry.submit_calls) == 1
+
+
 @pytest.mark.parametrize("entrypoint", ["resume_key_rotation", "activate_rotated_key"])
 @pytest.mark.parametrize("source", ["file", "aws"])
 @pytest.mark.parametrize("retained_history", [False, True])

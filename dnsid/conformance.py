@@ -45,9 +45,9 @@ SDK_CONFORMANCE = SDKConformance(
     specification_status="internet-draft",
     log_bindings=MappingProxyType({"c2sp-tlog": _C2SP_TLOG_BINDING}),
     known_deviations=(
-        "Managed log-trust construction does not forward effective transport settings.",
-        "Initial issuance publication verification and ACTIVE convergence require "
-        "application hooks; durable storage and single-writer coordination are caller-owned.",
+        "JOSE, HTTP Message Signatures, and OIDC profiles retain mutable caller configuration.",
+        "The JWT bearer profile is exported as WebBotAuthProfile; "
+        "Web Bot Auth naming is reserved for RFC 9421.",
     ),
 )
 

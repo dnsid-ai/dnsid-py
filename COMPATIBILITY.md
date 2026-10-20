@@ -141,15 +141,18 @@ SDK cannot guarantee prompt return from arbitrary caller code.
 
 Standalone bundle migration rejection remains an API limitation rather than a
 design deviation: configured readers recursively verify predecessor histories.
-The remaining managed-trust transport deviation is recorded in
-`SDK_CONFORMANCE.known_deviations`: configuration construction does not forward
-effective transport settings to the managed log-trust factory.
+Managed log-trust construction uses the factory's fixed defaults, as required by
+design 12. Applications that need custom transport or durable checkpoint storage
+construct and inject their log registry explicitly.
 
-## Configuration and Initial Issuance
+## Configuration and Lifecycle Boundaries
 
 Configuration-selected operational and entity signers must match verified local
 publication (kid, algorithm, and RFC 7638 thumbprint) before construction returns.
 Provider availability/settings are checked before policy fetch or discovery.
+Local publication validation checks protocol evidence, including ACTIVE status,
+but has no application peer or counterparty acceptance decision. Public
+`verify_domain` and `refresh_domain` still enforce both on every invocation.
 Injected providers still take precedence and remain their workflow's responsibility.
 Initial setup without existing ACTIVE publication must use explicitly injected
 providers, not configuration-selected signers.
@@ -161,22 +164,23 @@ registry authorization and unavailable-service errors are preserved.
 
 `PreparedC2spTlogEvent.event_id` is locally derived from canonical signed bytes.
 It is not a signed envelope member and does not change when signatures are added.
-Missing DoH TTL now means zero: fresh verification succeeds, but is not cached.
-OIDC token responses, including error bodies, are size-limited during streaming.
 
-`IssuanceOperation` and `resume_issuance` coordinate the registry's split ISSUANCE
-flow. Persist the initial intent before publication. Resume validates the saved
-identity/key/log bindings and signatures, saves exact signed bytes before sending,
-and binds acceptance to their hash and indexed log reference before activation.
-Pending outcomes retry those same bytes; rejected outcomes never activate.
-Accepted recovery skips preparation/submission and retries ACTIVE convergence.
+The SDK exposes initial-issuance preparation, signing, and submission primitives,
+not a complete durable issuance coordinator. The application or registry owns
+one coordinator and one retry owner. It must persist intent and exact signed
+bytes, verify external publication, bind acceptance to the submitted hash and
+reference, and converge ACTIVE status idempotently after acceptance. SDK tests
+do not establish deployment-owned persistence or recovery.
 
-Applications must supply atomic durable persistence with one writer per identity,
-external publication verification, and idempotent ACTIVE convergence hooks.
-A completed operation never activates again. If activation succeeds but saving
-completion fails, the same accepted operation repeats the idempotent hook on
-resume. These application integration requirements are recorded in conformance
-metadata; SDK tests do not establish deployment correctness.
+### Known Design Deviations
+
+`SDK_CONFORMANCE.known_deviations` records these remaining differences:
+
+- JOSE, HTTP Message Signatures, and OIDC profiles retain caller-owned mutable
+  configuration. Do not mutate their configuration after construction.
+- The JWT bearer helper is still exported as `WebBotAuthProfile`, although the
+  design reserves Web Bot Auth naming for RFC 9421. Its bearer tokens do not
+  authenticate HTTP method, URI, or content.
 
 ## Consistency Reference
 

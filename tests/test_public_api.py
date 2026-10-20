@@ -83,9 +83,11 @@ def test_c2sp_spec_revision_metadata_exported():
 
 
 def test_sdk_conformance_metadata_exported_and_immutable():
-    assert len(dnsid.SDK_CONFORMANCE.known_deviations) == 2
-    assert "transport settings" in dnsid.SDK_CONFORMANCE.known_deviations[0]
-    assert "application hooks" in dnsid.SDK_CONFORMANCE.known_deviations[1]
+    assert dnsid.SDK_CONFORMANCE.known_deviations == (
+        "JOSE, HTTP Message Signatures, and OIDC profiles retain mutable caller configuration.",
+        "The JWT bearer profile is exported as WebBotAuthProfile; "
+        "Web Bot Auth naming is reserved for RFC 9421.",
+    )
     assert dnsid.SDK_CONFORMANCE == dnsid.SDKConformance(
         publish_profile="dnsid-draft-01",
         verification_profiles={

@@ -641,10 +641,9 @@ returned `bindings_ready` is true only for matching, verified governance proof
 and verified entity delegation. Pending proofs remain pending; no entity JWKS URL
 is inferred from this response.
 
-For split initial issuance, persist an `IssuanceOperation` and use `resume_issuance`
-with durable persistence, external publication verification, and idempotent ACTIVE
-convergence hooks. It persists exact signed bytes before submission and validates
-acceptance before activation. See [recovery requirements](COMPATIBILITY.md#configuration-and-initial-issuance).
+Initial issuance requires one durable coordinator and one retry owner. The SDK
+provides preparation, signing, and submission primitives, not a complete issuance
+coordinator. See [integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
 
 To move an established signer, use explicit `rotate_operational_key()` with a
 `target_key_provider` and stable old/target provider references. To change the signing

@@ -1486,7 +1486,7 @@ class IdentityManager:
 
     @verification_operation
     def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
-        """Internal protocol-only verification for registry publication confirmation."""
+        """Verify local publication without application-peer or acceptance checks."""
         return self._verify(domain, None, acceptance=False)
 
     def _verify(
@@ -1495,8 +1495,8 @@ class IdentityManager:
     ) -> VerifiedDomain:
         """Shared per-invocation verification boundary.
 
-        Only registry publication confirmation passes ``acceptance=False``;
-        there is no public bypass.
+        Only internal local-publication validation passes ``acceptance=False``;
+        public verification always checks the current peer and acceptance policy.
         """
         domain = normalize_fqdn(domain)
         result = (
@@ -1504,9 +1504,9 @@ class IdentityManager:
                            lambda: self._refresh_identity(domain))
             if refresh else self._reusable_verification(domain)
         )
-        # mTLS binds the current peer, not reusable identity evidence.
-        _enforce_mtls_policy(result.record, domain, peer_cert)
         if acceptance:
+            # Local publication validation has no application peer to authenticate.
+            _enforce_mtls_policy(result.record, domain, peer_cert)
             self._enforce_counterparty_acceptance(result)
         self._require_fresh_evidence(result, fresh_dns_lookup=result.dns_ttl == 0)
         return result
