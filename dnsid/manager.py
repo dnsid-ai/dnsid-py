@@ -1527,45 +1527,43 @@ class IdentityManager:
             return self._accept_verification(domain, result, peer_cert, acceptance=True)
 
     async def _async_reusable_verification(self, domain: str) -> VerifiedDomain:
-        with self._coordination_lock:
-            future = (
-                self._refresh_futures.get(domain)
-                or self._verification_futures.get(domain) or self._status_futures.get(domain)
-            )
-        leader = False
-        if future is None:
-            cached = self._cache.get(domain)
-            if cached is not None and (
-                _now() - cached.last_status_check_at
-                < self._config.verification.status_check_interval
-            ):
-                return cached
-            pending = self._status_futures if cached is not None else self._verification_futures
+        while True:
             with self._coordination_lock:
                 future = (
                     self._refresh_futures.get(domain)
                     or self._verification_futures.get(domain) or self._status_futures.get(domain)
                 )
-                if future is None:
-                    future = Future()
-                    pending[domain] = future
-                    leader = True
-            if leader:
-                self._start_async_verification(
-                    domain, pending, future,
-                    (lambda: self._async_refresh_status(domain, cached))
-                    if cached is not None else (lambda: self._async_verify_domain_uncached(domain)),
-                    independent=True,
-                )
-        result = await async_wait_for_verification(future)
-        return result if leader else await self._async_uncached_after_shared(domain, result)
-
-    async def _async_uncached_after_shared(
-        self, domain: str, result: VerifiedDomain,
-    ) -> VerifiedDomain:
-        if result.dns_ttl == 0:
-            return await self._async_reusable_verification(domain)
-        return result
+            leader = False
+            if future is None:
+                cached = self._cache.get(domain)
+                if cached is not None and (
+                    _now() - cached.last_status_check_at
+                    < self._config.verification.status_check_interval
+                ):
+                    return cached
+                pending = self._status_futures if cached is not None else self._verification_futures
+                with self._coordination_lock:
+                    future = (
+                        self._refresh_futures.get(domain)
+                        or self._verification_futures.get(domain)
+                        or self._status_futures.get(domain)
+                    )
+                    if future is None:
+                        future = Future()
+                        pending[domain] = future
+                        leader = True
+                if leader:
+                    self._start_async_verification(
+                        domain, pending, future,
+                        (lambda: self._async_refresh_status(domain, cached))
+                        if cached is not None else (
+                            lambda: self._async_verify_domain_uncached(domain)
+                        ),
+                        independent=True,
+                    )
+            result = await async_wait_for_verification(future)
+            if leader or result.dns_ttl != 0:
+                return result
 
     def _start_async_verification(
         self, domain: str, pending: dict[str, Future[VerifiedDomain]],
@@ -1845,19 +1843,23 @@ class IdentityManager:
     async def _async_refresh_status(self, domain: str, cached: VerifiedDomain) -> VerifiedDomain:
         latest = self._cache.get(domain)
         if latest is None:
-            with self._coordination_lock:
-                future = self._refresh_futures.get(domain) or self._verification_futures.get(domain)
-                leader = future is None
-                if future is None:
-                    future = Future()
-                    self._verification_futures[domain] = future
-            if leader:
-                self._start_async_verification(
-                    domain, self._verification_futures, future,
-                    lambda: self._async_verify_domain_uncached(domain),
-                )
-            result = await async_wait_for_verification(future)
-            return result if leader else await self._async_uncached_after_shared(domain, result)
+            while True:
+                with self._coordination_lock:
+                    future = (
+                        self._refresh_futures.get(domain) or self._verification_futures.get(domain)
+                    )
+                    leader = future is None
+                    if future is None:
+                        future = Future()
+                        self._verification_futures[domain] = future
+                if leader:
+                    self._start_async_verification(
+                        domain, self._verification_futures, future,
+                        lambda: self._async_verify_domain_uncached(domain),
+                    )
+                result = await async_wait_for_verification(future)
+                if leader or result.dns_ttl != 0:
+                    return result
         if latest.last_status_check_at > cached.last_status_check_at:
             return latest
         status = await self._async_fetch_status(latest.record.su)

@@ -31,6 +31,9 @@ P = ParamSpec("P")
 T = TypeVar("T")
 U = TypeVar("U")
 
+# Process-owned; managers drain their tracked futures, not other managers' work.
+_blocking_executor = ThreadPoolExecutor(thread_name_prefix="dnsid-blocking")
+
 
 class BudgetExhausted(VerificationError):
     """The invocation deadline passed or a sibling cancelled this work.
@@ -110,11 +113,14 @@ def verification_work_context(
 
 
 async def async_run_blocking(function: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
-    """Offload an atomic blocking operation and track it through cancellation."""
+    """Offload to a process-owned bounded pool; track work through cancellation."""
     context = contextvars.copy_context()
-    pool = ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(context.run, lambda: function(*args, **kwargs))
-    pool.shutdown(wait=False)
+
+    def run() -> T:
+        remaining_seconds()
+        return function(*args, **kwargs)
+
+    future = _blocking_executor.submit(context.run, run)
     track_work = _background_work.get()
     if track_work is not None:
         track_work(future)

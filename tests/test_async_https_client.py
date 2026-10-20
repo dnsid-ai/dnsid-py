@@ -1,4 +1,4 @@
-"""Async status reads retain strict HTTPS, bounds, deadlines and ownership."""
+"""Async HTTPS reads retain strict policy, bounds, deadlines and ownership."""
 
 import asyncio
 import gzip
@@ -9,13 +9,21 @@ import pytest
 
 from dnsid import verification_budget
 from dnsid._https_client import (
+    _MAX_JWKS_BODY_BYTES,
     _MAX_STATUS_BODY_BYTES,
     async_fetch_agent_status,
+    async_fetch_jwks,
     fetch_agent_status,
 )
 from dnsid.enums import VerificationCode
 from dnsid.exceptions import VerificationError
 from dnsid.safe_transport import SSRF_BLOCK_MARKER
+
+
+async def _fetch(kind, url="https://agent.test/data", **kwargs):
+    if kind == "jwks":
+        return await async_fetch_jwks(url, "agent.test", **kwargs)
+    return await async_fetch_agent_status(url, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -71,14 +79,15 @@ async def test_redirect_rules_and_connection_cleanup(location):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["status", "jwks"])
 @pytest.mark.parametrize("url", [
     "http://agent.test/status", "https://user:pass@agent.test/status",
     "https://agent.test/status#fragment", "https://agent.test:bad/status",
 ])
-async def test_invalid_initial_url_never_fetches(url):
+async def test_invalid_initial_url_never_fetches(kind, url):
     transport = httpx.MockTransport(lambda request: pytest.fail("unexpected fetch"))
     with pytest.raises(VerificationError) as error:
-        await async_fetch_agent_status(url, transport=transport)
+        await _fetch(kind, url, transport=transport)
     assert error.value.code == VerificationCode.TLS_ERROR
 
 
@@ -98,11 +107,13 @@ class _Chunks(httpx.AsyncByteStream):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["status", "jwks"])
 @pytest.mark.parametrize("overflow", [False, True])
 @pytest.mark.parametrize("compressed", [False, True])
-async def test_limits_apply_to_decoded_bytes_and_close_responses(overflow, compressed):
-    body = b'{"state":"ACTIVE"}'
-    body += b" " * (_MAX_STATUS_BODY_BYTES - len(body))
+async def test_limits_apply_to_decoded_bytes_and_close_responses(kind, overflow, compressed):
+    body = b'{"keys":[],"state":"ACTIVE"}'
+    limit = _MAX_JWKS_BODY_BYTES if kind == "jwks" else _MAX_STATUS_BODY_BYTES
+    body += b" " * (limit - len(body))
     if compressed:
         stream = _Chunks([gzip.compress(body + (b"x" if overflow else b""))])
     else:
@@ -111,14 +122,16 @@ async def test_limits_apply_to_decoded_bytes_and_close_responses(overflow, compr
         200, stream=stream, headers={"content-encoding": "gzip"} if compressed else {}
     ))
     if overflow:
-        with pytest.raises(VerificationError, match="too large"):
-            await async_fetch_agent_status("https://agent.test/status", transport=transport)
+        with pytest.raises(VerificationError, match="too large") as error:
+            await _fetch(kind, transport=transport)
+        assert error.value.code == (
+            VerificationCode.RECORD_INVALID if kind == "jwks" else VerificationCode.STATUS_NOT_ACTIVE
+        )
         if not compressed:
             assert stream.yielded == 2
     else:
-        assert (await async_fetch_agent_status(
-            "https://agent.test/status", transport=transport
-        )).state == "ACTIVE"
+        result = await _fetch(kind, transport=transport)
+        assert result[0].keys == [] if kind == "jwks" else result.state == "ACTIVE"
     assert stream.closed
 
 
@@ -140,42 +153,63 @@ async def test_response_error_taxonomy(status, body, code, transient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["status", "jwks"])
 @pytest.mark.parametrize("exception,code,transient", [
     (httpx.ConnectError(SSRF_BLOCK_MARKER), VerificationCode.TLS_ERROR, False),
     (httpx.ConnectError("connection refused"), VerificationCode.TLS_ERROR, True),
     (httpx.ReadTimeout("timeout"), VerificationCode.DNS_RESOLUTION, True),
 ])
-async def test_transport_error_taxonomy(exception, code, transient):
+async def test_transport_error_taxonomy(kind, exception, code, transient):
     async def handle(request):
         raise exception
 
     with pytest.raises(VerificationError) as error:
-        await async_fetch_agent_status("https://agent.test/status", transport=httpx.MockTransport(handle))
+        await _fetch(kind, transport=httpx.MockTransport(handle))
     assert error.value.code == code
     assert error.value.transient is transient
 
 
 @pytest.mark.asyncio
-async def test_redirect_limit_and_caller_owned_client():
-    transport = httpx.MockTransport(lambda request: httpx.Response(302, headers={"location": "/again"}))
-    async with httpx.AsyncClient(transport=transport) as client:
+@pytest.mark.parametrize("kind", ["status", "jwks"])
+async def test_redirect_limit_and_caller_owned_client(kind):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(302, headers={"location": "/again"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle), follow_redirects=True) as client:
         with pytest.raises(VerificationError, match="Too many redirects"):
-            await async_fetch_agent_status("https://agent.test/status", client=client)
+            await _fetch(kind, client=client)
+        assert len(requests) == 6
         assert not client.is_closed
 
 
 @pytest.mark.asyncio
-async def test_slow_stream_respects_overall_deadline_and_closes():
+@pytest.mark.parametrize("kind", ["status", "jwks"])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_interrupted_read_closes_response_and_owned_client(kind, cancel):
+    started = asyncio.Event()
+
     class Slow(_Chunks):
         async def __aiter__(self):
-            yield b'{"state":'
+            yield b'{"keys":[],"state":'
+            started.set()
             await asyncio.sleep(10)
 
     stream = Slow([])
     transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=stream))
     with patch.object(transport, "aclose", wraps=transport.aclose) as close:
-        with pytest.raises(VerificationError, match="deadline"):
-            with verification_budget(0.02):
-                await async_fetch_agent_status("https://agent.test/status", transport=transport)
+        if cancel:
+            call = asyncio.create_task(_fetch(kind, transport=transport))
+            await asyncio.wait_for(started.wait(), 2)
+            call.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await call
+        else:
+            with pytest.raises(VerificationError) as error:
+                with verification_budget(0.02):
+                    await _fetch(kind, transport=transport)
+            assert error.value.code == VerificationCode.DEADLINE_EXCEEDED
         close.assert_awaited_once()
     assert stream.closed

@@ -7,6 +7,7 @@ import hashlib
 import threading
 from collections import Counter
 from concurrent.futures import Future
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -58,17 +59,27 @@ async def _started(event):
             await asyncio.sleep(0)
 
 
+@pytest.fixture
+def make_verifier(ec_pair):
+    with ExitStack() as stack:
+        def make(**kwargs):
+            manager, resolver, counters, domain, keys, status, _ = _manager_fixture(ec_pair, **kwargs)
+            for name, fetch in (
+                ("_fetch_jwks", keys), ("_fetch_strict_json_status", status),
+                ("async_fetch_jwks", keys), ("async_fetch_agent_status", status),
+            ):
+                stack.enter_context(patch("dnsid.manager." + name, side_effect=fetch))
+            stack.enter_context(manager)
+            return manager, resolver, counters, domain
+        yield make
+
+
 @pytest.mark.asyncio
-async def test_cold_calls_share_work_and_hot_calls_need_no_workers(ec_pair):
-    manager, resolver, counters, domain, keys, status, _ = _manager_fixture(ec_pair)
+async def test_cold_calls_share_work_and_hot_calls_need_no_workers(make_verifier):
+    manager, resolver, counters, domain = make_verifier()
     resolver.started = threading.Event()
     resolver.release = threading.Event()
     with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
         patch.object(manager._verification_executor, "submit",
                      wraps=manager._verification_executor.submit) as workers,
     ):
@@ -88,107 +99,77 @@ async def test_cold_calls_share_work_and_hot_calls_need_no_workers(ec_pair):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_leader", [False, True])
-async def test_cancellation_does_not_cancel_shared_evidence(ec_pair, cancel_leader):
-    manager, resolver, _, domain, keys, status, _ = _manager_fixture(ec_pair)
+async def test_cancellation_does_not_cancel_shared_evidence(make_verifier, cancel_leader):
+    manager, resolver, counters, domain = make_verifier()
     resolver.started = threading.Event()
     resolver.release = threading.Event()
-    with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
-    ):
-        leader = asyncio.create_task(manager.async_verify_domain(domain))
-        await _started(resolver.started)
-        follower = asyncio.create_task(manager.async_verify_domain(domain))
-        await asyncio.sleep(0)
-        cancelled, survivor = (leader, follower) if cancel_leader else (follower, leader)
-        try:
-            cancelled.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await cancelled
-            assert not manager._verification_futures[domain].cancelled()
-        finally:
-            resolver.release.set()
-        result = await survivor
-        assert await manager.async_verify_domain(domain) is result
-        assert not manager._verification_futures
+    leader = asyncio.create_task(manager.async_verify_domain(domain))
+    await _started(resolver.started)
+    follower = asyncio.create_task(manager.async_verify_domain(domain))
+    await asyncio.sleep(0)
+    cancelled, survivor = (leader, follower) if cancel_leader else (follower, leader)
+    try:
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        assert not manager._verification_futures[domain].cancelled()
+    finally:
+        resolver.release.set()
+    result = await survivor
+    assert await manager.async_verify_domain(domain) is result
+    assert not manager._verification_futures
 
 
 @pytest.mark.asyncio
-async def test_waiter_deadline_does_not_cancel_sync_leader(ec_pair):
-    manager, resolver, _, domain, keys, status, _ = _manager_fixture(ec_pair)
+async def test_waiter_deadline_does_not_cancel_sync_leader(make_verifier):
+    manager, resolver, counters, domain = make_verifier()
     resolver.started = threading.Event()
     resolver.release = threading.Event()
-    with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
-    ):
-        leader = asyncio.create_task(asyncio.to_thread(manager.verify_domain, domain))
-        await _started(resolver.started)
-        try:
-            with pytest.raises(VerificationError, match="deadline"):
-                with verification_budget(0.01):
-                    await manager.async_verify_domain(domain)
-        finally:
-            resolver.release.set()
-        result = await leader
-        assert await manager.async_verify_domain(domain) is result
+    leader = asyncio.create_task(asyncio.to_thread(manager.verify_domain, domain))
+    await _started(resolver.started)
+    try:
+        with pytest.raises(VerificationError, match="deadline"):
+            with verification_budget(0.01):
+                await manager.async_verify_domain(domain)
+    finally:
+        resolver.release.set()
+    result = await leader
+    assert await manager.async_verify_domain(domain) is result
 
 
 @pytest.mark.asyncio
-async def test_failed_verification_can_retry(ec_pair):
-    manager, resolver, _, domain, keys, status, _ = _manager_fixture(ec_pair)
+async def test_failed_verification_can_retry(make_verifier):
+    manager, resolver, counters, domain = make_verifier()
     resolver.failure = VerificationError(VerificationCode.DNS_RESOLUTION, "failed", transient=True)
-    with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
-    ):
-        with pytest.raises(VerificationError, match="failed"):
-            await manager.async_verify_domain(domain)
-        assert not manager._verification_futures
-        assert (await manager.async_verify_domain(domain)).domain == domain
+    with pytest.raises(VerificationError, match="failed"):
+        await manager.async_verify_domain(domain)
+    assert not manager._verification_futures
+    assert (await manager.async_verify_domain(domain)).domain == domain
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("warm", [False, True])
-async def test_executor_rejection_can_retry(ec_pair, warm):
-    manager, _, _, domain, keys, status, _ = _manager_fixture(
-        ec_pair, interval=datetime.timedelta(0)
-    )
-    with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
-    ):
-        if warm:
+async def test_executor_rejection_can_retry(make_verifier, warm):
+    manager, resolver, counters, domain = make_verifier(interval=datetime.timedelta(0))
+    if warm:
+        await manager.async_verify_domain(domain)
+        manager._https_fetcher = MagicMock(spec=HTTPSFetcher)
+        manager._https_fetcher.fetch_strict_json.return_value = (
+            {"state": "ACTIVE", "lastTransitionAt": datetime.datetime.now(datetime.UTC).isoformat()},
+            None,
+        )
+    with patch.object(manager._verification_executor, "submit",
+                      side_effect=RuntimeError("executor rejected")):
+        with pytest.raises(RuntimeError, match="executor rejected"):
             await manager.async_verify_domain(domain)
-            manager._https_fetcher = MagicMock(spec=HTTPSFetcher)
-            manager._https_fetcher.fetch_strict_json.return_value = (
-                {"state": "ACTIVE", "lastTransitionAt": datetime.datetime.now(datetime.UTC).isoformat()},
-                None,
-            )
-        with patch.object(manager._verification_executor, "submit",
-                          side_effect=RuntimeError("executor rejected")):
-            with pytest.raises(RuntimeError, match="executor rejected"):
-                await manager.async_verify_domain(domain)
-        assert not manager._verification_futures
-        assert not manager._status_futures
-        assert (await manager.async_verify_domain(domain)).domain == domain
+    assert not manager._verification_futures
+    assert not manager._status_futures
+    assert (await manager.async_verify_domain(domain)).domain == domain
 
 
 @pytest.mark.asyncio
-async def test_cancelled_waiters_observe_late_worker_failure(ec_pair):
-    manager, _, _, domain, _, _, _ = _manager_fixture(ec_pair)
+async def test_cancelled_waiters_observe_late_worker_failure(make_verifier):
+    manager, resolver, counters, domain = make_verifier()
     started, release = threading.Event(), threading.Event()
     loop = asyncio.get_running_loop()
     notices = []
@@ -199,7 +180,6 @@ async def test_cancelled_waiters_observe_late_worker_failure(ec_pair):
         raise VerificationError(VerificationCode.DNS_RESOLUTION, "late failure", transient=True)
 
     with (
-        manager,
         patch.object(manager._dns_resolver, "fetch_txt", side_effect=fail),
         patch.object(loop, "call_exception_handler", side_effect=notices.append),
     ):
@@ -224,42 +204,26 @@ async def test_cancelled_waiters_observe_late_worker_failure(ec_pair):
 
 
 @pytest.mark.asyncio
-async def test_stale_status_refreshes(ec_pair):
-    manager, _, counters, domain, keys, status, _ = _manager_fixture(
-        ec_pair, interval=datetime.timedelta(0)
-    )
-    with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
-    ):
-        await manager.async_verify_domain(domain)
-        await manager.async_verify_domain(domain)
-        assert counters["dns"] == 1
-        assert counters["status"] == 2
+async def test_stale_status_refreshes(make_verifier):
+    manager, resolver, counters, domain = make_verifier(interval=datetime.timedelta(0))
+    await manager.async_verify_domain(domain)
+    await manager.async_verify_domain(domain)
+    assert counters["dns"] == 1
+    assert counters["status"] == 2
 
 
 @pytest.mark.asyncio
-async def test_hot_cache_enforces_mtls_and_acceptance(ec_pair):
-    manager, _, counters, domain, keys, status, _ = _manager_fixture(ec_pair, mtls=True)
+async def test_hot_cache_enforces_mtls_and_acceptance(make_verifier):
+    manager, resolver, counters, domain = make_verifier(mtls=True)
     cert = TLSCertificate(san_dns_names=[domain])
-    with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
-    ):
+    await manager.async_verify_domain(domain, peer_cert=cert)
+    with pytest.raises(VerificationError):
+        await manager.async_verify_domain(domain)
+    manager._config.verification.trusted_entities = [TrustedEntity(governance_id="other.example")]
+    with pytest.raises(VerificationError) as error:
         await manager.async_verify_domain(domain, peer_cert=cert)
-        with pytest.raises(VerificationError):
-            await manager.async_verify_domain(domain)
-        manager._config.verification.trusted_entities = [TrustedEntity(governance_id="other.example")]
-        with pytest.raises(VerificationError) as error:
-            await manager.async_verify_domain(domain, peer_cert=cert)
-        assert error.value.code == VerificationCode.COUNTERPARTY_NOT_ACCEPTED
-        assert counters["dns"] == 1
+    assert error.value.code == VerificationCode.COUNTERPARTY_NOT_ACCEPTED
+    assert counters["dns"] == 1
 
 
 @pytest.mark.asyncio
@@ -362,19 +326,12 @@ async def test_reused_digest_still_requires_candidate_coverage(ec_pair, ec_provi
 
 
 @pytest.mark.asyncio
-async def test_zero_ttl_requires_each_call_to_fetch_dns(ec_pair):
-    manager, resolver, counters, domain, keys, status, _ = _manager_fixture(ec_pair)
+async def test_zero_ttl_requires_each_call_to_fetch_dns(make_verifier):
+    manager, resolver, counters, domain = make_verifier()
     resolver.records[f"_dnsid.{domain}"].ttl = 0
-    with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-        patch("dnsid.manager.async_fetch_agent_status", side_effect=status),
-    ):
-        await manager.async_verify_domain(domain)
-        await manager.async_verify_domain(domain)
-        assert counters["dns"] == 2
+    await manager.async_verify_domain(domain)
+    await manager.async_verify_domain(domain)
+    assert counters["dns"] == 2
 
 
 @pytest.mark.asyncio

@@ -75,8 +75,10 @@ No runtime dependencies were added.
 ## Current limits
 
 - Async-led verification uses native adapters. Sync-only adapters and atomic
-  checkpoint-store operations use tracked workers. The SDK supplies only an
-  in-memory checkpoint store; durable stores are deployment-provided.
+  checkpoint-store operations use tracked workers. Atomic checkpoint work and
+  C2SP fallback adapters share a process-owned bounded pool; managers drain
+  their own tracked futures without closing that shared pool. The SDK supplies
+  only an in-memory checkpoint store; durable stores are deployment-provided.
 - Explicit refreshes revalidate key-set and status HTTP resources and wait for
   older cold lookups before acquiring their own evidence. Concurrent explicit
   refreshes share work; ordinary lookups join an ongoing refresh. DNS caches

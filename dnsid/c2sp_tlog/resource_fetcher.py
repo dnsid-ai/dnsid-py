@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -117,26 +119,7 @@ class SafeC2spResourceFetcher:
             with self._client.stream(
                 "GET", url, headers={"Cache-Control": "no-cache"}, timeout=timeout,
             ) as response:
-                if response.is_redirect:
-                    raise C2spTlogTransportError(
-                        f"C2SP resource redirect rejected for {url}",
-                        transient=False,
-                    )
-                if response.status_code != 200:
-                    raise C2spTlogTransportError(
-                        f"C2SP resource returned HTTP {response.status_code}: {url}",
-                        transient=response.status_code >= 500,
-                        status_code=response.status_code,
-                    )
-                content_length = response.headers.get("content-length")
-                if content_length is not None:
-                    try:
-                        declared_length = int(content_length)
-                    except ValueError:
-                        declared_length = None
-                    if declared_length is not None and declared_length > max_bytes:
-                        raise _response_limit_error(url, max_bytes)
-
+                _validate_resource_response(response, url, max_bytes)
                 body = bytearray()
                 # iter_bytes() yields decoded bytes, so compression cannot evade
                 # this limit even when Content-Length describes encoded bytes.
@@ -194,24 +177,7 @@ class SafeC2spResourceFetcher:
                     async with client.stream(
                         "GET", url, headers={"Cache-Control": "no-cache"}, timeout=timeout,
                     ) as response:
-                        if response.is_redirect:
-                            raise C2spTlogTransportError(
-                                f"C2SP resource redirect rejected for {url}", transient=False,
-                            )
-                        if response.status_code != 200:
-                            raise C2spTlogTransportError(
-                                f"C2SP resource returned HTTP {response.status_code}: {url}",
-                                transient=response.status_code >= 500,
-                                status_code=response.status_code,
-                            )
-                        content_length = response.headers.get("content-length")
-                        if content_length is not None:
-                            try:
-                                declared_length = int(content_length)
-                            except ValueError:
-                                declared_length = None
-                            if declared_length is not None and declared_length > max_bytes:
-                                raise _response_limit_error(url, max_bytes)
+                        _validate_resource_response(response, url, max_bytes)
                         body = bytearray()
                         async for chunk in response.aiter_bytes():
                             remaining_seconds()
@@ -307,51 +273,8 @@ def validate_resource_fetcher_capabilities(fetcher: object) -> None:
 @verification_operation
 def fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -> bytes:
     """Invoke a validated fetcher and defensively enforce its returned length."""
-    _require_positive_integer(max_bytes, "max_bytes")
-    method = getattr(fetcher, "fetch_bounded", None)
-    if not callable(method):
-        raise C2spTlogTransportError(
-            "C2SP resource fetcher does not implement fetch_bounded",
-            transient=False,
-        )
-    try:
-        response = method(url, max_bytes)
-    except (C2spTlogTransportError, VerificationError):
-        raise
-    except httpx.ConnectError as exc:
-        raise C2spTlogTransportError(
-            f"failed to connect while fetching C2SP resource: {url}",
-            transient=SSRF_BLOCK_MARKER not in str(exc),
-            cause=exc,
-        ) from exc
-    except (TimeoutError, httpx.TimeoutException) as exc:
-        raise C2spTlogTransportError(
-            f"timed out fetching C2SP resource: {url}",
-            transient=True,
-            cause=exc,
-        ) from exc
-    except (ConnectionError, OSError, httpx.TransportError) as exc:
-        raise C2spTlogTransportError(
-            f"failed to fetch C2SP resource: {url}",
-            transient=False
-            if SSRF_BLOCK_MARKER in str(exc) or isinstance(exc, httpx.TooManyRedirects)
-            else True,
-            cause=exc,
-        ) from exc
-    except Exception as exc:
-        raise C2spTlogTransportError(
-            f"failed to fetch C2SP resource: {url}",
-            transient=False,
-            cause=exc,
-        ) from exc
-    if not isinstance(response, bytes):
-        raise C2spTlogTransportError(
-            f"C2SP resource fetcher returned a non-bytes response: {url}",
-            transient=False,
-        )
-    if len(response) > max_bytes:
-        raise _response_limit_error(url, max_bytes)
-    return response
+    with _resource_fetch_boundary(fetcher, url, max_bytes) as fetch:
+        return _checked_resource_response(fetch(url, max_bytes), url, max_bytes)
 
 
 @async_verification_operation
@@ -359,6 +282,15 @@ async def async_fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -
     """Invoke a validated fetcher and defensively enforce its returned length."""
     from ._async import call_async
 
+    with _resource_fetch_boundary(fetcher, url, max_bytes):
+        response = await call_async(fetcher, "fetch_bounded", url, max_bytes)
+        return _checked_resource_response(response, url, max_bytes)
+
+
+@contextmanager
+def _resource_fetch_boundary(
+    fetcher: object, url: str, max_bytes: int,
+) -> Iterator[Callable[[str, int], bytes]]:
     _require_positive_integer(max_bytes, "max_bytes")
     method = getattr(fetcher, "fetch_bounded", None)
     if not callable(method):
@@ -367,7 +299,7 @@ async def async_fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -
             transient=False,
         )
     try:
-        response = await call_async(fetcher, "fetch_bounded", url, max_bytes)
+        yield method
     except (C2spTlogTransportError, VerificationError):
         raise
     except httpx.ConnectError as exc:
@@ -396,6 +328,9 @@ async def async_fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -
             transient=False,
             cause=exc,
         ) from exc
+
+
+def _checked_resource_response(response: object, url: str, max_bytes: int) -> bytes:
     if not isinstance(response, bytes):
         raise C2spTlogTransportError(
             f"C2SP resource fetcher returned a non-bytes response: {url}",
@@ -404,6 +339,28 @@ async def async_fetch_bounded_bytes(fetcher: object, url: str, max_bytes: int) -
     if len(response) > max_bytes:
         raise _response_limit_error(url, max_bytes)
     return response
+
+
+def _validate_resource_response(response: httpx.Response, url: str, max_bytes: int) -> None:
+    if response.is_redirect:
+        raise C2spTlogTransportError(
+            f"C2SP resource redirect rejected for {url}",
+            transient=False,
+        )
+    if response.status_code != 200:
+        raise C2spTlogTransportError(
+            f"C2SP resource returned HTTP {response.status_code}: {url}",
+            transient=response.status_code >= 500,
+            status_code=response.status_code,
+        )
+    content_length = response.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError:
+            declared_length = None
+        if declared_length is not None and declared_length > max_bytes:
+            raise _response_limit_error(url, max_bytes)
 
 
 def _validate_resource_url(url: str) -> None:

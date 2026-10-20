@@ -42,10 +42,6 @@ def _is_ready_for_publication(status: str) -> bool:
     return status == "VERIFIED"
 
 
-def _is_published_status(status: str) -> bool:
-    return status in ("READY", "PUBLISHED", "ACTIVE", "READY_FOR_PUBLICATION")
-
-
 def _is_failed_status(status: str) -> bool:
     return status in ("ERROR", "REJECTED", "CANCELLED")
 
@@ -866,7 +862,9 @@ class RegistryClient(AbstractRegistryClient):
         """Async variant of :meth:`get_status` with the same validation and errors."""
         return await self._async_run_registry(self._get_status_steps(domain))
 
-    def _get_status_steps(self, domain: str) -> Generator[_RegistryCall, Any, str | None]:
+    def _get_status_document_steps(
+        self, domain: str,
+    ) -> Generator[_RegistryCall, Any, dict[str, Any] | None]:
         from urllib.parse import quote
 
         import httpx
@@ -902,7 +900,12 @@ class RegistryClient(AbstractRegistryClient):
                 transient=resp.status_code >= 500,
             )
 
-        data = _parse_json(resp, f"registry status response for {domain!r}")
+        return _parse_json(resp, f"registry status response for {domain!r}")
+
+    def _get_status_steps(self, domain: str) -> Generator[_RegistryCall, Any, str | None]:
+        data = yield from self._get_status_document_steps(domain)
+        if data is None:
+            return None
         raw = data.get("status") or data.get("state")
         return str(raw).upper() if raw is not None else None
 
@@ -925,42 +928,9 @@ class RegistryClient(AbstractRegistryClient):
     def _get_agent_status_steps(
         self, domain: str,
     ) -> Generator[_RegistryCall, Any, RegistryAgentStatus | None]:
-        from urllib.parse import quote
-
-        import httpx
-
-        url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/status"
-        _transport_err: Exception | None = None
-        try:
-            resp = (
-                yield _RegistryCall(
-                    "_http_request", "GET", url, headers=self._auth_headers(), timeout=10.0,
-                )
-            )
-        except httpx.TransportError as exc:
-            from .enums import VerificationCode
-            from .exceptions import VerificationError
-
-            _transport_err = VerificationError(
-                VerificationCode.LOG_ERROR,
-                f"Registry status request failed for {domain!r}: {self._transport_detail(exc)}",
-                transient=True,
-            )
-        if _transport_err is not None:
-            raise _transport_err from None
-        if resp.status_code == 404:
+        data = yield from self._get_status_document_steps(domain)
+        if data is None:
             return None
-        if not resp.is_success:
-            from .enums import VerificationCode
-            from .exceptions import VerificationError
-
-            raise VerificationError(
-                VerificationCode.LOG_ERROR,
-                f"Registry status returned HTTP {resp.status_code} for {domain!r}",
-                transient=resp.status_code >= 500,
-            )
-
-        data = _parse_json(resp, f"registry status response for {domain!r}")
         raw_status = str(data.get("status") or data.get("state") or "").upper()
         raw_dns_published = data.get("dns_published", data.get("dnsPublished"))
         dns_published = raw_dns_published if isinstance(raw_dns_published, bool) else None
@@ -1110,16 +1080,11 @@ class RegistryClient(AbstractRegistryClient):
         The product exposes agent detail on the management status route, not
         GET /api/v1/agent/{domain}. This does not read the public protocol su URL.
         """
-        return self._run_registry(self._get_agent_detail_steps(domain))
+        return self.get_registration(domain)
 
     async def async_get_agent_detail(self, domain: str) -> AgentRegistration | None:
         """Async variant of :meth:`get_agent_detail` with the same validation and errors."""
-        return await self._async_run_registry(self._get_agent_detail_steps(domain))
-
-    def _get_agent_detail_steps(
-        self, domain: str,
-    ) -> Generator[_RegistryCall, Any, AgentRegistration | None]:
-        return cast(AgentRegistration | None, (yield _RegistryCall("get_registration", domain)))
+        return await self.async_get_registration(domain)
 
     def wait_for_status(
         self,

@@ -45,11 +45,9 @@ class DefaultDNSResolver(DNSResolver):
 
     @verification_operation
     def fetch_txt(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
-        if self._dns_server:
-            if self._dns_server.startswith("http://") or self._dns_server.startswith("https://"):
-                return self._fetch_via_doh(name)
-            return self._fetch_via_standard_dns(name)
-        return self._fetch_via_system(name)
+        if self._dns_server.startswith(("http://", "https://")):
+            return self._fetch_via_doh(name)
+        return self._fetch_via_dns(name)
 
     @async_verification_operation
     async def async_fetch_txt(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
@@ -97,40 +95,39 @@ class DefaultDNSResolver(DNSResolver):
             ) from exc
 
     # ------------------------------------------------------------------
-    # Standard DNS path (host:port address)
+    # Standard DNS path (system or host:port resolver)
     # ------------------------------------------------------------------
 
-    def _fetch_via_standard_dns(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
+    def _fetch_via_dns(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
         try:
             import dns.exception
             import dns.resolver
         except ImportError as exc:
             raise ImportError(
-                "dnspython is required for the standard DNS resolver path. "
+                "dnspython is required for DNS resolution. "
                 "Install it with: pip install dnspython"
             ) from exc
 
-        raw = self._dns_server
-        host, _, port_str = raw.rpartition(":")
-        dns_host = host or raw
-        dns_port = int(port_str) if port_str else 53
-
-        resolver = dns.resolver.Resolver(configure=False)
-        resolver.nameservers = [dns_host]
-        resolver.port = dns_port
+        resolve = dns.resolver.resolve
+        if self._dns_server:
+            host, _, port_str = self._dns_server.rpartition(":")
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = [host or self._dns_server]
+            resolver.port = int(port_str) if port_str else 53
+            resolve = resolver.resolve
 
         try:
-            answers = resolver.resolve(name, "TXT", lifetime=remaining_seconds(10.0), search=False)
+            answers = resolve(name, "TXT", lifetime=remaining_seconds(10.0), search=False)
             txt_records: list[TXTRecord] = [
                 TXTRecord(strings=list(rdata.strings), ttl=int(answers.ttl)) for rdata in answers
             ]
             return txt_records, DNSSECState.UNKNOWN
-        except dns.resolver.NXDOMAIN:
-            return [], DNSSECState.UNKNOWN
-        except dns.resolver.NoAnswer:
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
             return [], DNSSECState.UNKNOWN
         except dns.exception.ValidationFailure:
             return [], DNSSECState.FAILED
+        except VerificationError:
+            raise
         except dns.exception.Timeout as exc:
             raise VerificationError(
                 VerificationCode.DNS_RESOLUTION,
@@ -268,61 +265,6 @@ class DefaultDNSResolver(DNSResolver):
                 f"Invalid DoH JSON response for {name!r}: {exc}",
             ) from exc
         return txt_records, state
-
-    # ------------------------------------------------------------------
-    # System resolver path (dnspython)
-    # ------------------------------------------------------------------
-
-    def _fetch_via_system(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
-        try:
-            import dns.exception
-            import dns.resolver
-        except ImportError as exc:
-            raise ImportError(
-                "dnspython is required for the system DNS resolver path. "
-                "Install it with: pip install dnspython"
-            ) from exc
-
-        try:
-            answers = dns.resolver.resolve(
-                name, "TXT", lifetime=remaining_seconds(10.0), search=False
-            )
-            txt_records: list[TXTRecord] = [
-                TXTRecord(strings=list(rdata.strings), ttl=int(answers.ttl)) for rdata in answers
-            ]
-            # System resolver does not expose the AD bit — always UNKNOWN.
-            return txt_records, DNSSECState.UNKNOWN
-
-        except dns.resolver.NXDOMAIN:
-            return [], DNSSECState.UNKNOWN
-
-        except dns.resolver.NoAnswer:
-            return [], DNSSECState.UNKNOWN
-
-        except dns.exception.ValidationFailure:
-            return [], DNSSECState.FAILED
-
-        except dns.resolver.NoNameservers as exc:
-            # NoNameservers covers SERVFAIL; treat conservatively as transient.
-            raise VerificationError(
-                VerificationCode.DNS_RESOLUTION,
-                f"DNS lookup failed for {name!r}: {exc}",
-                transient=True,
-            ) from exc
-
-        except dns.exception.Timeout as exc:
-            raise VerificationError(
-                VerificationCode.DNS_RESOLUTION,
-                f"DNS lookup timed out for {name!r}",
-                transient=True,
-            ) from exc
-
-        except Exception as exc:
-            raise VerificationError(
-                VerificationCode.DNS_RESOLUTION,
-                f"DNS lookup error for {name!r}: {exc}",
-                transient=True,
-            ) from exc
 
 
 # ---------------------------------------------------------------------------

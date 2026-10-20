@@ -145,6 +145,16 @@ def test_runtime_dns_outcome_matrix(transport, mode, error, state):
         assert exc_info.value.__cause__ is error
 
 
+@pytest.mark.parametrize("server", ["", "192.0.2.53:5353"])
+def test_sync_dns_preserves_verification_deadlines(server):
+    failure = VerificationError(VerificationCode.DEADLINE_EXCEEDED, "deadline", transient=True)
+    target = "dns.resolver.Resolver.resolve" if server else "dns.resolver.resolve"
+    with patch(target, side_effect=failure):
+        with pytest.raises(VerificationError) as error:
+            DefaultDNSResolver(server).fetch_txt("_dnsid.example.com")
+    assert error.value is failure
+
+
 @pytest.mark.parametrize("scheme", ["http", "https"])
 @pytest.mark.parametrize("status", [0, 3], ids=["nodata", "nxdomain"])
 @pytest.mark.parametrize("ad", [False, True])
