@@ -7,11 +7,11 @@ import importlib.util
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from dnsid import ParseError, VerificationCode, VerificationError
+from dnsid import ParseError, RegistryClient, VerificationCode, VerificationError
 
 
 @pytest.fixture
@@ -125,10 +125,11 @@ async def test_challenge_signing_is_offloaded(example, fails):
     started, release = threading.Event(), threading.Event()
     loop_thread = threading.get_ident()
     key_provider, registry = MagicMock(), MagicMock()
-    registry.get_agent_status.side_effect = [
+    registry.async_get_agent_status = AsyncMock(side_effect=[
         SimpleNamespace(failed=False, terminal=False, raw={"challenge": base64.urlsafe_b64encode(b"nonce").decode()}),
         SimpleNamespace(failed=False, terminal=False, ready_for_publication=True),
-    ]
+    ])
+    registry.async_submit_challenge_signature = AsyncMock()
 
     def sign(payload):
         assert threading.get_ident() != loop_thread
@@ -153,10 +154,28 @@ async def test_challenge_signing_is_offloaded(example, fails):
     if fails:
         with pytest.raises(RuntimeError, match="KMS failed"):
             await task
-        registry.submit_challenge_signature.assert_not_called()
+        registry.async_submit_challenge_signature.assert_not_awaited()
     else:
         await task
-        assert registry.submit_challenge_signature.call_args.args[2] == b"signature"
+        assert registry.async_submit_challenge_signature.await_args.args[2] == b"signature"
+
+
+@pytest.mark.asyncio
+async def test_registration_uses_native_registry_calls(example):
+    registry = MagicMock(spec=RegistryClient)
+    registry.async_get_agent_status.side_effect = [
+        None, SimpleNamespace(published=True, ready_for_publication=False, registry_status="ACTIVE"),
+    ]
+    manager = MagicMock()
+    manager.local_domain = "bob.test"
+    manager.config.identity.capabilities_url = "https://bob.test/card"
+    with patch.object(asyncio.get_running_loop(), "run_in_executor",
+                      side_effect=AssertionError("unexpected worker")):
+        await example.startup._register_and_publish(manager, MagicMock(), registry)
+    registry.async_register_agent.assert_awaited_once()
+    assert registry.async_register_agent.await_args.args[0].domain == "bob.test"
+    registry.register_agent.assert_not_called()
+    registry.get_agent_status.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -197,8 +216,8 @@ async def test_startup_resources_are_closed_on_failure_and_shutdown(example, mon
         stop=AsyncMock(side_effect=lambda: calls.append("agent")),
     )
     registry = MagicMock()
-    registry.__enter__.return_value = registry
-    registry.__exit__.side_effect = lambda *args: calls.append("registry")
+    registry.__aenter__ = AsyncMock(return_value=registry)
+    registry.__aexit__ = AsyncMock(side_effect=lambda *args: calls.append("registry"))
     create, register, poll = AsyncMock(return_value=agent), AsyncMock(), AsyncMock()
     failure = RuntimeError(stage)
     if stage == "create":

@@ -52,8 +52,14 @@ Injected identity caches must be nonblocking.
 Signed `httpx.AsyncClient` requests offload synchronous signing, including KMS.
 `create_signed_async_http_client(transport=...)` accepts an outbound transport;
 the returned client owns and closes it. Synchronous APIs remain available.
-Other blocking SDK operations, including the status reads in
-`RegistryClient.async_wait_for_status()`, still need workers.
+RegistryClient exposes native `async_` variants for every registry HTTP
+operation, including `async_wait_for_status()`. Use `async with client` or
+`await client.aclose()` after async use. Requests share a protected async pool
+on one event loop; finish outstanding requests before closing. Cancellation
+does not undo server-side mutations. Preserve the same request and idempotency
+key when reconciling and retrying an uncertain operation.
+Manager-level publication, rotation and other blocking SDK operations still
+need workers.
 
 ## Application profiles
 

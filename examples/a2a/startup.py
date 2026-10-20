@@ -67,13 +67,13 @@ async def _verify_with_challenge(
     then wait for the agent to reach VERIFIED.
     """
     if status.registry_status != "VERIFICATION":
-        await _run_blocking(registry.verify_agent, domain)
+        await registry.async_verify_agent(domain)
 
     nonce = ""
 
     async def _await_challenge() -> None:
         nonlocal nonce
-        current = await _run_blocking(registry.get_agent_status, domain)
+        current = await registry.async_get_agent_status(domain)
         if current is None:
             raise RuntimeError("agent not found in registry")
         if current.failed or current.terminal:
@@ -87,10 +87,10 @@ async def _verify_with_challenge(
 
     padding = "=" * (-len(nonce) % 4)
     signature = await _run_blocking(key_provider.sign, base64.urlsafe_b64decode(nonce + padding))
-    await _run_blocking(registry.submit_challenge_signature, domain, nonce, signature)
+    await registry.async_submit_challenge_signature(domain, nonce, signature)
 
     async def _await_verified() -> None:
-        current = await _run_blocking(registry.get_agent_status, domain)
+        current = await registry.async_get_agent_status(domain)
         if current is None:
             raise RuntimeError("agent not found in registry")
         if current.failed or current.terminal:
@@ -105,24 +105,23 @@ async def _register_and_publish(
     idm: IdentityManager, key_provider: KeyProvider, registry: RegistryClient
 ) -> None:
     domain = idm.local_domain
-    status = await _run_blocking(registry.get_agent_status, domain)
+    status = await registry.async_get_agent_status(domain)
 
     if status is None:
         print(f"{domain} registering with registry")
-        await _run_blocking(
-            registry.register_agent,
+        await registry.async_register_agent(
             AgentRegistrationInput(
                 domain=domain,
                 capabilities_url=idm.config.identity.capabilities_url or "",
             ),
         )
-        status = await _run_blocking(registry.get_agent_status, domain)
+        status = await registry.async_get_agent_status(domain)
         if status is None:
             raise RuntimeError("agent not found in registry after registration")
 
     if not status.published and not status.ready_for_publication:
         await _verify_with_challenge(key_provider, registry, domain, status)
-        status = await _run_blocking(registry.get_agent_status, domain)
+        status = await registry.async_get_agent_status(domain)
 
     if status is not None and status.ready_for_publication:
         published = await _run_blocking(idm.publish_to_registry, registry)
@@ -175,7 +174,7 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, Callable[[], A
         print(f"{os.environ.get('DNSID_AGENT_NAME') or idm.local_domain} -> {agent.url}")
         await asyncio.sleep(1.0)
 
-        with registry_client_from_environment() as registry:
+        async with registry_client_from_environment() as registry:
             await _register_and_publish(idm, key_provider, registry)
 
         # CoreDNS reloads the generated zone every two seconds. Wait for that

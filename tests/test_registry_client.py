@@ -1079,7 +1079,7 @@ class TestAsyncWaitForStatus:
     async def test_returns_when_published(self):
         client = _make_client()
         active = _status("ACTIVE", published=True)
-        with patch.object(client, "get_agent_status", return_value=active):
+        with patch.object(client, "async_get_agent_status", new_callable=AsyncMock, return_value=active):
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 result = await client.async_wait_for_status(_DOMAIN)
         assert result.registry_status == "ACTIVE"
@@ -1089,7 +1089,7 @@ class TestAsyncWaitForStatus:
         client = _make_client()
         pending = _status("PENDING")
         times = iter([0.0, 200.0])
-        with patch.object(client, "get_agent_status", return_value=pending):
+        with patch.object(client, "async_get_agent_status", new_callable=AsyncMock, return_value=pending):
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 with patch("time.monotonic", side_effect=times):
                     with pytest.raises(VerificationError, match="Timed out"):
@@ -1100,7 +1100,7 @@ class TestAsyncWaitForStatus:
         client = _make_client()
         pending = _status("PENDING")
         verified = _status("VERIFIED")
-        with patch.object(client, "get_agent_status", side_effect=[pending, verified]):
+        with patch.object(client, "async_get_agent_status", new_callable=AsyncMock, side_effect=[pending, verified]):
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 result = await client.async_wait_for_status(
                     _DOMAIN, target_state="VERIFIED", interval=0.0

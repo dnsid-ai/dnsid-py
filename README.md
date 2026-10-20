@@ -105,6 +105,24 @@ See the runnable [async verification example](examples/async-verification/) for
 configuration, request deadlines, error handling, and cleanup.
 See [the migration checklist](ASYNC_MIGRATION.md) for remaining native async work.
 
+**Async registry I/O.** Every registry operation has an `async_` variant,
+including `async_register_agent()`, `async_get_agent_status()`, and
+`async_wait_for_status()`. These use pooled native async HTTP with the same
+validation and error handling as synchronous calls:
+
+```python
+from dnsid import registry_client_from_environment
+
+async with registry_client_from_environment() as registry:
+    status = await registry.async_get_agent_status("agent.example")
+```
+
+Reuse the client on one event loop and finish requests before closing it.
+Use `await registry.aclose()` if you do not use `async with`.
+Cancellation cannot undo mutations already accepted by the server; reconcile
+the result and reuse the same request and idempotency key when retrying.
+Manager-level publication and rotation workflows still need a worker.
+
 ## Documentation
 
 - **[docs.dnsid.ai](https://docs.dnsid.ai/)** — hosted guides, concepts, and the product CLI documentation
