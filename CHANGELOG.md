@@ -1,4 +1,19 @@
 
+## [0.29.0] - 2026-10-20
+
+### Chores
+
+- ci: track main for SDK compliance workflow ([#86](https://github.com/dnsid-ai/dnsid-py/pull/86))
+
+### Features
+
+- feat(async)!: Add async verification hot path and migrate A2A middleware ([#60](https://github.com/dnsid-ai/dnsid-py/pull/60))
+
+### Other
+
+- Align SDK signer bindings and rotation recovery with design ([#59](https://github.com/dnsid-ai/dnsid-py/pull/59))
+
+
 ## [0.28.0] - 2026-10-19
 
 ### Bug Fixes
