@@ -464,6 +464,25 @@ Each caller enforces its current peer, acceptance, and final freshness.
 Failure never falls back to cached evidence or extends its lifetime.
 Injected resource fetchers must revalidate their caches.
 
+### `async_refresh_domain`
+
+```python
+IdentityManager.async async_refresh_domain(domain: str, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Fully verify fresh evidence asynchronously, bypassing the identity cache.
+
+Concurrent sync and async explicit refreshes share work, not ordinary
+lookups. Each caller enforces its current peer, acceptance, and final
+freshness. Zero-TTL evidence is not shared between callers. Failures
+never fall back to cached evidence or extend its lifetime. Injected
+HTTP fetchers must honor ``revalidate=True``. DNS caches may return
+answers with their remaining TTL.
+
+Native async adapters are awaited; sync-only dependencies use tracked
+workers. Shared work has an independent 30-second budget. Cancellation
+or a deadline stops only that caller's wait; ``aclose()`` drains work.
+
 ### `verify_log_evidence`
 
 ```python
@@ -578,8 +597,9 @@ Verification dependencies must be safe for concurrent use and honor the
 remaining verification budget. Blocking adapters run in workers even for
 synchronous callers. Optional AsyncDNSResolver, AsyncHTTPSFetcher and
 AsyncLogReader capabilities supplement the existing synchronous interfaces;
-adapters must also provide synchronous methods. Async-led cold verification
-and stale-status refreshes await native capabilities, with worker fallback
+adapters must also provide synchronous methods. Async-led cold verification,
+explicit refreshes, and stale-status refreshes await native capabilities,
+with worker fallback
 for sync-only adapters. Sync-led evidence remains worker-backed and is shared
 with async waiters. Injected dependencies remain caller-owned. Async adapters
 must support concurrent calls on the event loops used by the application;

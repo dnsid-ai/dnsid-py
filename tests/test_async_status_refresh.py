@@ -277,7 +277,8 @@ async def test_injected_async_fetcher_shares_work_without_workers(warmed):
     manager._https_fetcher = fetcher
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def fetch(url):
+    async def fetch(url, *, revalidate=False):
+        assert not revalidate
         assert url == cached.record.su
         started.set()
         await release.wait()
@@ -301,7 +302,7 @@ async def test_injected_async_fetcher_shares_work_without_workers(warmed):
         finally:
             release.set()
         result = await follower
-        request.assert_awaited_once_with(cached.record.su)
+        request.assert_awaited_once_with(cached.record.su, revalidate=False)
     assert result is not cached
     assert counters["dns"] == 1
     assert not manager._status_futures
@@ -344,7 +345,8 @@ async def test_injected_async_fetcher_deadline_and_shutdown_ownership(warmed):
     manager._https_fetcher = fetcher
     close = AsyncMock()
 
-    async def fetch(url):
+    async def fetch(url, *, revalidate=False):
+        assert not revalidate
         assert 0 < remaining_seconds() <= 0.05
         await asyncio.sleep(1)
         raise AssertionError("adapter was not cancelled")

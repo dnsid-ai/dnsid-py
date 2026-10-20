@@ -107,12 +107,14 @@ async def async_fetch_jwks(
     transport: httpx.AsyncBaseTransport | None = None,
     domain_boundary: bool = False,
     client: httpx.AsyncClient | None = None,
+    revalidate: bool = False,
 ) -> tuple[JWKS, TLSCertificate]:
     """Fetch bounded key sets asynchronously with the synchronous HTTPS rules.
 
     Redirects stay within the exact host or selected domain boundary. The
     default transport enforces SSRF protection. A supplied client remains
     caller-owned; otherwise this call closes its client, including on cancellation.
+    When ``revalidate=True``, require HTTP cache revalidation on every redirect hop.
     """
     _assert_https_redirect(ku)
     owned_client = client is None
@@ -126,7 +128,8 @@ async def async_fetch_jwks(
         for _ in range(_MAX_REDIRECTS + 1):
             try:
                 async with client.stream(
-                    "GET", url, follow_redirects=False, timeout=remaining_seconds(10.0),
+                    "GET", url, headers={"Cache-Control": "no-cache"} if revalidate else {},
+                    follow_redirects=False, timeout=remaining_seconds(10.0),
                 ) as response:
                     if response.is_redirect:
                         location = urljoin(url, response.headers.get("location", ""))
@@ -261,11 +264,13 @@ async def async_fetch_agent_status(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     client: httpx.AsyncClient | None = None,
+    revalidate: bool = False,
 ) -> AgentStatus:
     """Fetch bounded status asynchronously with the synchronous HTTPS rules.
 
     A supplied client remains caller-owned. Otherwise this call owns its client
     and closes every response and connection, including on cancellation.
+    When ``revalidate=True``, require HTTP cache revalidation on every redirect hop.
     """
     _assert_https_redirect(su)
     owned_client = client is None
@@ -279,7 +284,10 @@ async def async_fetch_agent_status(
         for _ in range(_MAX_REDIRECTS + 1):
             try:
                 async with client.stream(
-                    "GET", url, headers={"Accept": "application/json"},
+                    "GET", url, headers={
+                        "Accept": "application/json",
+                        **({"Cache-Control": "no-cache"} if revalidate else {}),
+                    },
                     follow_redirects=False, timeout=remaining_seconds(10.0),
                 ) as response:
                     if response.is_redirect:

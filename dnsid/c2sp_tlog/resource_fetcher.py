@@ -191,7 +191,9 @@ class SafeC2spResourceFetcher:
                     follow_redirects=False,
                     timeout=timeout,
                 ) as client:
-                    async with client.stream("GET", url, timeout=timeout) as response:
+                    async with client.stream(
+                        "GET", url, headers={"Cache-Control": "no-cache"}, timeout=timeout,
+                    ) as response:
                         if response.is_redirect:
                             raise C2spTlogTransportError(
                                 f"C2SP resource redirect rejected for {url}", transient=False,

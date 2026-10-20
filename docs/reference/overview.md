@@ -49,6 +49,11 @@ Use `with verification_budget(5):` around a request to set its deadline; expiry
 raises `VerificationError` with `DEADLINE_EXCEEDED` and `transient=True`.
 Injected identity caches must be nonblocking.
 
+Use `await manager.async_refresh_domain(domain)` to bypass the identity cache
+and revalidate HTTP evidence. Concurrent explicit refreshes share work, but do
+not reuse ordinary lookups. Each caller enforces its current peer, acceptance,
+and freshness; cancellation stops only that caller's wait.
+
 Signed `httpx.AsyncClient` requests offload synchronous signing, including KMS.
 `create_signed_async_http_client(transport=...)` accepts an outbound transport;
 the returned client owns and closes it. Synchronous APIs remain available.

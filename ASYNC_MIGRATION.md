@@ -2,8 +2,8 @@
 
 Branch: `migration/async-verification`.
 
-Core identity verification, HTTP-signature verification, and registry HTTP
-operations have native async entry points. Synchronous APIs remain available.
+Core identity verification and refresh, HTTP-signature verification, and
+registry HTTP operations have native async entry points. Synchronous APIs remain available.
 No runtime dependencies were added.
 
 ## Completed
@@ -19,6 +19,9 @@ No runtime dependencies were added.
       per waiter. Preserve independent caller deadlines, cancellation isolation,
       deterministic error precedence, zero-TTL behavior, and per-caller policy.
 - [x] Keep fresh cache hits and default stale-status refreshes on the event loop.
+- [x] Add `IdentityManager.async_refresh_domain()` with full HTTP revalidation,
+      sync/async refresh coordination, zero-TTL isolation, per-caller policy,
+      independent cancellation, and shutdown draining.
 - [x] Support optional async DNS, HTTPS, and log capabilities while retaining
       worker fallback for synchronous injected dependencies.
 - [x] Drain background verification and tracked workers through manager
@@ -53,8 +56,6 @@ No runtime dependencies were added.
 
 ## Remaining, in dependency order
 
-- [ ] Add `IdentityManager.async_refresh_domain()` with full HTTP revalidation
-      and the existing refresh-coordination guarantees.
 - [ ] Add async JOSE JWT/JWS verification, legacy bot bearer authentication,
       and OIDC entry points. OIDC discovery and token exchange need async HTTP.
       Files: `dnsid/jose.py`, `web_bot_auth.py`, `oidc.py`.
@@ -76,6 +77,11 @@ No runtime dependencies were added.
 - Async-led verification uses native adapters. Sync-only adapters and atomic
   checkpoint-store operations use tracked workers. The SDK supplies only an
   in-memory checkpoint store; durable stores are deployment-provided.
+- Explicit refreshes revalidate key-set and status HTTP resources and wait for
+  older cold lookups before acquiring their own evidence. Concurrent explicit
+  refreshes share work; ordinary lookups join an ongoing refresh. DNS caches
+  may return answers with their remaining TTL. Async C2SP reads require HTTP
+  revalidation, matching synchronous reads.
 - Mixed sync/async verification shares whichever evidence leader starts first.
   Sync-led evidence still uses synchronous adapters in workers. Shared evidence
   has an independent 30-second budget; caller cancellation stops only its wait.

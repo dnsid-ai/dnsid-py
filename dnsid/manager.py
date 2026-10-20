@@ -122,8 +122,9 @@ class IdentityManagerDependencies:
     remaining verification budget. Blocking adapters run in workers even for
     synchronous callers. Optional AsyncDNSResolver, AsyncHTTPSFetcher and
     AsyncLogReader capabilities supplement the existing synchronous interfaces;
-    adapters must also provide synchronous methods. Async-led cold verification
-    and stale-status refreshes await native capabilities, with worker fallback
+    adapters must also provide synchronous methods. Async-led cold verification,
+    explicit refreshes, and stale-status refreshes await native capabilities,
+    with worker fallback
     for sync-only adapters. Sync-led evidence remains worker-backed and is shared
     with async waiters. Injected dependencies remain caller-owned. Async adapters
     must support concurrent calls on the event loops used by the application;
@@ -1604,6 +1605,41 @@ class IdentityManager:
         """
         return self._verify(domain, peer_cert, acceptance=True, refresh=True)
 
+    @async_verification_operation
+    async def async_refresh_domain(
+        self, domain: str, peer_cert: TLSCertificate | None = None,
+    ) -> VerifiedDomain:
+        """Fully verify fresh evidence asynchronously, bypassing the identity cache.
+
+        Concurrent sync and async explicit refreshes share work, not ordinary
+        lookups. Each caller enforces its current peer, acceptance, and final
+        freshness. Zero-TTL evidence is not shared between callers. Failures
+        never fall back to cached evidence or extend its lifetime. Injected
+        HTTP fetchers must honor ``revalidate=True``. DNS caches may return
+        answers with their remaining TTL.
+
+        Native async adapters are awaited; sync-only dependencies use tracked
+        workers. Shared work has an independent 30-second budget. Cancellation
+        or a deadline stops only that caller's wait; ``aclose()`` drains work.
+        """
+        with self._verification_call():
+            domain = normalize_fqdn(domain)
+            while True:
+                with self._coordination_lock:
+                    future = self._refresh_futures.get(domain)
+                    leader = future is None
+                    if future is None:
+                        future = Future()
+                        self._refresh_futures[domain] = future
+                if leader:
+                    self._start_async_verification(
+                        domain, self._refresh_futures, future,
+                        lambda: self._async_refresh_identity(domain), independent=True,
+                    )
+                result = await async_wait_for_verification(future)
+                if leader or result.dns_ttl != 0:
+                    return self._accept_verification(domain, result, peer_cert, acceptance=True)
+
     @verification_operation
     def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
         """Verify local publication without application-peer or acceptance checks."""
@@ -1764,6 +1800,19 @@ class IdentityManager:
         remaining_seconds()
         return self._verify_domain_uncached(domain, revalidate=True)
 
+    @async_verification_operation
+    async def _async_refresh_identity(self, domain: str) -> VerifiedDomain:
+        # Wait for older lookups so they cannot overwrite refreshed evidence.
+        with self._coordination_lock:
+            previous = self._verification_futures.get(domain)
+        if previous is not None:
+            try:
+                await async_wait_for_verification(previous)
+            except VerificationError:
+                pass  # A failed lookup does not replace the refresh's own evidence.
+        remaining_seconds()
+        return await self._async_verify_domain_uncached(domain, revalidate=True)
+
     def _finish_verification(
         self, domain: str, pending: dict[str, Future[VerifiedDomain]],
         future: Future[VerifiedDomain], outcome: VerifiedDomain | BaseException,
@@ -1923,7 +1972,9 @@ class IdentityManager:
         return self._cache_verification(result)
 
     @async_verification_operation
-    async def _async_verify_domain_uncached(self, domain: str) -> VerifiedDomain:
+    async def _async_verify_domain_uncached(
+        self, domain: str, *, revalidate: bool = False,
+    ) -> VerifiedDomain:
         dns_acquired_at = _now()
         if isinstance(self._dns_resolver, AsyncDNSResolver):
             read = self._dns_resolver.async_fetch_txt(f"_dnsid.{domain}")
@@ -1951,11 +2002,14 @@ class IdentityManager:
         )
         ek_jwks, ek_tls_cert = await self._async_fetch_key_set(
             record.ek, allowed_host=_ek_pinning_host(record.gi, record.ek), domain_boundary=True,
+            revalidate=revalidate,
         )
         signing_key = self._authenticate_record(record, ek_jwks)
         (jwks, tls_cert, log_reader, key_bound_at), status = await async_run_concurrently(
-            lambda: self._async_verify_identity_evidence(domain, record, ek_jwks, signing_key),
-            lambda: self._async_fetch_active_status(record.su),
+            lambda: self._async_verify_identity_evidence(
+                domain, record, ek_jwks, signing_key, revalidate=revalidate,
+            ),
+            lambda: self._async_fetch_active_status(record.su, revalidate=revalidate),
         )
         return self._cache_verification(VerifiedDomain(
             domain=domain,
@@ -2167,6 +2221,7 @@ class IdentityManager:
 
     async def _async_verify_identity_evidence(
         self, domain: str, record: DnsIdTxtRecord, ek_jwks: JWKS, signing_key: JWK,
+        *, revalidate: bool = False,
     ) -> tuple[JWKS, Any, LogReader, datetime.datetime]:
         log_reader = self._identity_log_reader(domain, record)
 
@@ -2179,7 +2234,9 @@ class IdentityManager:
                     await self._async_run_blocking(lambda: method(domain, signing_key))
 
         (jwks, tls_cert), _ = await async_run_concurrently(
-            lambda: self._async_fetch_key_set(record.ku, allowed_host=domain), preload,
+            lambda: self._async_fetch_key_set(
+                record.ku, allowed_host=domain, revalidate=revalidate,
+            ), preload,
         )
         operational_key = self._separate_operational_key(record, ek_jwks, jwks, signing_key)
         binding = await self._async_log_call(
@@ -2216,8 +2273,10 @@ class IdentityManager:
         """Post-sg status branch (Step 7): fetch su and require ACTIVE."""
         return self._require_active_status(self._fetch_status(su, revalidate=revalidate))
 
-    async def _async_fetch_active_status(self, su: str) -> Any:
-        return self._require_active_status(await self._async_fetch_status(su))
+    async def _async_fetch_active_status(self, su: str, *, revalidate: bool = False) -> Any:
+        return self._require_active_status(
+            await self._async_fetch_status(su, revalidate=revalidate),
+        )
 
     @staticmethod
     def _require_active_status(status: Any) -> Any:
@@ -2298,37 +2357,47 @@ class IdentityManager:
 
     async def _async_fetch_key_set(
         self, uri: str, allowed_host: str, domain_boundary: bool = False,
+        *, revalidate: bool = False,
     ) -> tuple[JWKS, Any]:
         if isinstance(self._https_fetcher, AsyncHTTPSFetcher):
             from ._crypto import jwk_from_dict
 
             raw, tls_cert = await self._https_fetcher.async_fetch_strict_json(
                 uri, allowed_host=allowed_host, domain_boundary=domain_boundary,
+                revalidate=revalidate,
             )
             return JWKS(keys=[jwk_from_dict(k) for k in raw.get("keys", [])]), tls_cert
         if self._https_fetcher is not None:
             return await self._async_run_blocking(
-                lambda: self._fetch_key_set(uri, allowed_host, domain_boundary),
+                lambda: self._fetch_key_set(
+                    uri, allowed_host, domain_boundary, revalidate=revalidate,
+                ),
             )
         # shortcut: per-read clients; pool with a single-event-loop contract.
         return await async_fetch_jwks(
             uri, allowed_host=allowed_host, domain_boundary=domain_boundary,
             transport=make_ssrf_safe_async_transport(self._transport_config),
+            revalidate=revalidate,
         )
 
-    async def _async_fetch_status(self, su: str) -> Any:
+    async def _async_fetch_status(self, su: str, *, revalidate: bool = False) -> Any:
         if (self._https_fetcher is not None
                 and not isinstance(self._https_fetcher, AsyncHTTPSFetcher)):
-            return await self._async_run_blocking(lambda: self._fetch_status(su))
+            return await self._async_run_blocking(
+                lambda: self._fetch_status(su, revalidate=revalidate),
+            )
         with _status_fetch_boundary():
             if isinstance(self._https_fetcher, AsyncHTTPSFetcher):
                 from ._https_client import _parse_agent_status_from_dict
 
-                raw, _ = await self._https_fetcher.async_fetch_strict_json(su)
+                raw, _ = await self._https_fetcher.async_fetch_strict_json(
+                    su, revalidate=revalidate,
+                )
                 status = _parse_agent_status_from_dict(raw)
             else:
                 status = await async_fetch_agent_status(
                     su, transport=make_ssrf_safe_async_transport(self._transport_config),
+                    revalidate=revalidate,
                 )
             status.validate()
         return status

@@ -9,8 +9,14 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from dnsid._https_client import fetch_agent_status, fetch_jwks
+from dnsid._https_client import (
+    async_fetch_agent_status,
+    async_fetch_jwks,
+    fetch_agent_status,
+    fetch_jwks,
+)
 from dnsid._verification_budget import wait_for_verification
+from dnsid.c2sp_tlog import SafeC2spResourceFetcher
 from dnsid.enums import VerificationCode
 from dnsid.exceptions import VerificationError
 from dnsid.interfaces import HTTPSFetcher
@@ -38,6 +44,40 @@ def test_redirects_preserve_revalidation_headers(resource, revalidate):
     assert len(requests) == 2
     assert all(request.headers.get("cache-control") == (
         "no-cache" if revalidate else None
+    ) for request in requests)
+    if resource == "status":
+        assert all(request.headers["accept"] == "application/json" for request in requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resource", ["jwks", "status", "log"])
+@pytest.mark.parametrize("revalidate", [False, True])
+async def test_async_resource_revalidation_matches_sync_and_survives_redirects(resource, revalidate):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        if resource != "log" and request.url.path == "/start":
+            return httpx.Response(302, headers={"location": "/final"})
+        return httpx.Response(200, json={"keys": [], "state": "ACTIVE"})
+
+    transport = httpx.MockTransport(handle)
+    if resource == "jwks":
+        await async_fetch_jwks("https://agent.example/start", "agent.example",
+                               transport=transport, revalidate=revalidate)
+    elif resource == "status":
+        await async_fetch_agent_status("https://agent.example/start", transport=transport,
+                                       revalidate=revalidate)
+    else:
+        with (
+            SafeC2spResourceFetcher() as fetcher,
+            patch("dnsid.c2sp_tlog.resource_fetcher.make_ssrf_safe_async_transport",
+                  return_value=transport),
+        ):
+            await fetcher.async_fetch_bounded("https://agent.example/checkpoint", 4096)
+    assert len(requests) == (1 if resource == "log" else 2)
+    assert all(request.headers.get("cache-control") == (
+        "no-cache" if revalidate or resource == "log" else None
     ) for request in requests)
     if resource == "status":
         assert all(request.headers["accept"] == "application/json" for request in requests)

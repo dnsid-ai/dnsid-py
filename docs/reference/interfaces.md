@@ -121,11 +121,14 @@ Optional async JSON fetch capability of a synchronous HTTPSFetcher.
 
 Supply the same object through IdentityManagerDependencies.https_fetcher;
 fetch_strict_json remains required for synchronous verification. Async-led
-cold verification and stale-status refreshes await async_fetch_strict_json
-for key sets and status; sync-only fetchers retain the worker fallback.
+cold verification, explicit refreshes, and stale-status refreshes await
+async_fetch_strict_json for key sets and status; sync-only fetchers retain
+the worker fallback.
 
 TLS validation, redirect boundaries, peer certificate reporting and error
-taxonomy match HTTPSFetcher.fetch_strict_json. Bound decoded bodies during
+taxonomy match HTTPSFetcher.fetch_strict_json. Explicit refreshes pass
+revalidate=True: bypass local caches and require upstream HTTP revalidation.
+Bound decoded bodies during
 reads (64 KiB for status and 1 MiB for key sets), honor the remaining
 verification budget, and close responses on cancellation. Methods must not
 block the event loop. Injected fetchers and clients remain caller-owned;

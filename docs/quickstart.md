@@ -123,6 +123,11 @@ calls share whichever evidence leader starts first; sync-led work remains
 worker-backed. Injected blocking adapters must honor verification budgets.
 Keep participating event loops running until shutdown completes.
 
+For an explicit full refresh, use `await manager.async_refresh_domain(domain)`.
+It bypasses the identity cache and revalidates HTTP evidence. Concurrent
+explicit refreshes share work, but do not reuse ordinary lookups. Peer binding,
+acceptance, freshness, and cancellation follow the same per-caller rules.
+
 For inbound HTTP signatures, await
 `http_signer.async_verify_signed_http_request(request)`. The A2A example shows
 bounded ASGI body reads, per-request verification, and 401/403/503 responses.

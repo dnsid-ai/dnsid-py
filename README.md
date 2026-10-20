@@ -97,6 +97,11 @@ and close owned resources. `verification_budget(5)` limits a request to five
 seconds; expiry raises `VerificationError` with `DEADLINE_EXCEEDED` and
 `transient=True`. Synchronous APIs remain available.
 
+Use `await manager.async_refresh_domain(domain)` for a full verification that
+bypasses the identity cache and revalidates HTTP evidence. Concurrent explicit
+refreshes share work, but do not reuse ordinary lookups. Peer binding, acceptance,
+and freshness are enforced for each caller.
+
 Signed `httpx.AsyncClient` requests offload synchronous signing (including KMS).
 `create_signed_async_http_client(transport=...)` accepts a custom outbound
 transport, including `httpx.MockTransport`; the returned client owns and closes it.
