@@ -23,5 +23,7 @@ jobs:
     with:
       # uv.lock present -> uv sync --locked.
       mypy-target: dnsid
+      # dnsid-py does not use ruff format; don't enforce it (lint + mypy still run).
+      format-check: false
       upload-sarif: false
       enforce-security: false
