@@ -991,11 +991,12 @@ class IdentityManager:
                 retry_same_bytes=False,
             )
         try:
+            self._persist_rotation(persist_rotation, rotation)
             set_application_signing_paused(True)
         except Exception as exc:
             state = rotation.submission.state if rotation.submission else "prepared"
             raise ManagedKeyRotationSubmissionError(
-                "failed to enforce application-signing pause during recovery",
+                "failed to persist recovery state or enforce application-signing pause",
                 rotation,
                 state=state,
                 transient=True,
@@ -1070,6 +1071,8 @@ class IdentityManager:
                 "application signing paused until accepted"
             )
         try:
+            if submission is None:
+                self._persist_rotation(persist_rotation, rotation)
             set_application_signing_paused(True)
         except Exception as exc:
             from .exceptions import ManagedKeyRotationActivationError
