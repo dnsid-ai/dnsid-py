@@ -1,4 +1,17 @@
 
+## [0.29.1] - 2026-10-21
+
+### Bug Fixes
+
+- fix(ci): refresh lockfile when preparing releases ([#90](https://github.com/dnsid-ai/dnsid-py/pull/90))
+
+### Chores
+
+- chore(deps): refresh uv.lock to match pyproject (dnsid 0.29.0) ([#87](https://github.com/dnsid-ai/dnsid-py/pull/87))
+- ci: add security scanning via shared github-actions workflow ([#55](https://github.com/dnsid-ai/dnsid-py/pull/55))
+- chore(deps): bump certifi from 2026.7.22 to 2026.10.19 ([#89](https://github.com/dnsid-ai/dnsid-py/pull/89))
+
+
 ## [0.29.0] - 2026-10-20
 
 ### Chores
