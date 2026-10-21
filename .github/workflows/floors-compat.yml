@@ -1,0 +1,46 @@
+name: Floors compatibility (unlocked)
+
+# Resolves dependencies fresh against the pyproject floors, ignoring uv.lock,
+# and runs the tests. Consumers install the SDK against its `>=` floors, not
+# our lockfile, so this is what they actually experience. A new upstream
+# release that breaks us shows up here before a consumer hits it.
+#
+# Scheduled only — never on pull_request. A failure here is a compatibility
+# signal, not a reason to block a PR; the locked lint-test workflow remains the
+# deterministic PR gate. See #216.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  floors:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # --upgrade ignores uv.lock and resolves the newest versions the floors
+      # permit, so a breaking upstream release is caught here, not by a consumer.
+      - name: Resolve fresh against floors
+        run: uv sync --upgrade --python ${{ matrix.python-version }} ${{ matrix.python-version == '3.13' && '--all-extras' || '--extra dev --extra aws' }}
+
+      - name: Ruff lint check
+        run: uv run ruff check .
+
+      - name: Mypy type check
+        run: uv run mypy dnsid
+
+      - name: Run tests
+        run: uv run pytest
