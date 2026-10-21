@@ -20,33 +20,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
+          enable-cache: true
 
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
+      # Install exactly what uv.lock pins, not a fresh resolution. --locked
+      # fails if uv.lock is out of date with pyproject.toml rather than silently
+      # re-resolving, so every run tests the committed dependency set (#216).
+      # The A2A example-test deps (the `a2a` extra) stay 3.13-only, as before.
+      - name: Install dependencies (locked)
+        run: uv sync --locked --python ${{ matrix.python-version }} ${{ matrix.python-version == '3.13' && '--all-extras' || '--extra dev --extra aws' }}
 
-      - name: Install A2A example test dependencies
-        if: matrix.python-version == '3.13'
-        run: pip install fastapi uvicorn "a2a-sdk>=1.2" sse-starlette
-
-      # Scans the installed environment (runtime + dev). Accepted risks: add
+      # Scans the locked environment (runtime + extras). Accepted risks: add
       # `--ignore-vuln <ID>` here with a comment linking the advisory.
       - name: Dependency vulnerability audit
         if: matrix.python-version == '3.13'
-        run: pip install pip-audit && pip-audit
+        run: uv run --with pip-audit pip-audit
 
       - name: Ruff lint check
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Mypy type check
-        run: mypy dnsid
+        run: uv run mypy dnsid
 
       - name: Run tests
-        run: pytest
+        run: uv run pytest
 
       # Advisory only: the regen-docs workflow pushes regenerated reference
       # docs to same-repo PR branches automatically. The warning matters for
@@ -54,7 +53,7 @@ jobs:
       - name: Docs freshness (generated reference)
         if: matrix.python-version == '3.13'
         run: |
-          python scripts/gen_docs.py
+          uv run python scripts/gen_docs.py
           git diff --exit-code docs/reference/ || {
             echo "::warning::docs/reference/ is stale — the auto-regen workflow pushes the fix to same-repo PRs; fork authors run python scripts/gen_docs.py and commit the result"
             exit 0

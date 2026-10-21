@@ -51,6 +51,15 @@ dev = [
     "mypy>=1.10",
     "griffe>=1.5",
 ]
+# Dependencies for the A2A example test only. Declared here (rather than
+# installed ad hoc in CI) so they are captured in uv.lock and the test runs
+# against a reproducible set. See #216.
+a2a = [
+    "fastapi",
+    "uvicorn",
+    "a2a-sdk>=1.2",
+    "sse-starlette",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["dnsid"]
