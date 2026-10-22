@@ -8,7 +8,7 @@ import os
 import tempfile
 import time
 import uuid
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 
 from dnsid import (
@@ -62,7 +62,7 @@ def main() -> None:
         data["previous_public_key"] = JWK.from_dict(data["previous_public_key"])
         if data["submission"] is not None:
             data["submission"] = SubmissionResult(**data["submission"])
-        rotation = replace(KeyRotationResult(**data), application_signing_paused=True)
+        rotation = KeyRotationResult(**data)
     if not key_path.exists():
         if rotation is not None:
             raise RuntimeError("saved provider is missing; do not generate a replacement")
@@ -70,7 +70,7 @@ def main() -> None:
         save(key_path, {"active": active, "retained": [], "pending": []})
     # shortcut: one process owns this store; add a cross-process lock before sharing it.
     provider = LocalKeyProvider.load(key_path)
-    paused = True  # Restart begins closed, including after a completed rotation.
+    paused = True  # Signing starts closed and opens only after rotation completes.
 
     def persist(state: KeyRotationResult) -> None:
         nonlocal rotation
@@ -148,7 +148,10 @@ def main() -> None:
                     break
                 time.sleep(1)
                 rotation = manager.resume_key_rotation(registry, rotation, **hooks)
-        assert rotation.activated and not paused, "rotation unresolved; rerun the same command"
+        assert rotation.activated and not rotation.application_signing_paused, (
+            "rotation unresolved; rerun the same command"
+        )
+        paused = False  # The completed state is terminal; resume does not touch signing.
         observed = manager.refresh_domain(domain)
         assert len(observed.jwks.keys) == 1
         assert (
@@ -159,7 +162,7 @@ def main() -> None:
         try:
             profile.verify_jws(json.loads((directory / "old-message.json").read_text()))
         except VerificationError as error:
-            assert error.code == VerificationCode.SIGNATURE_INVALID
+            assert error.code == VerificationCode.KEY_NOT_FOUND
         else:
             raise AssertionError("old-key application signature was accepted after refresh")
         print(f"rotation verified: {rotation.previous_kid} -> {rotation.new_kid}")

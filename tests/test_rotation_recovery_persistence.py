@@ -1,5 +1,7 @@
 """A recovered in-memory state is not proof that storage succeeded."""
 
+from dataclasses import replace
+
 import pytest
 
 from dnsid.exceptions import ManagedKeyRotationActivationError, ManagedKeyRotationSubmissionError
@@ -46,3 +48,27 @@ def test_recovery_persists_before_submission_or_activation(phase, entrypoint):
         assert len(registry.prepare_calls) == len(registry.submit_calls) == 1
         assert registry.submit_calls[0][1] == rotation.entry_bytes
         assert registry.submit_calls[0][2] == rotation.idempotency_key
+
+
+@pytest.mark.parametrize("paused", [True, False])
+def test_activated_resume_needs_no_network(paused):
+    provider = RotationProvider()
+    registry = FakeRotationRegistry()
+    durable = []
+    pauses = []
+    hooks = dict(persist_rotation=durable.append, set_application_signing_paused=pauses.append)
+    with _manager(provider) as manager:
+        completed = manager.rotate_operational_key(registry, idempotency_key="rotation-1", **hooks)
+        manager._verify_publication_evidence.assert_called_once_with(completed.domain, refresh=True)
+    durable.clear()
+    pauses.clear()
+    with _manager(provider) as restarted:
+        result = restarted.resume_key_rotation(
+            registry, replace(completed, application_signing_paused=paused), **hooks
+        )
+        restarted._verify_publication_evidence.assert_not_called()
+        assert restarted._key_provider is provider
+    assert result.activated and not result.application_signing_paused
+    assert pauses == ([False] if paused else [])
+    assert len(durable) == (1 if paused else 0)
+    assert len(registry.submit_calls) == 1

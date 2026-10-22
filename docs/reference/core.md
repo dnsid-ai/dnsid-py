@@ -357,9 +357,13 @@ Resume an exact persisted managed key rotation safely.
 
 Validates the persisted bytes, hash, identity, log, and key bindings
 before any network or key mutation. Pending state reuses the exact
-bytes and idempotency key. Accepted state performs only idempotent
-local reconciliation; activated-but-paused state restores the signer
-before releasing the signing pause and persisting completion. For
+bytes and idempotency key. Accepted state verifies fresh publication
+evidence, then performs idempotent local reconciliation.
+Activated-but-paused state restores the signer before releasing the
+signing pause and persisting completion, without network calls.
+Activated state with signing resumed is terminal: resume restores the
+signer and returns it unchanged. Archive it; the next rotation starts
+with a new state. For
 cross-provider recovery, construct the manager with the reopened saved
 source provider and pass the reopened saved target provider. If the
 manager already uses the target, supply the reopened saved source as

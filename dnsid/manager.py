@@ -919,9 +919,13 @@ class IdentityManager:
 
         Validates the persisted bytes, hash, identity, log, and key bindings
         before any network or key mutation. Pending state reuses the exact
-        bytes and idempotency key. Accepted state performs only idempotent
-        local reconciliation; activated-but-paused state restores the signer
-        before releasing the signing pause and persisting completion. For
+        bytes and idempotency key. Accepted state verifies fresh publication
+        evidence, then performs idempotent local reconciliation.
+        Activated-but-paused state restores the signer before releasing the
+        signing pause and persisting completion, without network calls.
+        Activated state with signing resumed is terminal: resume restores the
+        signer and returns it unchanged. Archive it; the next rotation starts
+        with a new state. For
         cross-provider recovery, construct the manager with the reopened saved
         source provider and pass the reopened saved target provider. If the
         manager already uses the target, supply the reopened saved source as
@@ -952,14 +956,13 @@ class IdentityManager:
                     or active.thumbprint() != rotation.new_thumbprint
                 ):
                     raise ValidationError("active target key does not match persisted rotation")
-                ku_url = self._rotation_publication(rotation)
             except Exception as exc:
                 raise ManagedKeyRotationActivationError(
                     "failed to restore the activated managed key rotation",
                     self._clone_rotation(rotation),
                     cause=exc,
                 ) from exc
-            self._local_identity.ku_url = ku_url
+            # Publication was verified before activation was saved; no network work remains.
             self._key_provider = target
             if not rotation.application_signing_paused:
                 return rotation
@@ -1302,8 +1305,7 @@ class IdentityManager:
         return target_is_active
 
     def _rotation_publication(self, rotation: KeyRotationResult) -> str:
-        self.evict_domain(rotation.domain)
-        observed = self._verify_publication_evidence(rotation.domain)
+        observed = self._verify_publication_evidence(rotation.domain, refresh=True)
         if (
             observed.record.gi != self._local_identity.governance_id
             or observed.record.lr != rotation.log_reference
@@ -1656,9 +1658,12 @@ class IdentityManager:
             return self._accept_verification(domain, result, peer_cert, acceptance=True)
 
     @verification_operation
-    def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
-        """Verify local publication without application-peer or acceptance checks."""
-        return self._verify(domain, None, acceptance=False)
+    def _verify_publication_evidence(self, domain: str, *, refresh: bool = False) -> VerifiedDomain:
+        """Verify local publication without application-peer or acceptance checks.
+
+        ``refresh`` bypasses cached identity evidence, as ``refresh_domain`` does.
+        """
+        return self._verify(domain, None, acceptance=False, refresh=refresh)
 
     def _verify(
         self, domain: str, peer_cert: TLSCertificate | None, *, acceptance: bool,

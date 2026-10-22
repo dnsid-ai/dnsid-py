@@ -66,6 +66,8 @@ class VerificationCode(Enum):
     * COUNTERPARTY_NOT_ACCEPTED — configured ``trusted_entities`` policy
       denied a protocol-valid identity; permanent.
     * DEADLINE_EXCEEDED — verification exceeded its budget; transient.
+    * KEY_NOT_FOUND — an application signature's key ID is absent from the
+      signer's verified operational JWKS; permanent.
     """
 
     DNS_RESOLUTION = auto()  # Timeout, network error, or ordinary SERVFAIL. Transient.
@@ -80,6 +82,7 @@ class VerificationCode(Enum):
     COUNTERPARTY_NOT_ACCEPTED = auto()  # Configured policy denied verified counterparty. Permanent.
     RECORD_NOT_FOUND = auto()  # NXDOMAIN or NOERROR/NODATA. Non-transient, not a blacklist.
     DEADLINE_EXCEEDED = auto()  # Verification exceeded its budget. Transient.
+    KEY_NOT_FOUND = auto()  # Application signature kid absent from signer JWKS. Permanent.
 
 
 class AgentState(StrEnum):

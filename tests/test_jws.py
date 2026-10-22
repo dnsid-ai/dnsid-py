@@ -151,6 +151,18 @@ class TestVerifyJWS:
                 verifier_jose.verify_jws(bad_jws)
         assert exc_info.value.code == VerificationCode.SIGNATURE_INVALID
 
+    def test_unknown_kid_is_key_not_found(self, ec_pair, ec_provider):
+        _, pub_jwk = ec_pair
+        jws = self._create_jws(ec_provider, b"payload", domain="signer.example.com")
+        mock_vd = MagicMock(spec=VerifiedDomain)
+        mock_vd.jwks = JWKS(keys=[pub_jwk])
+        mock_vd.jwks.key_by_id = lambda kid: None
+        verifier_jose = _build_profile(ec_provider, domain="verifier.example.com")
+        with patch.object(verifier_jose._resolver, "verify_domain", return_value=mock_vd):
+            with pytest.raises(VerificationError) as exc_info:
+                verifier_jose.verify_jws(jws)
+        assert exc_info.value.code == VerificationCode.KEY_NOT_FOUND
+
     def test_missing_kid_raises(self, ec_provider):
         jose = _build_profile(ec_provider)
         import json as _json

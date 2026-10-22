@@ -35,25 +35,28 @@ independently configured by the CLI; never infer trust from the identity's `lr`.
    durably, then application signing is paused.
 4. The registry publishes **only the new key** before appending the event. During
    this interval, continuity verification fails closed.
-5. After acceptance, current signed TXT/JWKS and log continuity are verified
-   before local activation. Activation is saved before signing resumes.
+5. After acceptance, the SDK verifies fresh TXT/JWKS and log continuity for its
+   own identity before local activation. Counterparty acceptance policy does not
+   apply to this check. Activation is saved before signing resumes.
 6. A new-key JWS verifies. After explicit identity refresh, the old-key JWS fails
-   and the old key is absent from the provider and live JWKS.
+   with `KeyNotFound`, and the old key is absent from the provider and live JWKS.
 
 Expected state output:
 
 ```text
-saved: prepared, activated=false, paused=true
-saved: accepted, activated=false, paused=true
-saved: accepted, activated=true, paused=true
-saved: accepted, activated=true, paused=false
+saved: prepared, activated=False, paused=True
+saved: accepted, activated=False, paused=True
+saved: accepted, activated=True, paused=True
+saved: accepted, activated=True, paused=False
 rotation verified: <old kid> -> <new kid>
 ```
 
-Python prints `True`/`False`. Pending results retry the saved operation, not a
-new rotation. Network or local reconciliation errors stop the example; rerun
-the **same command** to resume. A completed rerun validates the saved key and
-publication without creating another rotation.
+Pending results retry the saved operation, not a new rotation. Network or local
+reconciliation errors stop the example; rerun the **same command** to resume.
+A saved state with `activated` true and `paused` false is terminal. Resuming it
+only checks the local key; it does not pause signing or contact the registry,
+DNS, or the log. A service archives that state and starts its next scheduled
+rotation with a new one.
 
 ## Saved state and limits
 

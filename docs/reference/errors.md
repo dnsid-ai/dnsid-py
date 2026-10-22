@@ -271,6 +271,8 @@ Values:
 * COUNTERPARTY_NOT_ACCEPTED — configured ``trusted_entities`` policy
   denied a protocol-valid identity; permanent.
 * DEADLINE_EXCEEDED — verification exceeded its budget; transient.
+* KEY_NOT_FOUND — an application signature's key ID is absent from the
+  signer's verified operational JWKS; permanent.
 
 **Members:**
 
@@ -286,6 +288,7 @@ Values:
 - `COUNTERPARTY_NOT_ACCEPTED` = `auto()`
 - `RECORD_NOT_FOUND` = `auto()`
 - `DEADLINE_EXCEEDED` = `auto()`
+- `KEY_NOT_FOUND` = `auto()`
 
 ## `AgentState`
 
