@@ -274,7 +274,7 @@ class JoseProfile:
         signing_key = verified_domain.jwks.key_by_id(kid)
         if signing_key is None:
             raise VerificationError(
-                VerificationCode.SIGNATURE_INVALID,
+                VerificationCode.KEY_NOT_FOUND,
                 "JWT kid not found in issuer JWKS",
             )
 
@@ -384,7 +384,7 @@ class JoseProfile:
         signing_key = verified_domain.jwks.key_by_id(kid)
         if signing_key is None:
             raise VerificationError(
-                VerificationCode.SIGNATURE_INVALID,
+                VerificationCode.KEY_NOT_FOUND,
                 "JWS kid not found in signer JWKS",
             )
 

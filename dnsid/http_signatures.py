@@ -680,7 +680,7 @@ class HttpSignatureProfile:
         signing_key = verified_domain.jwks.key_by_id(kid)
         if signing_key is None:
             raise VerificationError(
-                VerificationCode.SIGNATURE_INVALID,
+                VerificationCode.KEY_NOT_FOUND,
                 "request kid not found in signer JWKS",
             )
 

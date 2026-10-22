@@ -919,9 +919,13 @@ class IdentityManager:
 
         Validates the persisted bytes, hash, identity, log, and key bindings
         before any network or key mutation. Pending state reuses the exact
-        bytes and idempotency key. Accepted state performs only idempotent
-        local reconciliation; activated-but-paused state restores the signer
-        before releasing the signing pause and persisting completion. For
+        bytes and idempotency key. Accepted state verifies fresh publication
+        evidence, then performs idempotent local reconciliation.
+        Activated-but-paused state restores the signer before releasing the
+        signing pause and persisting completion, without network calls.
+        Activated state with signing resumed is terminal: resume restores the
+        signer and returns it unchanged. Archive it; the next rotation starts
+        with a new state. For
         cross-provider recovery, construct the manager with the reopened saved
         source provider and pass the reopened saved target provider. If the
         manager already uses the target, supply the reopened saved source as
@@ -952,14 +956,13 @@ class IdentityManager:
                     or active.thumbprint() != rotation.new_thumbprint
                 ):
                     raise ValidationError("active target key does not match persisted rotation")
-                ku_url = self._rotation_publication(rotation)
             except Exception as exc:
                 raise ManagedKeyRotationActivationError(
                     "failed to restore the activated managed key rotation",
                     self._clone_rotation(rotation),
                     cause=exc,
                 ) from exc
-            self._local_identity.ku_url = ku_url
+            # Publication was verified before activation was saved; no network work remains.
             self._key_provider = target
             if not rotation.application_signing_paused:
                 return rotation
@@ -991,11 +994,12 @@ class IdentityManager:
                 retry_same_bytes=False,
             )
         try:
+            self._persist_rotation(persist_rotation, rotation)
             set_application_signing_paused(True)
         except Exception as exc:
             state = rotation.submission.state if rotation.submission else "prepared"
             raise ManagedKeyRotationSubmissionError(
-                "failed to enforce application-signing pause during recovery",
+                "failed to persist recovery state or enforce application-signing pause",
                 rotation,
                 state=state,
                 transient=True,
@@ -1014,73 +1018,6 @@ class IdentityManager:
             set_application_signing_paused,
             previous,
             target,
-        )
-
-    def activate_rotated_key(
-        self,
-        result: KeyRotationResult,
-        submission: SubmissionResult | None = None,
-        *,
-        persist_rotation: KeyRotationPersistenceHook,
-        set_application_signing_paused: ApplicationSigningPauseHook,
-        target_key_provider: KeyProvider | None = None,
-        previous_provider_reference: str = "",
-        target_provider_reference: str = "",
-        previous_key_provider: KeyProvider | None = None,
-    ) -> KeyRotationResult:
-        """Reconcile an accepted rotation using the mandatory durability hooks.
-
-        Supply ``previous_key_provider`` if the manager no longer uses the
-        saved source provider; reopen both providers from their saved state.
-        """
-        self._require_local_identity("activate_rotated_key")
-        self._validate_rotation_hooks(persist_rotation, set_application_signing_paused)
-        rotation = self._clone_rotation(result)
-        self._validate_persisted_rotation(rotation)
-        previous, target = self._rotation_target(
-            rotation,
-            previous_key_provider,
-            target_key_provider,
-            previous_provider_reference,
-            target_provider_reference,
-        )
-        if submission is not None:
-            self._validate_rotation_submission(rotation, submission)
-            rotation = replace(rotation, submission=self._clone_submission(submission))
-            try:
-                self._persist_rotation(persist_rotation, rotation)
-            except Exception as exc:
-                from .exceptions import ManagedKeyRotationSubmissionError
-
-                raise ManagedKeyRotationSubmissionError(
-                    "failed to persist accepted managed key-rotation submission",
-                    rotation,
-                    state=submission.state,
-                    transient=True,
-                    retry_same_bytes=True,
-                    cause=exc,
-                ) from exc
-        current = rotation.submission
-        if current is None or not current.accepted:
-            state = current.state if current is not None else "unsubmitted"
-            raise ArgumentError(
-                "activate_rotated_key requires an accepted submission for this "
-                f"rotation's entry bytes; the append is {state} — retry with "
-                "resume_key_rotation (same bytes and idempotency key) and keep "
-                "application signing paused until accepted"
-            )
-        try:
-            set_application_signing_paused(True)
-        except Exception as exc:
-            from .exceptions import ManagedKeyRotationActivationError
-
-            raise ManagedKeyRotationActivationError(
-                "failed to enforce application-signing pause before activation",
-                rotation,
-                cause=exc,
-            ) from exc
-        return self._finish_accepted_rotation(
-            rotation, persist_rotation, set_application_signing_paused, previous, target
         )
 
     def _submit_rotation(
@@ -1299,15 +1236,26 @@ class IdentityManager:
         return target_is_active
 
     def _rotation_publication(self, rotation: KeyRotationResult) -> str:
-        self.evict_domain(rotation.domain)
-        observed = self._verify_publication_evidence(rotation.domain)
+        from .c2sp_tlog import C2spTlogReader
+
+        observed = self.verify_local_publication()
+        key = observed.jwks.current_operational_signing_key(observed.record.v)
         if (
             observed.record.gi != self._local_identity.governance_id
             or observed.record.lr != rotation.log_reference
-            or observed.jwks.current_operational_signing_key(observed.record.v).thumbprint()
-            != rotation.new_thumbprint
+            or key.kid != rotation.new_kid
+            or key.thumbprint() != rotation.new_thumbprint
         ):
             raise ValidationError("published identity does not bind the accepted rotation")
+        if not isinstance(observed.log_reader, C2spTlogReader):
+            raise ValidationError("managed rotation requires a c2sp-tlog reader")
+        assert rotation.submission is not None
+        history = observed.log_reader._load_complete_history(rotation.domain)
+        if not any(
+            entry.index == rotation.submission.index and entry.data == rotation.entry_bytes
+            for entry in history.current_stream_events
+        ):
+            raise ValidationError("accepted rotation does not match verified lifecycle entry")
         return observed.record.ku
 
     def _reconcile_rotation_keys(
@@ -1396,8 +1344,17 @@ class IdentityManager:
             raise ValidationError("submission entry hash does not match persisted bytes")
         if submission.key_id and submission.key_id != rotation.new_kid:
             raise ValidationError("submission key_id does not match persisted new key")
-        if submission.accepted and not submission.entry_hash:
-            raise ValidationError("accepted rotation submission is missing entry_hash")
+        if submission.accepted:
+            if not submission.entry_hash:
+                raise ValidationError("accepted rotation submission is missing entry_hash")
+            if submission.key_id != rotation.new_kid:
+                raise ValidationError("accepted rotation key_id does not match persisted new key")
+            if (
+                type(submission.index) is not int
+                or submission.index < 0
+                or str(submission.log_ref) != f"{rotation.log_reference}@{submission.index}"
+            ):
+                raise ValidationError("accepted rotation has no matching final log reference")
 
     @staticmethod
     def _validate_rotation_hooks(
@@ -1652,10 +1609,18 @@ class IdentityManager:
                 result = await self._async_independent_verification(domain, revalidate=True)
             return self._accept_verification(domain, result, peer_cert, acceptance=True)
 
+    def verify_local_publication(self) -> VerifiedDomain:
+        """Verify fresh local publication, without peer or counterparty acceptance checks."""
+        self._require_local_identity("verify_local_publication")
+        return self._verify_publication_evidence(self.local_domain, refresh=True)
+
     @verification_operation
-    def _verify_publication_evidence(self, domain: str) -> VerifiedDomain:
-        """Verify local publication without application-peer or acceptance checks."""
-        return self._verify(domain, None, acceptance=False)
+    def _verify_publication_evidence(self, domain: str, *, refresh: bool = False) -> VerifiedDomain:
+        """Verify local publication without application-peer or acceptance checks.
+
+        ``refresh`` bypasses cached identity evidence, as ``refresh_domain`` does.
+        """
+        return self._verify(domain, None, acceptance=False, refresh=refresh)
 
     def _verify(
         self, domain: str, peer_cert: TLSCertificate | None, *, acceptance: bool,
@@ -1663,8 +1628,8 @@ class IdentityManager:
     ) -> VerifiedDomain:
         """Shared per-invocation verification boundary.
 
-        Only internal local-publication validation passes ``acceptance=False``;
-        public verification always checks the current peer and acceptance policy.
+        Only local-publication validation passes ``acceptance=False``;
+        counterparty verification always checks the current peer and acceptance policy.
         """
         with self._verification_call():
             domain = normalize_fqdn(domain)

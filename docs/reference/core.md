@@ -357,24 +357,17 @@ Resume an exact persisted managed key rotation safely.
 
 Validates the persisted bytes, hash, identity, log, and key bindings
 before any network or key mutation. Pending state reuses the exact
-bytes and idempotency key. Accepted state performs only idempotent
-local reconciliation; activated-but-paused state restores the signer
-before releasing the signing pause and persisting completion. For
+bytes and idempotency key. Accepted state verifies fresh publication
+evidence, then performs idempotent local reconciliation.
+Activated-but-paused state restores the signer before releasing the
+signing pause and persisting completion, without network calls.
+Activated state with signing resumed is terminal: resume restores the
+signer and returns it unchanged. Archive it; the next rotation starts
+with a new state. For
 cross-provider recovery, construct the manager with the reopened saved
 source provider and pass the reopened saved target provider. If the
 manager already uses the target, supply the reopened saved source as
 ``previous_key_provider``. Newly created provider state is not recovery.
-
-### `activate_rotated_key`
-
-```python
-IdentityManager.activate_rotated_key(result: KeyRotationResult, submission: SubmissionResult | None = None, *, persist_rotation: KeyRotationPersistenceHook, set_application_signing_paused: ApplicationSigningPauseHook, target_key_provider: KeyProvider | None = None, previous_provider_reference: str = '', target_provider_reference: str = '', previous_key_provider: KeyProvider | None = None) -> KeyRotationResult
-```
-
-Reconcile an accepted rotation using the mandatory durability hooks.
-
-Supply ``previous_key_provider`` if the manager no longer uses the
-saved source provider; reopen both providers from their saved state.
 
 ### `verify_domain`
 
@@ -483,6 +476,14 @@ answers with their remaining TTL.
 Native async adapters are awaited; sync-only dependencies use tracked
 workers. Shared work has an independent 30-second budget. Cancellation
 or a deadline stops only that caller's wait; ``aclose()`` drains work.
+
+### `verify_local_publication`
+
+```python
+IdentityManager.verify_local_publication() -> VerifiedDomain
+```
+
+Verify fresh local publication, without peer or counterparty acceptance checks.
 
 ### `verify_log_evidence`
 

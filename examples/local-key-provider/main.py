@@ -56,7 +56,7 @@ def main() -> None:
     print("new active key:", key_provider.signing_key())
 
     # Build the public JWKS — what should be hosted at /.well-known/jwks.json
-    jwks = {"keys": [key_provider.jwk(kid) for kid in key_provider.list_key_ids()]}
+    jwks = {"keys": [key_provider.signing_key()]}
     print("\npublic JWKS:", jwks)
 
     # Create a JoseProfile and sign a JWT

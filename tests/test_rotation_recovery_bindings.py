@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from dnsid import JWKS, LocalKeyProvider, SubmissionResult
+from dnsid import JWKS, LocalKeyProvider, LogRef, SubmissionResult
 from dnsid.aws_kms_key_provider import AwsKmsConfig, AwsKmsKeyProvider, AwsKmsKeyState
 from dnsid.exceptions import ArgumentError, ManagedKeyRotationActivationError, ValidationError
 from dnsid.local_key_provider import _generate_stored_key
@@ -39,6 +39,7 @@ def test_invalid_source_fails_before_recovery_actions(state, source):
     if state == "accepted":
         rotation = replace(rotation, submission=SubmissionResult(
             state="accepted", entry_hash=rotation.entry_hash, key_id=rotation.new_kid,
+            index=1, log_ref=LogRef.parse(f"{rotation.log_reference}@1"),
         ))
     if source == "unrelated":
         previous = LocalKeyProvider.generate()
@@ -77,6 +78,7 @@ def test_absent_source_cannot_activate_pending_target(accepted):
         if accepted:
             rotation = replace(rotation, submission=SubmissionResult(
                 state="accepted", entry_hash=rotation.entry_hash, key_id=rotation.new_kid,
+                index=1, log_ref=LogRef.parse(f"{rotation.log_reference}@1"),
             ))
         before = (len(registry.submit_calls), len(saved), len(pauses))
         with pytest.raises(ManagedKeyRotationActivationError) as error:
@@ -125,11 +127,10 @@ def test_same_provider_crash_between_activation_and_supersession():
     assert len(registry.prepare_calls) == len(registry.submit_calls) == 1
 
 
-@pytest.mark.parametrize("entrypoint", ["resume_key_rotation", "activate_rotated_key"])
 @pytest.mark.parametrize("source", ["file", "aws"])
 @pytest.mark.parametrize("retained_history", [False, True])
 def test_cross_provider_unpause_failure_recovers_with_explicit_source(
-    tmp_path, entrypoint, source, retained_history
+    tmp_path, source, retained_history
 ):
     path = tmp_path / "source.json"
     if source == "file":
@@ -170,10 +171,7 @@ def test_cross_provider_unpause_failure_recovers_with_explicit_source(
                 AwsKmsConfig(state=previous.state_snapshot(), algorithm="ED25519_SHA_512"),
             )
         kwargs = dict(**hooks, **_providers(target), previous_key_provider=previous)
-        if entrypoint == "resume_key_rotation":
-            result = manager.resume_key_rotation(registry, rotation, **kwargs)
-        else:
-            result = manager.activate_rotated_key(rotation, **kwargs)
+        result = manager.resume_key_rotation(registry, rotation, **kwargs)
         assert result.activated and not result.application_signing_paused
         assert manager.key_provider is target and saved[-1] == result
         assert len(registry.prepare_calls) == len(registry.submit_calls) == 1
@@ -182,8 +180,7 @@ def test_cross_provider_unpause_failure_recovers_with_explicit_source(
 
 
 @pytest.mark.parametrize("algorithm", ["EdDSA", "ES256"])
-@pytest.mark.parametrize("entrypoint", ["resume_key_rotation", "activate_rotated_key"])
-def test_empty_kms_target_generates_pending_key_and_recovers(algorithm, entrypoint):
+def test_empty_kms_target_generates_pending_key_and_recovers(algorithm):
     previous = LocalKeyProvider.generate()
     facade = FakeKmsFacade()
     config = AwsKmsConfig(
@@ -213,16 +210,10 @@ def test_empty_kms_target_generates_pending_key_and_recovers(algorithm, entrypoi
         )
         assert not target.list_key_ids() and target.state_snapshot().pending_key_ids == [rotation.new_kid]
         target = AwsKmsKeyProvider.load(facade, replace(config, state=target.state_snapshot()))
-        if entrypoint == "resume_key_rotation":
-            pending = manager.resume_key_rotation(registry, rotation, **hooks, **_providers(target))
-            assert not pending.activated and not target.list_key_ids()
-            registry.submit_state = "accepted"
-            result = manager.resume_key_rotation(registry, pending, **hooks, **_providers(target))
-        else:
-            acceptance = SubmissionResult("accepted", rotation.entry_hash, key_id=rotation.new_kid)
-            result = manager.activate_rotated_key(
-                rotation, acceptance, **hooks, **_providers(target)
-            )
+        pending = manager.resume_key_rotation(registry, rotation, **hooks, **_providers(target))
+        assert not pending.activated and not target.list_key_ids()
+        registry.submit_state = "accepted"
+        result = manager.resume_key_rotation(registry, pending, **hooks, **_providers(target))
         assert result.activated and not result.application_signing_paused
         assert manager.key_provider is target and target.signing_key().kid == result.new_kid
         assert target.signing_key().signature_alg() == algorithm
