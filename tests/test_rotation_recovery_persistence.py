@@ -9,14 +9,9 @@ from tests.test_key_rotation import FakeRotationRegistry, RotationProvider, _man
 
 
 @pytest.mark.parametrize(
-    ("phase", "entrypoint"),
-    [
-        ("prepared", "resume_key_rotation"),
-        ("accepted", "resume_key_rotation"),
-        ("accepted", "activate_rotated_key"),
-    ],
+    "phase", ["prepared", "accepted"],
 )
-def test_recovery_persists_before_submission_or_activation(phase, entrypoint):
+def test_recovery_persists_before_submission_or_activation(phase):
     provider = RotationProvider()
     registry = FakeRotationRegistry()
     blocked = True
@@ -33,16 +28,14 @@ def test_recovery_persists_before_submission_or_activation(phase, entrypoint):
             manager.rotate_operational_key(registry, idempotency_key="rotation-1", **hooks)
         rotation = failure.value.rotation
         submissions = len(registry.submit_calls)
-        recover = getattr(manager, entrypoint)
-        args = (registry, rotation) if entrypoint == "resume_key_rotation" else (rotation,)
         with pytest.raises((ManagedKeyRotationSubmissionError, ManagedKeyRotationActivationError)):
-            recover(*args, **hooks)
+            manager.resume_key_rotation(registry, rotation, **hooks)
         assert provider.active_kid == rotation.previous_kid
         assert len(registry.submit_calls) == submissions
         manager._verify_publication_evidence.assert_not_called()
 
         blocked = False
-        completed = recover(*args, **hooks)
+        completed = manager.resume_key_rotation(registry, rotation, **hooks)
         assert completed.activated and not completed.application_signing_paused
         assert durable[-1] == completed
         assert len(registry.prepare_calls) == len(registry.submit_calls) == 1

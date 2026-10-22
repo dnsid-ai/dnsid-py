@@ -9,6 +9,7 @@ and Idempotency).
 from __future__ import annotations
 
 import datetime
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -21,6 +22,7 @@ from dnsid import (
     IdentityManager,
     IdentityManagerDependencies,
     KeyRotationPreparationRequest,
+    LogRef,
     PreparedRegistryEvent,
     RegistryClient,
     SubmissionResult,
@@ -143,7 +145,9 @@ class FakeRotationRegistry:
         return SubmissionResult(
             state=self.submit_state,
             entry_hash=entry_hash,
-            key_id="ku-2" if self.submit_state == "accepted" else "",
+            key_id=self.prepare_calls[-1][1].public_key.kid if self.submit_state == "accepted" else "",
+            index=1 if self.submit_state == "accepted" else None,
+            log_ref=LogRef.parse(f"{_LR}@1") if self.submit_state == "accepted" else None,
         )
 
 
@@ -156,7 +160,15 @@ def _manager(provider: RotationProvider) -> IdentityManager:
     )
     with patch("dnsid.manager.normalize_fqdn", side_effect=lambda s, **_: s):
         manager = IdentityManager(config, provider, IdentityManagerDependencies())
+    from dnsid.c2sp_tlog import C2spTlogReader
+
+    manager._persist_rotation = Mock(wraps=manager._persist_rotation)
+    reader = Mock(spec=C2spTlogReader)
+    reader._load_complete_history.side_effect = lambda _: SimpleNamespace(current_stream_events=[
+        SimpleNamespace(index=1, data=manager._persist_rotation.call_args.args[1].entry_bytes),
+    ])
     manager._verify_publication_evidence = Mock(return_value=SimpleNamespace(
+        log_reader=reader,
         record=SimpleNamespace(
             gi=config.identity.governance_id, lr=_LR,
             v=config.identity.publish_profile, ku=config.identity.ku_url,
@@ -290,13 +302,6 @@ class TestRotateOperationalKey:
         assert result.entry_bytes
         assert result.idempotency_key == "idem-1"
         assert result.application_signing_paused is True
-
-        # A pending rotation cannot be activated directly — publication and
-        # append must converge before local application-key activation.
-        with pytest.raises(ArgumentError, match="accepted submission"):
-            manager.activate_rotated_key(result, **hooks)
-        assert provider.active_kid == "ku-1"
-        assert provider.superseded == []
 
         # resume_key_rotation retries the exact bytes + idempotency key and
         # activates once the registry reports accepted.
@@ -585,9 +590,7 @@ class TestRotateOperationalKey:
         assert provider.active_kid == "ku-1"
         assert provider.superseded == []
 
-    def test_activate_with_explicit_accepted_submission(self):
-        import hashlib
-
+    def test_resume_with_saved_accepted_submission(self):
         provider = RotationProvider()
         registry = FakeRotationRegistry(submit_state="pending")
         manager = _manager(provider)
@@ -597,14 +600,14 @@ class TestRotateOperationalKey:
             registry, idempotency_key="idem-1", **hooks
         )
         accepted = SubmissionResult(
-            state="accepted",
-            entry_hash=hashlib.sha256(result.entry_bytes).hexdigest(),
+            state="accepted", entry_hash=result.entry_hash, key_id=result.new_kid,
+            index=1, log_ref=LogRef.parse(f"{result.log_reference}@1"),
         )
-        result = manager.activate_rotated_key(result, accepted, **hooks)
+        result = manager.resume_key_rotation(registry, replace(result, submission=accepted), **hooks)
         assert result.activated is True
         assert provider.active_kid == "ku-2"
 
-    def test_activate_rejects_mismatched_entry_hash(self):
+    def test_resume_rejects_mismatched_entry_hash(self):
         provider = RotationProvider()
         registry = FakeRotationRegistry(submit_state="pending")
         manager = _manager(provider)
@@ -617,7 +620,7 @@ class TestRotateOperationalKey:
         # DIFFERENT entry must not complete this rotation.
         foreign = SubmissionResult(state="accepted", entry_hash="other-entry")
         with pytest.raises(ValidationError, match="entry hash does not match"):
-            manager.activate_rotated_key(result, foreign, **hooks)
+            manager.resume_key_rotation(registry, replace(result, submission=foreign), **hooks)
         assert provider.active_kid == "ku-1"
         assert provider.superseded == []
 

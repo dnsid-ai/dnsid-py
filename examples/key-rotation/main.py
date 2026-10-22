@@ -13,8 +13,10 @@ from pathlib import Path
 
 from dnsid import (
     JWK,
+    IdentityManager,
     KeyRotationResult,
     LocalKeyProvider,
+    LogRef,
     SubmissionResult,
     VerificationCode,
     construct_identity_manager,
@@ -61,6 +63,9 @@ def main() -> None:
         data["entry_bytes"] = base64.b64decode(data["entry_bytes"], validate=True)
         data["previous_public_key"] = JWK.from_dict(data["previous_public_key"])
         if data["submission"] is not None:
+            reference = data["submission"]["log_ref"]
+            if reference is not None:
+                data["submission"]["log_ref"] = LogRef(**reference)
             data["submission"] = SubmissionResult(**data["submission"])
         rotation = KeyRotationResult(**data)
     if not key_path.exists():
@@ -112,9 +117,20 @@ def main() -> None:
     ):
         raise RuntimeError("this example only rotates testnet identities")
     # Inject the reopened saved provider. Deployment configuration must not replace it.
-    with construct_identity_manager(loaded, key_provider=provider) as manager:
+    restoring = rotation is not None and rotation.activated
+    with (
+        IdentityManager(loaded.dnsid, provider) if restoring
+        else construct_identity_manager(loaded, key_provider=provider)
+    ) as manager:
         domain = manager.local_domain
-        profile = JoseProfile(manager, provider, domain)
+
+        # Self-checks use the local publication, not counterparty acceptance policy.
+        class LocalPublication:
+            def verify_domain(self, requested, peer_cert=None):
+                assert requested == domain
+                return publication
+
+        profile = JoseProfile(LocalPublication(), provider, domain)
 
         def sign() -> str:
             if paused:
@@ -123,7 +139,7 @@ def main() -> None:
 
         with registry_client_from_environment() as registry:
             if rotation is None:
-                before = manager.refresh_domain(domain)
+                before = publication = manager.verify_local_publication()
                 assert before.record.lr == manager.config.identity.log_ref, (
                     "CLI log reference does not match publication"
                 )
@@ -152,7 +168,10 @@ def main() -> None:
             "rotation unresolved; rerun the same command"
         )
         paused = False  # The completed state is terminal; resume does not touch signing.
-        observed = manager.refresh_domain(domain)
+        if restoring:
+            print("saved rotation restored; no network checks")
+            return
+        observed = publication = manager.verify_local_publication()
         assert len(observed.jwks.keys) == 1
         assert (
             observed.jwks.current_operational_signing_key(observed.record.v).kid == rotation.new_kid
