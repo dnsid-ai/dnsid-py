@@ -26,7 +26,19 @@ The upstream is unused: the testnet registry hosts the managed public JWKS,
 status, and log. Use the default testnet ports. Keep `DNSID_LOG_POLICY_URL`
 independently configured by the CLI; never infer trust from the identity's `lr`.
 
-## What is checked
+## Read the code
+
+Start with [`main.py`](main.py). It shows the rotation flow:
+
+1. Sign and verify a message with the current key.
+2. Start a rotation, or resume the saved operation.
+3. Verify the new publication and reject the old signature.
+
+[`support.py`](support.py) contains testnet setup, durable file handling,
+and the single-process signing gate. No SDK implementation is hidden there;
+the rotation and recovery calls stay in the main file.
+
+## What the SDK does
 
 1. The current local key signs a JWS that verifies against the published identity.
 2. The SDK generates a pending successor and signs one KEY_ROTATION with the old
@@ -51,8 +63,9 @@ saved: accepted, activated=True, paused=False
 rotation verified: <old kid> -> <new kid>
 ```
 
-Pending results retry the saved operation, not a new rotation. Network or local
-reconciliation errors stop the example; rerun the **same command** to resume.
+Each run makes one rotation or recovery attempt; there is no polling loop.
+If the result is pending or a network/reconciliation error stops the example,
+rerun the **same command**. Recovery retries the saved operation, not a new rotation.
 A saved state with `activated` true and `paused` false is terminal. Resuming it
 only checks the local key; it does not pause signing or contact the registry,
 DNS, or the log. A service archives that state and starts its next scheduled
