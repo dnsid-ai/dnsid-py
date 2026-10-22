@@ -1,5 +1,7 @@
 # Contributing to dnsid-py
 
+Follow the shared [entity-naming rule](https://github.com/dnsid-ai/dnsid-sdk-compliance/blob/main/policy/ENTITY_NAMING.md) for legal text, copyright notices, and package author metadata.
+
 Thanks for contributing! This is the Python client SDK for the DNSid protocol.
 
 ## Development
