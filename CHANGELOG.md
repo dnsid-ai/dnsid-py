@@ -1,4 +1,17 @@
 
+## [0.30.0] - 2026-10-23
+
+### Bug Fixes
+
+- fix: persist managed rotation recovery before lifecycle work ([#94](https://github.com/dnsid-ai/dnsid-py/pull/94))
+- fix(async)!: pool verification HTTP clients per event loop ([#96](https://github.com/dnsid-ai/dnsid-py/pull/96))
+
+### Chores
+
+- ci: install from uv.lock (--locked), not fresh pip resolution ([#91](https://github.com/dnsid-ai/dnsid-py/pull/91))
+- chore: standardize legal entity naming ([#95](https://github.com/dnsid-ai/dnsid-py/pull/95))
+
+
 ## [0.29.1] - 2026-10-21
 
 ### Bug Fixes
