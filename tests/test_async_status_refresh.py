@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from dnsid import (
     AsyncHTTPSFetcher,
@@ -24,20 +25,20 @@ from tests.test_verification_coalescing import _manager_fixture
 _ACTIVE = {"state": "ACTIVE", "lastTransitionAt": "2026-10-14T00:00:00Z"}
 
 
-@pytest.fixture
-def warmed(ec_pair):
+@pytest_asyncio.fixture
+async def warmed(ec_pair):
     manager, _, counters, domain, keys, status, active = _manager_fixture(
         ec_pair, mtls=True, interval=datetime.timedelta(0)
     )
     cert = TLSCertificate(san_dns_names=[domain])
-    with (
-        manager,
-        patch("dnsid.manager._fetch_jwks", side_effect=keys),
-        patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
-        patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
-    ):
-        cached = manager.verify_domain(domain, peer_cert=cert)
-        yield manager, counters, domain, cert, cached, active
+    async with manager:
+        with (
+            patch("dnsid.manager._fetch_jwks", side_effect=keys),
+            patch("dnsid.manager._fetch_strict_json_status", side_effect=status),
+            patch("dnsid.manager.async_fetch_jwks", side_effect=keys),
+        ):
+            cached = manager.verify_domain(domain, peer_cert=cert)
+            yield manager, counters, domain, cert, cached, active
 
 
 @pytest.mark.asyncio
@@ -152,12 +153,9 @@ async def test_refresh_failure_is_shared_and_later_calls_retry(warmed, document,
     assert all(isinstance(error, VerificationError) and error.code == expected for error in results)
     assert (manager._cache.get(domain) is None) is evicted
     assert not manager._status_futures
-    # A retry must run again, not remain attached to the failed future.
-    with patch("dnsid.manager.make_ssrf_safe_async_transport",
-               side_effect=lambda config: httpx.MockTransport(
-                   lambda request: httpx.Response(200, json=_ACTIVE)
-               )):
-        assert (await manager.async_verify_domain(domain, peer_cert=cert)).domain == domain
+    # The pooled transport must retry the request, not reuse the failed future.
+    document = {}
+    assert (await manager.async_verify_domain(domain, peer_cert=cert)).domain == domain
 
 
 @pytest.mark.asyncio
@@ -220,7 +218,7 @@ async def test_injected_sync_fetcher_stays_off_the_event_loop(warmed):
 
 
 @pytest.mark.asyncio
-async def test_cancelled_native_task_closes_transport_and_removes_shared_future(warmed):
+async def test_cancelled_native_task_retains_pool_until_shutdown(warmed):
     manager, _, domain, cert, _, _ = warmed
     started = asyncio.Event()
 
@@ -240,6 +238,8 @@ async def test_cancelled_native_task_closes_transport_and_removes_shared_future(
             await call
         assert not manager._status_futures
         assert not manager._async_verification_tasks
+        close.assert_not_awaited()
+        await manager.aclose()
         close.assert_awaited_once()
 
 

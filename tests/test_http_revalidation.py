@@ -69,12 +69,10 @@ async def test_async_resource_revalidation_matches_sync_and_survives_redirects(r
         await async_fetch_agent_status("https://agent.example/start", transport=transport,
                                        revalidate=revalidate)
     else:
-        with (
-            SafeC2spResourceFetcher() as fetcher,
-            patch("dnsid.c2sp_tlog.resource_fetcher.make_ssrf_safe_async_transport",
-                  return_value=transport),
-        ):
-            await fetcher.async_fetch_bounded("https://agent.example/checkpoint", 4096)
+        async with SafeC2spResourceFetcher() as fetcher:
+            with patch("dnsid.c2sp_tlog.resource_fetcher.make_ssrf_safe_async_transport",
+                       return_value=transport):
+                await fetcher.async_fetch_bounded("https://agent.example/checkpoint", 4096)
     assert len(requests) == (1 if resource == "log" else 2)
     assert all(request.headers.get("cache-control") == (
         "no-cache" if revalidate or resource == "log" else None

@@ -7,14 +7,12 @@ import sys
 from dnsid import (
     DNSidError,
     IdentityManager,
-    IdentityManagerDependencies,
     LogTrust,
     VerificationError,
     construct_identity_manager,
     load_environment,
     verification_budget,
 )
-from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 
 
 async def verify(manager: IdentityManager, domain: str) -> int:
@@ -39,10 +37,9 @@ def main() -> int:
         # Load configuration/policy before the event loop; no local identity is needed.
         loaded = load_environment()
         loaded.dnsid.identity = None
-        deps = IdentityManagerDependencies(log_registry=(
-            create_dnsid_managed_verification_registry() if loaded.log_trust == LogTrust() else None
-        ))
-        manager = construct_identity_manager(loaded, deps=deps)
+        if loaded.log_trust == LogTrust():
+            loaded.log_trust = LogTrust(managed=True)
+        manager = construct_identity_manager(loaded)
         return asyncio.run(verify(manager, args.domain))
     except DNSidError as error:
         print(f"Verification failed: {error}", file=sys.stderr)

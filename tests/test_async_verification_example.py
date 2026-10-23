@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from dnsid import IdentityConfig, IdentityManager, LoadedConfig, VerificationCode, VerificationError
+from dnsid import (
+    IdentityConfig,
+    IdentityManager,
+    LoadedConfig,
+    LogTrust,
+    VerificationCode,
+    VerificationError,
+)
 from dnsid.exceptions import ArgumentError
 
 
@@ -57,15 +64,14 @@ async def test_failure_reports_retry_semantics_and_closes_manager(example, capsy
 def test_main_loads_config_and_uses_verification_only_manager(example, monkeypatch, capsys):
     loaded, manager = LoadedConfig(), _manager()
     loaded.dnsid.identity = IdentityConfig(domain="local.test")
-    managed_registry = object()
     construct = MagicMock(return_value=manager)
     monkeypatch.setattr(example.sys, "argv", ["main.py", "agent.test"])
     monkeypatch.setattr(example, "load_environment", lambda: loaded)
-    monkeypatch.setattr(example, "create_dnsid_managed_verification_registry", lambda: managed_registry)
     monkeypatch.setattr(example, "construct_identity_manager", construct)
     assert example.main() == 0
     assert loaded.dnsid.identity is None
-    assert construct.call_args.kwargs["deps"].log_registry is managed_registry
+    construct.assert_called_once_with(loaded)
+    assert loaded.log_trust == LogTrust(managed=True)
     assert "ACTIVE" in capsys.readouterr().out
     manager.__aexit__.assert_awaited_once()
 

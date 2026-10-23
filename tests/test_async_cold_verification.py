@@ -201,7 +201,7 @@ async def test_native_cold_fanout_shares_work_and_keeps_sync_log_reader(native, 
 
 
 @pytest.mark.asyncio
-async def test_default_https_helpers_use_native_transport_and_close_each_read(native, monkeypatch):
+async def test_default_https_helpers_reuse_native_transport_until_shutdown(native, monkeypatch):
     n = native
     n.manager._https_fetcher = None
     transports = []
@@ -222,9 +222,10 @@ async def test_default_https_helpers_use_native_transport_and_close_each_read(na
         result = await n.manager.async_verify_domain(_DOMAIN)
     assert result.jwks.keys[0].thumbprint() == n.logs.operational_key.thumbprint()
     assert result.signing_key.thumbprint() == n.logs.entity_key.thumbprint()
-    assert len(transports) == 3
-    for value in transports:
-        value.aclose.assert_awaited_once()
+    assert len(transports) == 1
+    transports[0].aclose.assert_not_awaited()
+    await n.manager.aclose()
+    transports[0].aclose.assert_awaited_once()
     assert not n.manager._verification_futures
 
 

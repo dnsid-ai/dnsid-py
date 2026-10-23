@@ -215,6 +215,9 @@ def create_c2sp_tlog_verification_registry(
         require_stream_bundle=options.require_stream_bundle,
     )
     registry = LogRegistry()
+    if options.resource_fetcher is None:
+        assert isinstance(fetcher, SafeC2spResourceFetcher)
+        registry._owned_resources.append(fetcher)
     trusted_scope = options.trust_profile.scope if options.trust_profile else None
     trusted_log_prefix = options.trust_profile.log_prefix if options.trust_profile else None
 

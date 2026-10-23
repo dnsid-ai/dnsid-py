@@ -1009,10 +1009,11 @@ Fetch one HTTPS resource, requiring HTTP 200 and an exact byte bound.
 SafeC2spResourceFetcher.async async_fetch_bounded(url: str, max_bytes: int) -> bytes
 ```
 
-Read natively with the sync guarantees and a per-call owned client.
+Read natively with the sync guarantees and one pool per event loop.
 
-Clients are not shared between event loops. Closing this fetcher closes
-only its synchronous pool; each async call closes its own resources.
+Responses close after each read, including on cancellation. Finish all
+reads before ``aclose()``; keep owning loops running until it completes.
+Injected fetchers remain caller-owned.
 
 ### `security_guarantees`
 
@@ -1028,7 +1029,15 @@ Return the capabilities enforced by this implementation.
 SafeC2spResourceFetcher.close() -> None
 ```
 
-Close pooled network connections.
+Close synchronous connections; use aclose after async reads.
+
+### `aclose`
+
+```python
+SafeC2spResourceFetcher.async aclose() -> None
+```
+
+Close all owned pools after reads finish, with owning loops running.
 
 ## `ScanStreamSource`
 

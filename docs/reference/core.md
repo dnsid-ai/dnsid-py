@@ -536,9 +536,10 @@ IdentityManager.close() -> None
 
 Drain owned verification work and close resources synchronously.
 
-Raises RuntimeError rather than blocking an event loop when work is
-active; use ``await aclose()`` or ``async with`` there. Closing is
-idempotent. Injected dependencies remain caller-owned.
+Raises RuntimeError if async HTTP pools remain open or draining would
+block an event loop. After async reads, use ``await aclose()`` or
+``async with``. Closing is idempotent. Injected dependencies remain
+caller-owned.
 
 ### `aclose`
 
@@ -552,7 +553,9 @@ Includes shared refreshes, workers and unfinished fan-out branches left
 after a caller cancels or fails. Existing calls keep their own deadlines.
 Injected blocking adapters must honor verification budgets. Cancellation
 of ``aclose()`` leaves the manager closing; await it again to finish.
-Injected dependencies remain caller-owned. Closing is idempotent.
+Injected dependencies remain caller-owned. HTTP pools are isolated per
+event loop; keep all participating loops running until shutdown completes.
+Closing is idempotent.
 
 ### `create_dnsid_http_client`
 

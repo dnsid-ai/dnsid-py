@@ -55,12 +55,13 @@ from dnsid.c2sp_tlog import create_dnsid_managed_verification_registry
 
 # A verifier needs no local identity or keys. This explicitly trusts the
 # SDK's pinned DNSid-managed public logs; other logs need their own reader.
+registry = create_dnsid_managed_verification_registry()
 manager = IdentityManager(
     DnsidConfig(verification=VerificationConfig(
         trusted_entities=[TrustedEntity("payments-agent.example")],
     )),
     deps=IdentityManagerDependencies(
-        log_registry=create_dnsid_managed_verification_registry(),
+        log_registry=registry,
     ),
 )
 
@@ -101,7 +102,7 @@ from dnsid import VerificationError, verification_budget
 
 
 async def main():
-    async with manager:
+    async with registry, manager:
         try:
             with verification_budget(5):
                 verified = await manager.async_verify_domain("payments-agent.example")
@@ -122,7 +123,11 @@ Sync-only adapters, substantial C2SP validation, and atomic checkpoint stores
 use bounded workers. Mixed sync/async
 calls share whichever evidence leader starts first; sync-led work remains
 worker-backed. Injected blocking adapters must honor verification budgets.
-Keep participating event loops running until shutdown completes.
+HTTP reads reuse separate pools per event loop. Keep participating event loops
+running until shutdown completes. A manually injected registry remains caller-owned;
+close it after its managers drain, as above. Registries created from loaded
+configuration are closed by the manager. Use `aclose()`, not synchronous `close()`,
+after async HTTP reads.
 
 For an explicit full refresh, use `await manager.async_refresh_domain(domain)`.
 It bypasses the identity cache and revalidates HTTP evidence. Concurrent
