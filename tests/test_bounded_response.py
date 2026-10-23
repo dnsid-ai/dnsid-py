@@ -105,7 +105,7 @@ async def test_c2sp_compression_bomb_closes_response_with_bounded_memory(native)
     stream = Chunks([wire, b"unread"])
     reply = httpx.Response(200, stream=stream, headers={"content-encoding": "gzip"})
     transport = httpx.MockTransport(lambda request: reply)
-    with SafeC2spResourceFetcher() as fetcher:
+    async with SafeC2spResourceFetcher() as fetcher:
         fetcher._client.close()
         fetcher._client = httpx.Client(transport=transport)
         with patch("dnsid.c2sp_tlog.resource_fetcher.make_ssrf_safe_async_transport",

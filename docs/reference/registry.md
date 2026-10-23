@@ -21,6 +21,12 @@ return LogReader instances; readers may additionally implement AsyncLogReader.
 Factory construction must not block the event loop when used by native async
 verification. Synchronous verification constructs readers in workers.
 
+Convenience factories own their default resource fetchers. After all managers
+using a registry have drained, close it with ``async with`` or ``aclose()``
+after async reads, or ``with`` / ``close()`` for synchronous-only use. Injected
+fetchers remain caller-owned. Keep HTTP-owning event loops running until
+async shutdown completes.
+
 ### `LogRegistry` constructor
 
 ```python
@@ -28,6 +34,22 @@ LogRegistry() -> None
 ```
 
 Initialize an empty registry with no registered log method factories.
+
+### `close`
+
+```python
+LogRegistry.close() -> None
+```
+
+Close factory-owned resources after synchronous use.
+
+### `aclose`
+
+```python
+LogRegistry.async aclose() -> None
+```
+
+Close factory-owned resources after all verification work drains.
 
 ### `register`
 

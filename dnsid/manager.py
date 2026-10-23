@@ -28,7 +28,9 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import dns.exception
 import dns.resolver
+import httpx
 
+from ._async_client_pool import _AsyncClientPool
 from ._verification_budget import (
     async_run_concurrently,
     async_verification_operation,
@@ -42,7 +44,6 @@ from ._verification_budget import (
 
 if TYPE_CHECKING:
     import httpcore
-    import httpx
 
     from .interfaces import AbstractRegistryClient
 
@@ -227,6 +228,7 @@ class IdentityManager:
         self._verification_only = identity is None
         self._entity_key_provider = deps.entity_key_provider
         self._log_registry = deps.log_registry
+        self._owned_log_registry: LogRegistry | None = None
         self._transport_config = config.transport
 
         resolver = deps.dns_resolver or _default_dns_resolver(self._transport_config)
@@ -237,6 +239,10 @@ class IdentityManager:
             if self._https_fetcher is None
             else None
         )
+        self._async_http_clients = _AsyncClientPool(lambda: httpx.AsyncClient(
+            transport=make_ssrf_safe_async_transport(self._transport_config),
+            follow_redirects=False, trust_env=False, timeout=10.0,
+        ))
         self._closed = False
         self._closing = False
         self._verification_executor = ThreadPoolExecutor(thread_name_prefix="dnsid-verification")
@@ -2403,10 +2409,9 @@ class IdentityManager:
                     uri, allowed_host, domain_boundary, revalidate=revalidate,
                 ),
             )
-        # shortcut: per-read clients; pool with a single-event-loop contract.
         return await async_fetch_jwks(
             uri, allowed_host=allowed_host, domain_boundary=domain_boundary,
-            transport=make_ssrf_safe_async_transport(self._transport_config),
+            client=self._async_http_clients.get(),
             revalidate=revalidate,
         )
 
@@ -2426,7 +2431,7 @@ class IdentityManager:
                 status = _parse_agent_status_from_dict(raw)
             else:
                 status = await async_fetch_agent_status(
-                    su, transport=make_ssrf_safe_async_transport(self._transport_config),
+                    su, client=self._async_http_clients.get(),
                     revalidate=revalidate,
                 )
             status.validate()
@@ -2504,9 +2509,10 @@ class IdentityManager:
     def close(self) -> None:
         """Drain owned verification work and close resources synchronously.
 
-        Raises RuntimeError rather than blocking an event loop when work is
-        active; use ``await aclose()`` or ``async with`` there. Closing is
-        idempotent. Injected dependencies remain caller-owned.
+        Raises RuntimeError if async HTTP pools remain open or draining would
+        block an event loop. After async reads, use ``await aclose()`` or
+        ``async with``. Closing is idempotent. Injected dependencies remain
+        caller-owned.
         """
         with self._close_lock:
             with self._coordination_lock:
@@ -2525,6 +2531,9 @@ class IdentityManager:
                 wait(pending)
                 with self._coordination_lock:
                     pending = self._pending_verification_work()
+            self._async_http_clients.close()
+            if self._owned_log_registry is not None:
+                self._owned_log_registry.close()
             self._verification_executor.shutdown(wait=True)
             if self._http_client is not None:
                 self._http_client.close()
@@ -2538,7 +2547,9 @@ class IdentityManager:
         after a caller cancels or fails. Existing calls keep their own deadlines.
         Injected blocking adapters must honor verification budgets. Cancellation
         of ``aclose()`` leaves the manager closing; await it again to finish.
-        Injected dependencies remain caller-owned. Closing is idempotent.
+        Injected dependencies remain caller-owned. HTTP pools are isolated per
+        event loop; keep all participating loops running until shutdown completes.
+        Closing is idempotent.
         """
         with self._coordination_lock:
             self._closing = True
@@ -2551,6 +2562,9 @@ class IdentityManager:
                 *(async_wait_for_verification(future) for future in pending),
                 return_exceptions=True,
             )
+        await self._async_http_clients.aclose()
+        if self._owned_log_registry is not None:
+            await self._owned_log_registry.aclose()
         self.close()
 
     async def __aenter__(self) -> IdentityManager:

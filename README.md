@@ -94,8 +94,14 @@ readers bound gzip/deflate output during decompression and reject other codings.
 Shared evidence has its own 30-second budget. Caller cancellation or deadlines
 stop only that caller's wait. Reuse one manager for the application lifetime;
 use `async with manager` or `await manager.aclose()` at shutdown to drain work
-and close owned resources. `verification_budget(5)` limits a request to five
-seconds; expiry raises `VerificationError` with `DEADLINE_EXCEEDED` and
+and close owned resources. Default JWKS, status and C2SP HTTP reads reuse pools
+isolated per event loop; keep all owning loops running until shutdown completes.
+After async reads, synchronous `close()` rejects open async pools. Registries
+created from loaded configuration are manager-owned. A manually injected log
+registry remains caller-owned: use `async with registry` outside the managers'
+contexts, or `await registry.aclose()` after all managers have drained. Registry
+factories close their default fetchers, never injected fetchers.
+`verification_budget(5)` limits a request to five seconds; expiry raises `VerificationError` with `DEADLINE_EXCEEDED` and
 `transient=True`. Synchronous APIs remain available.
 
 Use `await manager.async_refresh_domain(domain)` for a full verification that

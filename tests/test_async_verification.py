@@ -7,10 +7,11 @@ import hashlib
 import threading
 from collections import Counter
 from concurrent.futures import Future
-from contextlib import ExitStack
+from contextlib import AsyncExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from dnsid import AsyncIdentityResolver, HTTPSFetcher, TrustedEntity, verification_budget
 from dnsid.enums import VerificationCode
@@ -59,9 +60,9 @@ async def _started(event):
             await asyncio.sleep(0)
 
 
-@pytest.fixture
-def make_verifier(ec_pair):
-    with ExitStack() as stack:
+@pytest_asyncio.fixture
+async def make_verifier(ec_pair):
+    async with AsyncExitStack() as stack:
         def make(**kwargs):
             manager, resolver, counters, domain, keys, status, _ = _manager_fixture(ec_pair, **kwargs)
             for name, fetch in (
@@ -69,7 +70,7 @@ def make_verifier(ec_pair):
                 ("async_fetch_jwks", keys), ("async_fetch_agent_status", status),
             ):
                 stack.enter_context(patch("dnsid.manager." + name, side_effect=fetch))
-            stack.enter_context(manager)
+            stack.push_async_callback(manager.aclose)
             return manager, resolver, counters, domain
         yield make
 

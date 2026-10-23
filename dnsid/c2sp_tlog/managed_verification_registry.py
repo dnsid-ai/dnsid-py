@@ -171,6 +171,9 @@ def _create_dnsid_managed_verification_registry(
         registries[selector] = create_c2sp_tlog_verification_registry(verification_options)
 
     registry = LogRegistry()
+    if options.resource_fetcher is None:
+        assert isinstance(fetcher, SafeC2spResourceFetcher)
+        registry._owned_resources.append(fetcher)
 
     def reader(lr: str) -> LogReader:
         reference = parse_c2sp_tlog_lr(lr)

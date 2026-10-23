@@ -224,7 +224,7 @@ async def test_real_tls_preserves_hostname_and_custom_trust(tmp_path, trusted, h
         transport = make_ssrf_safe_async_transport(config) if kind != "c2sp" else None
 
         async def fetch_resource():
-            with SafeC2spResourceFetcher(transport_config=config) as fetcher:
+            async with SafeC2spResourceFetcher(transport_config=config) as fetcher:
                 return await fetcher.async_fetch_bounded(f"https://{host}:{port}/checkpoint", 1024)
 
         with (

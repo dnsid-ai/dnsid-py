@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from typing import Protocol
 
 from .interfaces import LogReader, NoopLogReader
 
@@ -11,6 +12,11 @@ _METHOD_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 # Factory type: receives the full lr string, returns a bound LogReader.
 LogReaderFactory = Callable[[str], LogReader]
+
+
+class _OwnedResource(Protocol):
+    def close(self) -> None: ...
+    async def aclose(self) -> None: ...
 
 
 class LogRegistry:
@@ -23,11 +29,44 @@ class LogRegistry:
     return LogReader instances; readers may additionally implement AsyncLogReader.
     Factory construction must not block the event loop when used by native async
     verification. Synchronous verification constructs readers in workers.
+
+    Convenience factories own their default resource fetchers. After all managers
+    using a registry have drained, close it with ``async with`` or ``aclose()``
+    after async reads, or ``with`` / ``close()`` for synchronous-only use. Injected
+    fetchers remain caller-owned. Keep HTTP-owning event loops running until
+    async shutdown completes.
     """
 
     def __init__(self) -> None:
         """Initialize an empty registry with no registered log method factories."""
         self._factories: dict[str, LogReaderFactory] = {}
+        self._owned_resources: list[_OwnedResource] = []
+
+    def close(self) -> None:
+        """Close factory-owned resources after synchronous use."""
+        for resource in self._owned_resources:
+            resource.close()
+
+    async def aclose(self) -> None:
+        """Close factory-owned resources after all verification work drains."""
+        for resource in self._owned_resources:
+            await resource.aclose()
+
+    def __enter__(self) -> LogRegistry:
+        """Return this registry for synchronous resource cleanup."""
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        """Close owned synchronous resources."""
+        self.close()
+
+    async def __aenter__(self) -> LogRegistry:
+        """Return this registry for asynchronous resource cleanup."""
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        """Close owned resources on their event loops."""
+        await self.aclose()
 
     def register(self, method: str, factory: LogReaderFactory) -> None:
         """Register a factory for *method* (e.g. 'c2sp-tlog').

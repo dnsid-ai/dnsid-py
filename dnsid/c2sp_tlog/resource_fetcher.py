@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .._async_client_pool import _AsyncClientPool
 from .._bounded_response import ACCEPT_ENCODING, BoundedBody
 from .._verification_budget import (
     async_verification_operation,
@@ -108,6 +109,12 @@ class SafeC2spResourceFetcher:
             follow_redirects=False,
             timeout=self._timeout_seconds,
         )
+        self._async_clients = _AsyncClientPool(lambda: httpx.AsyncClient(
+            transport=make_ssrf_safe_async_transport(
+                self._transport_config, allow_loopback_host=self._allow_loopback_host,
+            ),
+            follow_redirects=False, trust_env=False, timeout=self._timeout_seconds,
+        ))
 
     @verification_operation
     def fetch_bounded(self, url: str, max_bytes: int) -> bytes:
@@ -161,38 +168,32 @@ class SafeC2spResourceFetcher:
 
     @async_verification_operation
     async def async_fetch_bounded(self, url: str, max_bytes: int) -> bytes:
-        """Read natively with the sync guarantees and a per-call owned client.
+        """Read natively with the sync guarantees and one pool per event loop.
 
-        Clients are not shared between event loops. Closing this fetcher closes
-        only its synchronous pool; each async call closes its own resources.
+        Responses close after each read, including on cancellation. Finish all
+        reads before ``aclose()``; keep owning loops running until it completes.
+        Injected fetchers remain caller-owned.
         """
         _require_positive_integer(max_bytes, "max_bytes")
         _validate_resource_url(url)
         timeout = remaining_seconds(self._timeout_seconds)
         try:
             async with asyncio.timeout(timeout):
-                async with httpx.AsyncClient(
-                    transport=make_ssrf_safe_async_transport(
-                        self._transport_config, allow_loopback_host=self._allow_loopback_host,
-                    ),
-                    follow_redirects=False,
+                async with self._async_clients.get().stream(
+                    "GET", url,
+                    headers={"Cache-Control": "no-cache", "Accept-Encoding": ACCEPT_ENCODING},
                     timeout=timeout,
-                ) as client:
-                    async with client.stream(
-                        "GET", url,
-                        headers={"Cache-Control": "no-cache", "Accept-Encoding": ACCEPT_ENCODING},
-                        timeout=timeout,
-                    ) as response:
-                        _validate_resource_response(response, url, max_bytes)
-                        body = BoundedBody(
-                            response, max_bytes, lambda: _response_limit_error(url, max_bytes),
-                            invalid=lambda detail: C2spTlogTransportError(detail, transient=False),
-                        )
-                        chunks = (response.aiter_bytes() if response.is_stream_consumed
-                                  else response.aiter_raw())
-                        async for chunk in chunks:
-                            body.append(chunk)
-                        return body.finish()
+                ) as response:
+                    _validate_resource_response(response, url, max_bytes)
+                    body = BoundedBody(
+                        response, max_bytes, lambda: _response_limit_error(url, max_bytes),
+                        invalid=lambda detail: C2spTlogTransportError(detail, transient=False),
+                    )
+                    chunks = (response.aiter_bytes() if response.is_stream_consumed
+                              else response.aiter_raw())
+                    async for chunk in chunks:
+                        body.append(chunk)
+                    return body.finish()
         except httpx.ConnectError as exc:
             raise C2spTlogTransportError(
                 f"failed to connect while fetching C2SP resource: {url}",
@@ -219,8 +220,22 @@ class SafeC2spResourceFetcher:
         )
 
     def close(self) -> None:
-        """Close pooled network connections."""
+        """Close synchronous connections; use aclose after async reads."""
+        self._async_clients.close()
         self._client.close()
+
+    async def aclose(self) -> None:
+        """Close all owned pools after reads finish, with owning loops running."""
+        await self._async_clients.aclose()
+        self._client.close()
+
+    async def __aenter__(self) -> SafeC2spResourceFetcher:
+        """Return this fetcher for asynchronous resource cleanup."""
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        """Close owned pools on leaving an async context."""
+        await self.aclose()
 
     def __enter__(self) -> SafeC2spResourceFetcher:
         """Return this fetcher as a context-managed resource."""

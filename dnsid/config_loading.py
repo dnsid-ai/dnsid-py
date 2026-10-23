@@ -489,9 +489,17 @@ def construct_identity_manager(
         if deps.entity_key_provider is None and source.entity_key_path:
             deps.entity_key_provider = LocalKeyProvider.from_private_jwk(source.entity_key_path)
             configured_entity = True
+    owned_registry = None
     if deps.log_registry is None and _has_trust(loaded.log_trust):
-        deps.log_registry = _log_registry_from_trust(loaded.log_trust, loaded.dnsid.transport)
-    manager = IdentityManager(loaded.dnsid, key_provider, deps)
+        owned_registry = _log_registry_from_trust(loaded.log_trust, loaded.dnsid.transport)
+        deps.log_registry = owned_registry
+    try:
+        manager = IdentityManager(loaded.dnsid, key_provider, deps)
+    except BaseException:
+        if owned_registry is not None:
+            owned_registry.close()
+        raise
+    manager._owned_log_registry = owned_registry
     if configured_operational or configured_entity:
         assert identity is not None
         try:

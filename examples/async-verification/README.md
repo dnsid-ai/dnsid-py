@@ -30,7 +30,11 @@ independent 30-second budget and survives caller cancellation or deadline expiry
 Shutdown waits for that work, so it can outlast the five-second request deadline.
 Injected blocking dependencies must honor SDK budgets. In a server, keep one
 manager for the application lifetime and call `aclose()` during shutdown.
-Keep participating event loops running until shutdown completes.
+HTTP reads reuse separate pools per event loop. Keep participating event loops
+running until shutdown completes. This example lets the configuration constructor
+own the log registry, so manager shutdown closes its default log connections too.
+Manually injected registries remain caller-owned; close them after their managers
+drain. Use `aclose()`, not synchronous `close()`, after async HTTP reads.
 
 Async-led cold verification uses native TXT, JWKS, status and C2SP reads.
 Sync-only adapters and atomic checkpoint stores use workers. Mixed sync/async
