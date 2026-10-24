@@ -623,9 +623,14 @@ Verifiers anchored on the record `ek` still skip self-signed genesis events
 for other keys: a history is accepted only if it ends at the record `ek`,
 which requires a valid `new_ae` signature by that key.
 
-Verifiers older than the first dnsid-py release containing this event (after
-0.30.0) treat it as unsupported and keep rejecting rotated identities with the
-ISSUANCE entity-key mismatch, so upgrade verifiers before rotating entity keys.
+Verifiers that predate this event treat it as unsupported and keep rejecting
+rotated identities with the ISSUANCE entity-key mismatch, so upgrade verifiers
+before rotating entity keys. The minimum SDK versions are listed in the release
+notes.
+
+An authenticated `ENTITY_KEY_ROTATION` (both signatures verify) that fails
+structural validation is fatal invalid evidence; a `new_ek` carrying private
+key members is never used to verify and the event is skipped.
 
 See the [transparency-log reference](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/transparency-log.md)
 and [examples/a2a/startup.py](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/a2a/startup.py) for a complete setup.
