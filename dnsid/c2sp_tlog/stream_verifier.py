@@ -565,14 +565,13 @@ def _malformed_authenticated(
                 return False
             keys["new_ae"] = jwk_from_dict(new_entity)
 
-        def signed_by(role: str, sig: Any) -> bool:
-            key = keys[role]
-            # A new_ek missing its kid is itself the structural defect; the
-            # signature still authenticates the malformed payload.
-            kid_ok = sig.kid == key.kid or (role == "new_ae" and not key.kid)
-            return kid_ok and key.verify(signed, b64url_decode(sig.sig))
-
-        return all(signed_by(role, sig) for role, sig in signatures.items())
+        # Every role must name its key: a new_ek without a kid, or a new_ae
+        # naming another kid, cannot authenticate and is noise.
+        return all(
+            bool(sig.kid) and sig.kid == keys[role].kid
+            and keys[role].verify(signed, b64url_decode(sig.sig))
+            for role, sig in signatures.items()
+        )
     except Exception:
         return False
 

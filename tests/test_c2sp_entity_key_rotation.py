@@ -472,12 +472,11 @@ def _resigned_rotation(keys: SimpleNamespace, mutate, *, new_signer: _Signer | N
     [
         lambda o: o.update(new_ek_thumb=o["prev_ek_thumb"][::-1]),
         lambda o: o.update(prev_ek_thumb=o["new_ek_thumb"]),
-        lambda o: o["new_ek"].pop("kid"),
         lambda o: o["new_ek"].pop("alg"),
         lambda o: o["new_ek"].update(alg="ES256"),
         lambda o: o["new_ek"].update(use="enc"),
     ],
-    ids=["thumb-mismatch", "same-thumb", "missing-kid", "missing-alg", "wrong-alg", "enc-use"],
+    ids=["thumb-mismatch", "same-thumb", "missing-alg", "wrong-alg", "enc-use"],
 )
 def test_case11_authenticated_malformed_rotation_is_fatal(keys, mutate):
     genesis, authenticated, unauthenticated = _resigned_rotation(keys, mutate)
@@ -486,6 +485,26 @@ def test_case11_authenticated_malformed_rotation_is_fatal(keys, mutate):
         _verify([genesis, authenticated], keys.e1.jwk)
     assert exc.value.category == C2spLifecycleErrorCategory.INVALID_EVIDENCE
     assert exc.value.failing_candidate_index == 1
+
+
+@pytest.mark.parametrize(
+    ("mutate", "new_ae_kid"),
+    [
+        (lambda o: o["new_ek"].pop("kid"), "entity-2"),
+        (lambda o: o["new_ek"].update(kid=""), "entity-2"),
+        (lambda o: None, "other-kid"),
+    ],
+    ids=["missing-kid", "empty-kid", "new-ae-names-other-kid"],
+)
+def test_new_ek_kid_problems_are_noise_even_when_both_signatures_verify(
+    keys, mutate, new_ae_kid,
+):
+    genesis, authenticated, _ = _resigned_rotation(
+        keys, mutate, new_signer=replace(keys.e2, kid=new_ae_kid),
+    )
+    assert _types(_verify([genesis, authenticated], keys.e1.jwk)) == ["ISSUANCE"]
+    with pytest.raises(C2spTlogVerificationError):
+        _verify([genesis, authenticated], keys.e2.jwk)
 
 
 def test_case11_private_new_ek_is_noise_even_when_both_signatures_verify(keys):

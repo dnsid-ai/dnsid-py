@@ -629,8 +629,9 @@ before rotating entity keys. The minimum SDK versions are listed in the release
 notes.
 
 An authenticated `ENTITY_KEY_ROTATION` (both signatures verify) that fails
-structural validation is fatal invalid evidence; a `new_ek` carrying private
-key members is never used to verify and the event is skipped.
+structural validation is fatal invalid evidence. A `new_ek` carrying private
+key members, a `new_ek` without a kid, or a `new_ae` naming a different kid
+cannot authenticate, so the event is skipped.
 
 See the [transparency-log reference](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/transparency-log.md)
 and [examples/a2a/startup.py](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/a2a/startup.py) for a complete setup.
