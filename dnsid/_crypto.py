@@ -138,19 +138,17 @@ def _verify_ec(raw: dict[str, Any], alg: str, payload: bytes, sig: bytes) -> boo
     if not hash_cls:
         raise ValueError(f"unsupported EC alg: {alg!r}")
 
-    x = int.from_bytes(b64url_decode(raw["x"]), "big")
-    y = int.from_bytes(b64url_decode(raw["y"]), "big")
+    # RFC 7518 6.2.1.2: x and y are exactly the coordinate size. JWS and RFC 9421 use only
+    # IEEE P1363 r || s; a DER signature is rejected. Both low-S and high-S are valid.
+    coord = _EC_COORD_BYTES[alg]
+    raw_x, raw_y = b64url_decode(raw["x"]), b64url_decode(raw["y"])
+    if len(raw_x) != coord or len(raw_y) != coord or len(sig) != 2 * coord:
+        return False
+    x, y = int.from_bytes(raw_x, "big"), int.from_bytes(raw_y, "big")
     pub_key = ec.EllipticCurvePublicNumbers(x=x, y=y, curve=curve).public_key()
-
-    # JWT/JWS/RFC 9421 use IEEE P1363 (r || s); cryptography expects DER.
-    coord = _EC_COORD_BYTES.get(alg)
-    if coord and len(sig) == 2 * coord:
-        r = int.from_bytes(sig[:coord], "big")
-        s = int.from_bytes(sig[coord:], "big")
-        der_sig = encode_dss_signature(r, s)
-    else:
-        der_sig = sig  # fall through and let the library reject it
-
+    der_sig = encode_dss_signature(
+        int.from_bytes(sig[:coord], "big"), int.from_bytes(sig[coord:], "big")
+    )
     pub_key.verify(der_sig, payload, ec.ECDSA(hash_cls()))
     return True
 
@@ -159,9 +157,40 @@ def _verify_okp(raw: dict[str, Any], payload: bytes, sig: bytes) -> bool:
     crv = raw.get("crv", "")
     if crv != "Ed25519":
         raise ValueError(f"unsupported OKP curve: {crv!r}")
-    pub_key = ed25519.Ed25519PublicKey.from_public_bytes(b64url_decode(raw["x"]))
-    pub_key.verify(sig, payload)
+    x = b64url_decode(raw["x"])
+    if not valid_ed25519_public_key(x):
+        return False
+    ed25519.Ed25519PublicKey.from_public_bytes(x).verify(sig, payload)
     return True
+
+
+# Every canonical encoding of an Ed25519 point of order 1, 2, 4 or 8, plus the two sign-bit
+# variants of x = 0 (libsodium's list).
+_ED25519_SMALL_ORDER = frozenset(
+    bytes.fromhex(h)
+    for h in (
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "0100000000000000000000000000000000000000000000000000000000000080",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000080",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    )
+)
+
+
+def valid_ed25519_public_key(x: bytes) -> bool:
+    """True for a 32-byte canonical (y < p) encoding of a point that is not small-order.
+
+    OpenSSL verifies signatures under small-order keys; such a key lets its holder make one
+    signature valid for many messages. Verification stays RFC 8032 cofactorless.
+    """
+    y = int.from_bytes(x, "little") & ((1 << 255) - 1)
+    return len(x) == 32 and y < 2**255 - 19 and x not in _ED25519_SMALL_ORDER
 
 
 def _verify_rsa(raw: dict[str, Any], alg: str, payload: bytes, sig: bytes) -> bool:
