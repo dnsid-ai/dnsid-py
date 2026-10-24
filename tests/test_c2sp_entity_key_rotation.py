@@ -594,7 +594,7 @@ def test_attacker_genesis_cannot_reach_the_record_key_without_new_ae(keys):
     assert [item.index for item in selected] == [first_real, first_real + 1]
 
 
-def test_end_of_history_mismatch_with_competing_genesis_reports_no_lifecycle(keys):
+def test_end_of_history_mismatch_reports_the_record_ek_error(keys):
     first = _Stream()
     first.issuance(keys.e1, keys.o1)
     first.entity_rotation(keys.e2)
@@ -707,6 +707,48 @@ def test_prepared_new_entity_signing_rejects_a_malformed_new_ek(keys):
     ))
     with pytest.raises(C2spTlogParseError, match="new_ek_thumb"):
         sign_prepared_event(prepared, C2spSignerRole.NEW_ENTITY, _provider(keys.e2))
+
+
+def _malformed_issuance(entity: _Signer, operational: _Signer) -> bytes:
+    """An ISSUANCE authenticated by both keys whose payload fails parsing."""
+    obj = json.loads(_Stream().issuance(entity, operational))
+    obj.pop("sigs")
+    obj["gi"] = 7
+    signed = canonical_bytes(obj)
+    return canonical_bytes(dict(obj, sigs={
+        "ae": {"kid": entity.kid, "sig": entity.sign(signed)},
+        "op": {"kid": operational.kid, "sig": operational.sign(signed)},
+    }))
+
+
+def test_malformed_genesis_authenticated_by_the_root_key_is_fatal(keys):
+    stream = _Stream()
+    stream.issuance(keys.e1, keys.o1)
+    stream.entity_rotation(keys.e2)
+    malformed = _malformed_issuance(keys.e1, keys.o1)
+    for record in (keys.e1, keys.e2):
+        with pytest.raises(C2spTlogVerificationError) as exc:
+            _verify([malformed, *stream.entries], record.jwk)
+        assert exc.value.category == C2spLifecycleErrorCategory.INVALID_EVIDENCE
+        assert exc.value.failing_candidate_index == 0
+    # The same malformed genesis under an unrelated key stays noise.
+    spam = _malformed_issuance(keys.attacker, _key("attacker-op"))
+    assert _types(_verify([spam, *stream.entries], keys.e2.jwk)) == [
+        "ISSUANCE", "ENTITY_KEY_ROTATION",
+    ]
+
+
+def test_fresh_genesis_by_an_intermediate_key_after_chained_rotations(keys):
+    stream = _Stream()
+    stream.issuance(keys.e1, keys.o1)
+    stream.entity_rotation(keys.e2)
+    stream.entity_rotation(keys.e3)
+    stream.terminal("REVOCATION")
+    fresh = _Stream()
+    fresh.ts = stream.ts
+    entries = [*stream.entries, fresh.issuance(keys.e2, keys.o1)]
+    with pytest.raises(C2spTlogVerificationError, match="does not match record ek"):
+        _verify(entries, keys.e2.jwk)
 
 
 # ---------------------------------------------------------------------------

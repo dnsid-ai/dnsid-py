@@ -305,6 +305,24 @@ def _select_anchored(
     """
     trial_opts = replace(opts, signer_key=None)
     roots = _anchor_rotation_roots(parsed, anchor)
+    # Entity keys of ISSUANCE roots of an anchor-reaching rotation chain: a
+    # malformed genesis authenticated by one of them is fatal, like one
+    # authenticated by the anchor key itself.
+    root_entity_thumbprints = {
+        item.event.entity_key.thumbprint()
+        for item in parsed
+        if item.identifier in roots
+        and isinstance(item.event, IssuanceEvent)
+        and item.event.entity_key is not None
+    }
+
+    def genesis_entity_ok(key: JWK) -> bool:
+        if anchor.matches(key):
+            return True
+        try:
+            return key.thumbprint() in root_entity_thumbprints
+        except Exception:
+            return False
 
     def eligible(item: _ParsedCandidate) -> bool:
         event = item.event
@@ -334,7 +352,7 @@ def _select_anchored(
     # With no candidate, one pass still applies the malformed-genesis checks.
     for genesis in candidates or [-1]:
         selected = yield from _select_lifecycle(
-            parsed, domain, trial_opts, genesis, anchor.matches,
+            parsed, domain, trial_opts, genesis, genesis_entity_ok,
             migration_results, migration_entries,
         )
         if not selected:
