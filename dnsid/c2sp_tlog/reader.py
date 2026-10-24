@@ -22,6 +22,7 @@ from ..models import (
     JWK,
     AnyLogEvent,
     DomainLog,
+    EntityKeyRotationEvent,
     IssuanceEvent,
     KeyRotationEvent,
     LogEvent,
@@ -79,6 +80,7 @@ from .stream_verifier import (
     MigrationVerificationResult,
     StreamVerifierOptions,
     VerifiedLifecycleEvent,
+    _EntityKeyAnchor,
     _verify_stream_lifecycle_steps,
     verify_occurrence,
 )
@@ -147,6 +149,8 @@ class _MigrationBudget:
 class _MigrationContext:
     budget: _MigrationBudget
     depth: int = 0
+    # Exact bytes of each MIGRATION genesis handed to the predecessor resolver.
+    entries: dict[int, bytes] = field(default_factory=dict)
 
 
 @dataclass
@@ -158,7 +162,8 @@ class C2spTlogReaderOptions:
     errors (a testnet deployment typically routes it through the testnet DNS
     and CA).  *proofs* pre-supplies TlogProofV1 inclusion proofs keyed by
     entry index (as a string).  *entity_key* is the trusted entity key that
-    anchors lifecycle verification (identity pinning).  *max_clock_skew_ms*
+    anchors lifecycle verification (identity pinning): the verified history
+    must end with it as the current entity key.  *max_clock_skew_ms*
     is the tolerated clock skew for checkpoint/cosignature timestamps.
     *checkpoint_freshness_ms* bounds checkpoint staleness for non-revocation.
     *max_tree_size* is an upper bound on the accepted tree size (resource
@@ -208,11 +213,18 @@ class C2spTlogReaderOptions:
 
 @dataclass
 class BilateralBindingResult:
-    """Outcome of verify_bilateral_binding: the logged initial anchors."""
+    """Outcome of verify_bilateral_binding: the logged initial anchors.
+
+    *initial_entity_thumbprint* is the ISSUANCE entity key;
+    *current_entity_thumbprint* is the entity key current at the end of the
+    verified history (equal to the initial one unless an
+    ENTITY_KEY_ROTATION occurred) and is the key the record's ``ek`` matched.
+    """
 
     initial_operational_thumbprint: str
     initial_entity_thumbprint: str
     timestamp: datetime.datetime
+    current_entity_thumbprint: str = ""
 
 
 @dataclass
@@ -299,9 +311,10 @@ class C2spTlogReader(LogReader):
       ISSUANCE (or verified MIGRATION genesis) establishing the entity and
       operational keys, followed by rotations and entity-signed lifecycle
       events, with logical-event hash chaining in every scope.
-    * Bilateral ISSUANCE binding — the record's ek/ku anchors must match the
-      logged entity and operational keys, both signatures verified
-      (:meth:`verify_bilateral_binding`).
+    * Bilateral ISSUANCE binding — the record's ek must be the entity key
+      current at the end of the verified history (the ISSUANCE key unless an
+      ENTITY_KEY_ROTATION replaced it) and its ku must be recorded in the
+      lifecycle, all signatures verified (:meth:`verify_bilateral_binding`).
     * Operational continuity — the current operational key must descend from
       the logged initial operational key through recorded rotations.
     * Non-termination — no REVOCATION or RETIREMENT event for the domain, under a
@@ -509,9 +522,11 @@ class C2spTlogReader(LogReader):
 
         Loads the complete verified history anchored on *entity_key* (which
         becomes this reader's trusted entity key for later calls), and checks
-        that the ISSUANCE matches the record's domain and governance ID, its
-        entity key matches the current ek anchor, and the current operational
-        key is recorded in the lifecycle (initial or via rotation).
+        that the ISSUANCE matches the record's domain and governance ID, the
+        entity key current at the end of the history (the ISSUANCE key unless
+        an ENTITY_KEY_ROTATION replaced it) matches the record's ek, and the
+        current operational key is recorded in the lifecycle (initial or via
+        rotation).
         """
         domain = getattr(record, "identity_fqdn", "") or getattr(record, "domain", "")
         if not domain:
@@ -523,7 +538,7 @@ class C2spTlogReader(LogReader):
         self, record: object, entity_key: JWK, operational_key: JWK,
         domain: str, verified: _VerifiedHistory,
     ) -> BilateralBindingResult:
-        initial_entity_thumbprint = entity_key.thumbprint()
+        record_entity_thumbprint = entity_key.thumbprint()
         snapshot = DomainLog(domain, list(verified.events)).snapshot_at(
             max(event.timestamp for event in verified.events)
         )
@@ -544,8 +559,11 @@ class C2spTlogReader(LogReader):
             raise _log_error(
                 "ISSUANCE does not match current domain and governance ID"
             )
-        if issuance.entity_key.thumbprint() != initial_entity_thumbprint:
-            raise _log_error("ISSUANCE entity key does not match current ek key")
+        current_entity = snapshot.entity_key
+        if current_entity is None or current_entity.thumbprint() != record_entity_thumbprint:
+            raise _log_error(
+                f"c2sp-tlog current entity key does not match record ek for {domain}"
+            )
         current_operational_thumbprint = operational_key.thumbprint()
         recorded = any(
             (
@@ -565,8 +583,9 @@ class C2spTlogReader(LogReader):
             )
         return BilateralBindingResult(
             initial_operational_thumbprint=issuance.operational_key.thumbprint(),
-            initial_entity_thumbprint=initial_entity_thumbprint,
+            initial_entity_thumbprint=issuance.entity_key.thumbprint(),
             timestamp=issuance.timestamp,
+            current_entity_thumbprint=record_entity_thumbprint,
         )
 
     @_verification_boundary
@@ -687,10 +706,11 @@ class C2spTlogReader(LogReader):
         self._enforce_append_only_consistency(evidence, witness_time)
         history = run_verification(
             self._scan_history_steps(
-                evidence, event.domain, entity_key, context, None, witness_time,
+                evidence, event.domain, _EntityKeyAnchor(key=entity_key), context, None,
+                witness_time,
             ),
             lambda migration: self._verify_prior_history(
-                migration, event.domain, entity_key, context,
+                migration, event.domain, _EntityKeyAnchor(key=entity_key), context,
             ),
         )
         return verify_occurrence(
@@ -915,14 +935,16 @@ class C2spTlogReader(LogReader):
             witness_time = await async_run_blocking(self._prepare_scan, evidence, context)
             await async_run_blocking(self._enforce_append_only_consistency, evidence, witness_time)
 
+            anchor = _EntityKeyAnchor(key=entity_key)
+
             async def resolve(migration: MigrationEvent) -> MigrationVerificationResult:
                 return await self._async_verify_prior_history(
-                    migration, event.domain, entity_key, context,
+                    migration, event.domain, anchor, context,
                 )
 
             history = await async_run_verification(
                 self._scan_history_steps(
-                    evidence, event.domain, entity_key, context, None, witness_time,
+                    evidence, event.domain, anchor, context, None, witness_time,
                 ), resolve,
             )
         return (await async_run_blocking(
@@ -952,16 +974,14 @@ class C2spTlogReader(LogReader):
     def _load_complete_history(
         self,
         domain: str,
-        entity_key: JWK | None = None,
+        entity_key: JWK | _EntityKeyAnchor | None = None,
         *,
         require_fresh: bool = False,
         cutoff_index: int | None = None,
         migration_context: _MigrationContext | None = None,
     ) -> _VerifiedHistory:
-        trusted = entity_key or self._options.entity_key or self._trusted_entity_key
-        if trusted is None:
-            raise _log_error("C2SP lifecycle verification requires a trusted entity key")
-        cache_key = (domain, trusted.thumbprint())
+        trusted = self._anchor(entity_key)
+        cache_key = (domain, trusted.cache_id())
         use_cache = cutoff_index is None and migration_context is None
         cached = self._cached_history(cache_key, require_fresh) if use_cache else None
         if cached is not None:
@@ -980,6 +1000,7 @@ class C2spTlogReader(LogReader):
                 verify_migration,
                 cutoff_index=cutoff_index,
                 account_response=context.budget.add_response,
+                migration_entries=context.entries,
             )
             if bundle is not None:
                 result = self._bundle_history(bundle, domain, cutoff_index, context)
@@ -1003,16 +1024,14 @@ class C2spTlogReader(LogReader):
     async def _async_load_complete_history(
         self,
         domain: str,
-        entity_key: JWK | None = None,
+        entity_key: JWK | _EntityKeyAnchor | None = None,
         *,
         require_fresh: bool = False,
         cutoff_index: int | None = None,
         migration_context: _MigrationContext | None = None,
     ) -> _VerifiedHistory:
-        trusted = entity_key or self._options.entity_key or self._trusted_entity_key
-        if trusted is None:
-            raise _log_error("C2SP lifecycle verification requires a trusted entity key")
-        cache_key = (domain, trusted.thumbprint())
+        trusted = self._anchor(entity_key)
+        cache_key = (domain, trusted.cache_id())
         use_cache = cutoff_index is None and migration_context is None
         cached = self._cached_history(cache_key, require_fresh) if use_cache else None
         if cached is not None:
@@ -1028,6 +1047,7 @@ class C2spTlogReader(LogReader):
             bundle = await self._source.async_load_verified_bundle(
                 self.parsed, domain, trusted, verify_migration,
                 cutoff_index=cutoff_index, account_response=context.budget.add_response,
+                migration_entries=context.entries,
             )
             if bundle is not None:
                 result = await async_run_blocking(
@@ -1048,6 +1068,14 @@ class C2spTlogReader(LogReader):
         if use_cache:
             self._history_cache[cache_key] = result
         return result
+
+    def _anchor(self, entity_key: JWK | _EntityKeyAnchor | None) -> _EntityKeyAnchor:
+        if isinstance(entity_key, _EntityKeyAnchor):
+            return entity_key
+        trusted = entity_key or self._options.entity_key or self._trusted_entity_key
+        if trusted is None:
+            raise _log_error("C2SP lifecycle verification requires a trusted entity key")
+        return _EntityKeyAnchor(key=trusted)
 
     def _cached_history(
         self, cache_key: tuple[str, str], require_fresh: bool,
@@ -1137,11 +1165,11 @@ class C2spTlogReader(LogReader):
         return policy_result.checkpoint_witness_time
 
     def _scan_history_steps(
-        self, evidence: StreamEvidence, domain: str, trusted: JWK,
+        self, evidence: StreamEvidence, domain: str, trusted: _EntityKeyAnchor,
         context: _MigrationContext, cutoff_index: int | None, witness_time: datetime.datetime,
     ) -> Generator[MigrationEvent, MigrationVerificationResult, _VerifiedHistory]:
         verifier_options = self._verifier_options(
-            self.parsed, trusted, witness_time
+            self.parsed, trusted.key, witness_time
         )
         migration_results: dict[int, MigrationVerificationResult] = {}
         verifier_options.verify_migration = lambda event: migration_results[id(event)]
@@ -1151,6 +1179,7 @@ class C2spTlogReader(LogReader):
             entries = [entry for entry in entries if entry.index <= cutoff_index]
         verified = yield from _verify_stream_lifecycle_steps(
             entries, domain, verifier_options, migration_results=migration_results,
+            migration_entries=context.entries, anchor=trusted,
         )
         self._assert_cutoff(verified, cutoff_index)
         context.budget.add_events(len(verified))
@@ -1174,9 +1203,10 @@ class C2spTlogReader(LogReader):
         self,
         event: MigrationEvent,
         domain: str,
-        trusted: JWK,
+        anchor: _EntityKeyAnchor,
         context: _MigrationContext,
     ) -> MigrationVerificationResult:
+        trusted = _prior_anchor(anchor, context.entries.get(id(event)))
         reader = self._prior_reader(event, context)
         if isinstance(reader, C2spTlogReader):
             cutoff = self._prior_cutoff(event, reader)
@@ -1198,7 +1228,7 @@ class C2spTlogReader(LogReader):
             cutoff_history = reader.rebuild_history_through(
                 domain,
                 event.final_entry_ref,
-                trusted,
+                _external_prior_key(trusted),
                 max_depth=context.budget.limits.max_depth - context.depth,
                 max_events=remaining_events,
                 max_response_bytes=remaining_bytes,
@@ -1210,8 +1240,10 @@ class C2spTlogReader(LogReader):
         return self._prior_result(domain, trusted, prior)
 
     async def _async_verify_prior_history(
-        self, event: MigrationEvent, domain: str, trusted: JWK, context: _MigrationContext,
+        self, event: MigrationEvent, domain: str, anchor: _EntityKeyAnchor,
+        context: _MigrationContext,
     ) -> MigrationVerificationResult:
+        trusted = _prior_anchor(anchor, context.entries.get(id(event)))
         reader = self._prior_reader(event, context)
         if isinstance(reader, C2spTlogReader):
             cutoff = self._prior_cutoff(event, reader)
@@ -1227,7 +1259,8 @@ class C2spTlogReader(LogReader):
                 context.budget.limits.max_response_bytes - context.budget.response_bytes
             )
             history = await call_async(
-                reader, "rebuild_history_through", domain, event.final_entry_ref, trusted,
+                reader, "rebuild_history_through", domain, event.final_entry_ref,
+                _external_prior_key(trusted),
                 max_depth=context.budget.limits.max_depth - context.depth,
                 max_events=remaining_events, max_response_bytes=remaining_bytes,
                 seen_log_references=frozenset(context.budget.seen),
@@ -1324,7 +1357,7 @@ class C2spTlogReader(LogReader):
 
     @staticmethod
     def _prior_result(
-        domain: str, trusted: JWK, prior: _VerifiedHistory,
+        domain: str, trusted: _EntityKeyAnchor, prior: _VerifiedHistory,
     ) -> MigrationVerificationResult:
         snapshot = DomainLog(domain, cast(list[LogEvent], prior.events)).snapshot_at(
             datetime.datetime.max.replace(tzinfo=datetime.UTC)
@@ -1343,13 +1376,16 @@ class C2spTlogReader(LogReader):
                 "MIGRATION previous history must preserve an ACTIVE identity",
                 category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
             )
-        if issuance.entity_key.thumbprint() != trusted.thumbprint():
+        # The MIGRATION imports the entity key current at the end of the prior
+        # history, which must be the key that signed it.
+        end_entity_key = snapshot.entity_key
+        if end_entity_key is None or not trusted.matches(end_entity_key):
             raise C2spTlogVerificationError(
                 "MIGRATION entity-key continuity mismatch",
                 category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
             )
         return MigrationVerificationResult(
-            issuance.entity_key,
+            end_entity_key,
             snapshot.active_key,
             list(prior.events),
             list(prior.event_refs),
@@ -1499,7 +1535,7 @@ class C2spTlogReader(LogReader):
     def _verifier_options(
         self,
         parsed: ParsedC2spTlogLr,
-        signer_key: JWK,
+        signer_key: JWK | None,
         checkpoint_witness_time: datetime.datetime,
     ) -> StreamVerifierOptions:
         return StreamVerifierOptions(
@@ -1538,6 +1574,37 @@ class C2spTlogReader(LogReader):
     @staticmethod
     def _now_ms() -> float:
         return time.time() * 1000
+
+
+def _prior_anchor(anchor: _EntityKeyAnchor, migration_entry: bytes | None) -> _EntityKeyAnchor:
+    """Anchor for the predecessor history behind a MIGRATION genesis.
+
+    The prior history must end with the entity key that signed the MIGRATION.
+    When the trusted key itself signed it, keep anchoring on that key (the
+    behaviour without entity-key rotation); otherwise anchor on the
+    MIGRATION's own entity signature.
+    """
+    if migration_entry is None:
+        if anchor.key is None:
+            raise C2spTlogVerificationError(
+                "MIGRATION entry bytes are required for predecessor verification",
+                category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
+            )
+        return anchor
+    signer = _EntityKeyAnchor.for_migration_entry(migration_entry)
+    if anchor.key is not None and signer.matches(anchor.key):
+        return anchor
+    return signer
+
+
+def _external_prior_key(anchor: _EntityKeyAnchor) -> JWK:
+    """Trusted key handed to a non-c2sp-tlog predecessor reader."""
+    if anchor.key is None:
+        raise C2spTlogVerificationError(
+            "MIGRATION from a non-c2sp-tlog log must be signed by the trusted entity key",
+            category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
+        )
+    return anchor.key
 
 
 def _event_ref(lr: str, index: int) -> str:
@@ -1609,14 +1676,9 @@ def _stitch_migration_history(
             "MIGRATION prior-log history does not establish the recovered active key",
             C2spLifecycleErrorCategory.INVALID_MIGRATION,
         )
-    prior_issuance = next(
-        (event for event in migration.prior_events if isinstance(event, IssuanceEvent)),
-        None,
-    )
     if (
-        prior_issuance is None
-        or prior_issuance.entity_key is None
-        or prior_issuance.entity_key.thumbprint() != migration.entity_key.thumbprint()
+        prior_snapshot.entity_key is None
+        or prior_snapshot.entity_key.thumbprint() != migration.entity_key.thumbprint()
     ):
         raise _log_error(
             "MIGRATION prior-log history does not establish the recovered entity key",
@@ -1637,6 +1699,7 @@ def _as_any_event(event: LogEvent) -> AnyLogEvent:
         (
             IssuanceEvent,
             KeyRotationEvent,
+            EntityKeyRotationEvent,
             RevocationEvent,
             RetirementEvent,
             MigrationEvent,

@@ -39,12 +39,16 @@ class C2spSignerRole(enum.Enum):
 
     The first three reuse their shared DNSid meanings; NEW_OPERATIONAL is
     owned by this binding and is only the KEY_ROTATION proof of possession.
+    PREVIOUS_ENTITY (the current entity key's authorization) and NEW_ENTITY
+    (the new entity key's proof of possession) sign an ENTITY_KEY_ROTATION.
     """
 
     ENTITY = "Entity"
     OPERATIONAL_COUNTERSIGNATURE = "OperationalCountersignature"
     PREVIOUS_OPERATIONAL = "PreviousOperational"
     NEW_OPERATIONAL = "NewOperational"
+    PREVIOUS_ENTITY = "PreviousEntity"
+    NEW_ENTITY = "NewEntity"
 
 
 _ROLE_TO_SIGNATURE: dict[C2spSignerRole, str] = {
@@ -52,6 +56,8 @@ _ROLE_TO_SIGNATURE: dict[C2spSignerRole, str] = {
     C2spSignerRole.OPERATIONAL_COUNTERSIGNATURE: "op",
     C2spSignerRole.PREVIOUS_OPERATIONAL: "prev_op",
     C2spSignerRole.NEW_OPERATIONAL: "new_op",
+    C2spSignerRole.PREVIOUS_ENTITY: "prev_ae",
+    C2spSignerRole.NEW_ENTITY: "new_ae",
 }
 _SIGNATURE_TO_ROLE: dict[str, C2spSignerRole] = {
     v: k for k, v in _ROLE_TO_SIGNATURE.items()
@@ -82,7 +88,8 @@ class C2spVerificationContext:
     of a split ISSUANCE) supplies what it expects the envelope to authorize —
     its own ``fqdn``/``gi``/``operational_key`` and, when known, the trusted
     ``entity_key`` — so a malicious preparer cannot obtain a signature for
-    an unexpected identity. ``new_lr`` pins a MIGRATION destination. Only
+    an unexpected identity. For an ENTITY_KEY_ROTATION, ``entity_key`` is the
+    current (previous) entity key. ``new_lr`` pins a MIGRATION destination. Only
     ISSUANCE carries ``gi``; other events require independent trusted chain
     validation to bind them to a governance identity.
     """
@@ -205,7 +212,10 @@ def sign_prepared_event(
             f"{role.value} is not required for {prepared.envelope.get('type')}"
         )
     ctx = context or C2spVerificationContext()
-    if role is C2spSignerRole.ENTITY and prepared.envelope.get("type") != "ISSUANCE":
+    if (
+        role in (C2spSignerRole.ENTITY, C2spSignerRole.PREVIOUS_ENTITY)
+        and prepared.envelope.get("type") != "ISSUANCE"
+    ):
         if not ctx.fqdn:
             raise C2spTlogVerificationError(
                 "Entity signing requires the expected fqdn for non-ISSUANCE events"
@@ -539,6 +549,18 @@ def _key_for_role(
         return _as_jwk(envelope.get("ku"), "ku")
     if role is C2spSignerRole.NEW_OPERATIONAL:
         return _as_jwk(envelope.get("new_ku"), "new_ku")
+    if role is C2spSignerRole.NEW_ENTITY:
+        return _as_jwk(envelope.get("new_ek"), "new_ek")
+    if role is C2spSignerRole.PREVIOUS_ENTITY:
+        if context.entity_key is None:
+            raise C2spTlogVerificationError(
+                "PreviousEntity signing requires the trusted current entity key"
+            )
+        if envelope.get("prev_ek_thumb") != context.entity_key.thumbprint():
+            raise C2spTlogVerificationError(
+                "ENTITY_KEY_ROTATION prev_ek_thumb does not match the trusted entity key"
+            )
+        return context.entity_key
     if context.previous_operational_key is not None:
         return context.previous_operational_key
     raise C2spTlogVerificationError(

@@ -1046,6 +1046,32 @@ class KeyRotationEvent(LogEvent):
 
 
 @dataclass
+class EntityKeyRotationEvent(LogEvent):
+    """Rotation to a new accountable-entity record-signing key.
+
+    Establishes entity-key continuity the way KEY_ROTATION does for the
+    operational key: *sig* (with *signing_kid*) is the previous entity key's
+    authorization (the c2sp-tlog ``sigs.prev_ae`` role) and
+    *new_entity_proof* is the new entity key's proof of possession over the
+    same canonical event content (``sigs.new_ae``).  Later lifecycle events
+    and the record's ``ek`` key bind to the new entity key.
+    """
+
+    event_type: ClassVar[EventType] = EventType.ENTITY_KEY_ROTATION
+
+    domain: str = ""
+    previous_entity_kid: str = ""
+    previous_entity_thumbprint: str = ""
+    new_entity_kid: str = ""
+    new_entity_thumbprint: str = ""
+    new_entity_public_key: JWK | None = None
+    new_entity_proof: str = ""
+    timestamp: datetime.datetime = field(
+        default_factory=lambda: datetime.datetime.now(datetime.UTC)
+    )
+
+
+@dataclass
 class RevocationEvent(LogEvent):
     """Permanent, forced termination."""
 
@@ -1104,6 +1130,7 @@ class DelegationEvent(LogEvent):
 AnyLogEvent = (
     IssuanceEvent
     | KeyRotationEvent
+    | EntityKeyRotationEvent
     | RevocationEvent
     | RetirementEvent
     | MigrationEvent
@@ -1291,6 +1318,9 @@ class DomainSnapshot:
     governance_id: str
     snapshot_at: datetime.datetime
     events: list[LogEvent]
+    #: Accountable-entity key current at the snapshot boundary: the ISSUANCE
+    #: key until an ENTITY_KEY_ROTATION installs a successor.
+    entity_key: JWK | None = None
 
 
 @dataclass
@@ -1423,6 +1453,24 @@ class DomainLog:
                 active_key = event.new_public_key
                 active_key_thumbprint = event.new_thumbprint
                 key_bound_at = event.timestamp
+            elif isinstance(event, EntityKeyRotationEvent):
+                if (
+                    active_key is None
+                    or entity_key is None
+                    or event.previous_entity_thumbprint != entity_key.thumbprint()
+                    or event.new_entity_public_key is None
+                    or event.new_entity_thumbprint
+                    != event.new_entity_public_key.thumbprint()
+                    or event.new_entity_thumbprint == entity_key.thumbprint()
+                    or event.new_entity_thumbprint == active_key_thumbprint
+                ):
+                    raise _log_error(
+                        LifecycleErrorCategory.KEY_CONTINUITY,
+                        "ENTITY_KEY_ROTATION does not continue from the active entity key "
+                        f"for {self.domain!r}",
+                        index,
+                    )
+                entity_key = event.new_entity_public_key
             elif isinstance(event, RevocationEvent):
                 if event.reason not in {reason.value for reason in RevocationReason}:
                     raise _log_error(
@@ -1475,6 +1523,7 @@ class DomainLog:
             governance_id=governance_id,
             snapshot_at=at,
             events=events_up_to,
+            entity_key=entity_key,
         )
 
 # ---------------------------------------------------------------------------
