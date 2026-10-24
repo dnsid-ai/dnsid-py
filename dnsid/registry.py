@@ -80,7 +80,7 @@ class LogRegistry:
         """
         from .exceptions import ArgumentError
 
-        if not _METHOD_RE.match(method):
+        if not _METHOD_RE.fullmatch(method):
             raise ArgumentError(f"log method {method!r} must match [a-z][a-z0-9-]*")
         self._factories[method] = factory
 
