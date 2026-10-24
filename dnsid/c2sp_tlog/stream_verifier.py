@@ -293,6 +293,9 @@ def _select_anchored(
 ) -> Generator[MigrationEvent, MigrationVerificationResult, list[VerifiedLifecycleEvent]]:
     """Accept the first genesis whose replayed history ends with the anchor key.
 
+    The first eligible genesis that authenticates decides: if its history ends
+    with a different entity key, the anchor is stale and selection fails.
+
     A genesis is tried only when it could end at the anchor: its own entity
     key satisfies the anchor (for a MIGRATION, it is signed by the anchor
     key), or it is the chain root of an ENTITY_KEY_ROTATION whose new key
@@ -319,8 +322,15 @@ def _select_anchored(
             return _migration_signed_by(_as_candidate(item), anchor.key)
         return bool(anchor.kid) and event.signing_kid == anchor.kid
 
-    candidates = [item.entry.index for item in parsed if eligible(item)]
-    mismatched = 0
+    # One candidate per logical genesis: a later byte copy of an event is the
+    # same event, never a second, shorter history.
+    candidates: list[int] = []
+    seen_genesis: set[str] = set()
+    for item in parsed:
+        if item.identifier in seen_genesis or not eligible(item):
+            continue
+        seen_genesis.add(item.identifier)
+        candidates.append(item.entry.index)
     # With no candidate, one pass still applies the malformed-genesis checks.
     for genesis in candidates or [-1]:
         selected = yield from _select_lifecycle(
@@ -332,8 +342,10 @@ def _select_anchored(
         post_keys = selected[-1].post_keys
         if post_keys is not None and anchor.matches(post_keys[0]):
             return selected
-        mismatched += 1
-    if mismatched == 1:
+        # An eligible genesis authenticated by the anchor key whose history
+        # moved to another entity key is this identity's history: a stale
+        # anchor must not fall back to a later, shorter one (for example a
+        # fresh genesis by a superseded key, which would drop later events).
         raise C2spTlogVerificationError(
             f"c2sp-tlog current entity key does not match record ek for {domain}"
         )

@@ -550,7 +550,15 @@ def _key_for_role(
     if role is C2spSignerRole.NEW_OPERATIONAL:
         return _as_jwk(envelope.get("new_ku"), "new_ku")
     if role is C2spSignerRole.NEW_ENTITY:
-        return _as_jwk(envelope.get("new_ek"), "new_ek")
+        from .event_codec import _as_signing_jwk, _assert_entity_rotation_binding
+
+        new_entity_key = _as_signing_jwk(envelope.get("new_ek"), "new_ek")
+        _assert_entity_rotation_binding(
+            new_entity_key,
+            str(envelope.get("prev_ek_thumb", "")),
+            str(envelope.get("new_ek_thumb", "")),
+        )
+        return new_entity_key
     if role is C2spSignerRole.PREVIOUS_ENTITY:
         if context.entity_key is None:
             raise C2spTlogVerificationError(

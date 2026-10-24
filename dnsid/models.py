@@ -1458,7 +1458,15 @@ class DomainLog:
                     active_key is None
                     or entity_key is None
                     or event.previous_entity_thumbprint != entity_key.thumbprint()
-                    or event.new_entity_public_key is None
+                ):
+                    raise _log_error(
+                        LifecycleErrorCategory.KEY_CONTINUITY,
+                        "ENTITY_KEY_ROTATION does not continue from the active entity key "
+                        f"for {self.domain!r}",
+                        index,
+                    )
+                if (
+                    event.new_entity_public_key is None
                     or event.new_entity_thumbprint
                     != event.new_entity_public_key.thumbprint()
                     or event.new_entity_thumbprint == entity_key.thumbprint()
@@ -1466,7 +1474,7 @@ class DomainLog:
                 ):
                     raise _log_error(
                         LifecycleErrorCategory.KEY_CONTINUITY,
-                        "ENTITY_KEY_ROTATION does not continue from the active entity key "
+                        "ENTITY_KEY_ROTATION new key binding is invalid "
                         f"for {self.domain!r}",
                         index,
                     )

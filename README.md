@@ -598,6 +598,7 @@ non-revocation is operation policy, not part of `verify_domain`: callers
 gating high-value or irreversible operations should call
 `result.log_reader.verify_non_revocation(domain, at)` themselves (liveness is
 otherwise covered by the `su` status check).
+
 ### Entity-key continuity (`ENTITY_KEY_ROTATION`)
 
 A registry that custodies an accountable-entity key can rotate it without

@@ -611,6 +611,86 @@ def test_forged_genesis_claiming_the_record_key_is_not_replayed(keys, monkeypatc
     assert trials == [5]
 
 
+def test_stale_record_key_cannot_select_a_copied_genesis(keys):
+    stream = _Stream()
+    genesis = stream.issuance(keys.e1, keys.o1)
+    stream.entity_rotation(keys.e2)
+    stream.terminal("REVOCATION")
+    entries = [*stream.entries, genesis]
+    with pytest.raises(C2spTlogVerificationError, match="does not match record ek"):
+        _verify(entries, keys.e1.jwk)
+    selected = _verify(entries, keys.e2.jwk)
+    assert _types(selected) == ["ISSUANCE", "ENTITY_KEY_ROTATION", "REVOCATION"]
+
+
+def test_superseded_key_cannot_start_a_fresh_history_under_a_stale_record(keys):
+    stream = _Stream()
+    stream.issuance(keys.e1, keys.o1)
+    stream.entity_rotation(keys.e2)
+    stream.terminal("REVOCATION")
+    fresh = _Stream()
+    fresh.ts = stream.ts
+    entries = [*stream.entries, fresh.issuance(keys.e1, keys.o1)]
+    with pytest.raises(C2spTlogVerificationError, match="does not match record ek"):
+        _verify(entries, keys.e1.jwk)
+    assert _types(_verify(entries, keys.e2.jwk))[-1] == "REVOCATION"
+
+
+def test_delegation_binds_to_the_rotated_entity_key(keys):
+    stream = _Stream()
+    stream.issuance(keys.e1, keys.o1)
+    stream.entity_rotation(keys.e2)
+
+    def delegation(signer: _Signer, apply: bool) -> bytes:
+        obj = stream._payload("DELEGATION", dict(
+            delegatee="helper.example", scope="read", expiry=stream.ts + 3600,
+        ))
+        return stream._emit(obj, {"ae": signer}, apply, stream.state)
+
+    delegation(keys.e1, False)
+    assert _types(_verify(stream.entries, keys.e2.jwk)) == ["ISSUANCE", "ENTITY_KEY_ROTATION"]
+    delegation(keys.e2, True)
+    assert _types(_verify(stream.entries, keys.e2.jwk))[-1] == "DELEGATION"
+
+
+def test_rotating_back_to_an_earlier_entity_key(keys):
+    stream = _Stream()
+    stream.issuance(keys.e1, keys.o1)
+    stream.entity_rotation(keys.e2)
+    stream.entity_rotation(keys.e1)
+    selected = _verify(stream.entries, keys.e1.jwk)
+    assert _types(selected) == ["ISSUANCE", "ENTITY_KEY_ROTATION", "ENTITY_KEY_ROTATION"]
+    with pytest.raises(C2spTlogVerificationError, match="does not match record ek"):
+        _verify(stream.entries, keys.e2.jwk)
+
+
+def test_entity_keys_may_share_a_kid(keys):
+    shared = replace(_key("entity-1"), kid=keys.e1.kid)
+    shared.jwk = jwk_from_dict(ed25519_public_jwk_dict(shared.private, keys.e1.kid))
+    stream = _Stream()
+    stream.issuance(keys.e1, keys.o1)
+    stream.entity_rotation(shared)
+    stream.terminal("RETIREMENT", signer=keys.e1, apply=False)
+    selected = _verify(stream.entries, shared.jwk)
+    assert _types(selected) == ["ISSUANCE", "ENTITY_KEY_ROTATION"]
+    stream.terminal("RETIREMENT")
+    assert _types(_verify(stream.entries, shared.jwk))[-1] == "RETIREMENT"
+
+
+def test_prepared_new_entity_signing_rejects_a_malformed_new_ek(keys):
+    stream = _Stream()
+    genesis = stream.issuance(keys.e1, keys.o1)
+    chain = C2spChain(sequence=1, previous_event_id=c2sp_event_id(genesis),
+                      previous_state_hash=state_hash(stream.state))
+    prepared = prepare_event(_rotation_event(keys), LR, chain)
+    prepared.envelope["new_ek_thumb"] = prepared.envelope["prev_ek_thumb"][::-1]
+    prepared = replace(prepared, signed_bytes=canonical_bytes(
+        {k: v for k, v in prepared.envelope.items() if k != "sigs"}
+    ))
+    with pytest.raises(C2spTlogParseError, match="new_ek_thumb"):
+        sign_prepared_event(prepared, C2spSignerRole.NEW_ENTITY, _provider(keys.e2))
+
+
 # ---------------------------------------------------------------------------
 # Regression: streams without ENTITY_KEY_ROTATION behave as before
 # ---------------------------------------------------------------------------
@@ -650,11 +730,11 @@ def test_domain_log_tracks_the_current_entity_key(keys):
     before = DomainLog(DOMAIN, events).snapshot_at(events[0].timestamp)
     assert before.entity_key.thumbprint() == keys.e1.jwk.thumbprint()
     broken = replace(events[1], previous_entity_thumbprint=keys.e3.jwk.thumbprint())
-    with pytest.raises(LifecycleVerificationError, match="ENTITY_KEY_ROTATION"):
+    with pytest.raises(LifecycleVerificationError, match="does not continue"):
         DomainLog(DOMAIN, [events[0], broken]).snapshot_at(end)
     to_operational = replace(events[1], new_entity_public_key=keys.o1.jwk,
                              new_entity_thumbprint=keys.o1.jwk.thumbprint())
-    with pytest.raises(LifecycleVerificationError, match="ENTITY_KEY_ROTATION"):
+    with pytest.raises(LifecycleVerificationError, match="new key binding is invalid"):
         DomainLog(DOMAIN, [events[0], to_operational]).snapshot_at(end)
 
 
