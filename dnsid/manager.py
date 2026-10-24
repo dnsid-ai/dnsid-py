@@ -79,6 +79,7 @@ from .models import (
     DnsidConfig,
     DnsIdTxtRecord,
     DomainLog,
+    EntityKeyRotationEvent,
     IdentityConfig,
     KeyRotationEvent,
     KeyRotationResult,
@@ -351,11 +352,14 @@ class IdentityManager:
         * ISSUANCE — Entity and OperationalCountersignature
         * KEY_ROTATION — PreviousOperational (signs by kid via
           KeyProvider.sign_key)
+        * ENTITY_KEY_ROTATION — PreviousEntity then NewEntity (both sign by
+          kid via the entity KeyProvider.sign_key)
         * all other lifecycle events — Entity
 
-        Entity signatures require deps.entity_key_provider; the other roles
-        use the agent key_provider.  Concrete bindings enforce any
-        method-owned additions without weakening these profile requirements.
+        Entity, PreviousEntity, and NewEntity signatures require
+        deps.entity_key_provider; the other roles use the agent key_provider.
+        Concrete bindings enforce any method-owned additions without weakening
+        these profile requirements.
 
         Args:
             event: The lifecycle log event to inspect.
@@ -369,9 +373,10 @@ class IdentityManager:
     def sign_event(self, event: LogEvent, role: LogSignerRole) -> LogEvent:
         """Add the signature for one role using this manager's matching provider.
 
-        Entity signatures come from deps.entity_key_provider; Operational,
-        OperationalCountersignature, and PreviousOperational signatures come
-        from the agent key_provider.  Does not write to the log.
+        Entity, PreviousEntity, and NewEntity signatures come from
+        deps.entity_key_provider; Operational, OperationalCountersignature,
+        and PreviousOperational signatures come from the agent key_provider.
+        Does not write to the log.
 
         Args:
             event: The lifecycle log event to sign; mutated in place.
@@ -386,10 +391,12 @@ class IdentityManager:
                 available for config.identity.log_ref.
         """
         self._require_local_identity("sign_event")
-        if role is LogSignerRole.ENTITY:
+        if role in _ENTITY_SIGNER_ROLES:
             provider = self._entity_key_provider
             if provider is None:
-                raise ArgumentError("signing an Entity role requires deps.entity_key_provider")
+                raise ArgumentError(
+                    f"signing an {role.value} role requires deps.entity_key_provider"
+                )
         else:
             provider = self._require_operational_key_provider("sign_event")
         binding = self._local_log_binding
@@ -457,7 +464,7 @@ class IdentityManager:
         return self.write_signed_event(event)
 
     def _configured_for_role(self, role: LogSignerRole) -> bool:
-        if role is LogSignerRole.ENTITY:
+        if role in _ENTITY_SIGNER_ROLES:
             return self._entity_key_provider is not None
         return self._key_provider is not None
 
@@ -2644,10 +2651,21 @@ def sign_event_with_provider(
 
     Raises:
         ArgumentError: If PreviousOperational signing is requested for an
-            event that is not a KEY_ROTATION event with previous_kid set.
+            event that is not a KEY_ROTATION event with previous_kid set, or
+            PreviousEntity/NewEntity signing for an event that is not an
+            ENTITY_KEY_ROTATION with the corresponding kid set.
     """
     from ._utils import b64url_encode
 
+    if role in (LogSignerRole.PREVIOUS_ENTITY, LogSignerRole.NEW_ENTITY):
+        kid_field = "previous_entity_kid" if role is LogSignerRole.PREVIOUS_ENTITY else (
+            "new_entity_kid"
+        )
+        if not isinstance(event, EntityKeyRotationEvent) or not getattr(event, kid_field):
+            raise ArgumentError(
+                f"{role.value} signing requires an ENTITY_KEY_ROTATION event with "
+                f"{kid_field} set"
+            )
     canonical = log_binding.canonical(event)
     if role is LogSignerRole.PREVIOUS_OPERATIONAL:
         if not isinstance(event, KeyRotationEvent) or not event.previous_kid:
@@ -2656,6 +2674,15 @@ def sign_event_with_provider(
             )
         event.signing_kid = event.previous_kid
         event.sig = b64url_encode(key_provider.sign_key(event.previous_kid, canonical))
+    elif role is LogSignerRole.PREVIOUS_ENTITY:
+        assert isinstance(event, EntityKeyRotationEvent)
+        event.signing_kid = event.previous_entity_kid
+        event.sig = b64url_encode(key_provider.sign_key(event.previous_entity_kid, canonical))
+    elif role is LogSignerRole.NEW_ENTITY:
+        assert isinstance(event, EntityKeyRotationEvent)
+        event.new_entity_proof = b64url_encode(
+            key_provider.sign_key(event.new_entity_kid, canonical)
+        )
     elif role is LogSignerRole.OPERATIONAL_COUNTERSIGNATURE:
         event.operational_countersig = b64url_encode(key_provider.sign(canonical))
     else:  # ENTITY or OPERATIONAL — primary sig slot, current active key
@@ -2693,12 +2720,21 @@ def _required_log_signatures(event: LogEvent) -> list[LogSignerRole]:
         return [LogSignerRole.ENTITY, LogSignerRole.OPERATIONAL_COUNTERSIGNATURE]
     if event_type == EventType.KEY_ROTATION:
         return [LogSignerRole.PREVIOUS_OPERATIONAL]
+    if event_type == EventType.ENTITY_KEY_ROTATION:
+        return [LogSignerRole.PREVIOUS_ENTITY, LogSignerRole.NEW_ENTITY]
     return [LogSignerRole.ENTITY]
+
+
+_ENTITY_SIGNER_ROLES = frozenset(
+    {LogSignerRole.ENTITY, LogSignerRole.PREVIOUS_ENTITY, LogSignerRole.NEW_ENTITY}
+)
 
 
 def _role_signature_missing(event: LogEvent, role: LogSignerRole) -> bool:
     if role is LogSignerRole.OPERATIONAL_COUNTERSIGNATURE:
         return not event.operational_countersig
+    if role is LogSignerRole.NEW_ENTITY:
+        return not isinstance(event, EntityKeyRotationEvent) or not event.new_entity_proof
     return not event.sig
 
 

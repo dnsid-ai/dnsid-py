@@ -257,6 +257,8 @@ Lifecycle signer roles for c2sp-tlog envelopes.
 
 The first three reuse their shared DNSid meanings; NEW_OPERATIONAL is
 owned by this binding and is only the KEY_ROTATION proof of possession.
+PREVIOUS_ENTITY (the current entity key's authorization) and NEW_ENTITY
+(the new entity key's proof of possession) sign an ENTITY_KEY_ROTATION.
 
 **Members:**
 
@@ -264,6 +266,8 @@ owned by this binding and is only the KEY_ROTATION proof of possession.
 - `OPERATIONAL_COUNTERSIGNATURE` = `'OperationalCountersignature'`
 - `PREVIOUS_OPERATIONAL` = `'PreviousOperational'`
 - `NEW_OPERATIONAL` = `'NewOperational'`
+- `PREVIOUS_ENTITY` = `'PreviousEntity'`
+- `NEW_ENTITY` = `'NewEntity'`
 
 ## `C2spStreamBundleVerifierOptions`
 
@@ -359,9 +363,10 @@ checks verify_domain requires:
   ISSUANCE (or verified MIGRATION genesis) establishing the entity and
   operational keys, followed by rotations and entity-signed lifecycle
   events, with logical-event hash chaining in every scope.
-* Bilateral ISSUANCE binding — the record's ek/ku anchors must match the
-  logged entity and operational keys, both signatures verified
-  (`verify_bilateral_binding`).
+* Bilateral ISSUANCE binding — the record's ek must be the entity key
+  current at the end of the verified history (the ISSUANCE key unless an
+  ENTITY_KEY_ROTATION replaced it) and its ku must be recorded in the
+  lifecycle, all signatures verified (`verify_bilateral_binding`).
 * Operational continuity — the current operational key must descend from
   the logged initial operational key through recorded rotations.
 * Non-termination — no REVOCATION or RETIREMENT event for the domain, under a
@@ -434,9 +439,11 @@ Verify the record's ek/ku anchors against the logged lifecycle.
 
 Loads the complete verified history anchored on *entity_key* (which
 becomes this reader's trusted entity key for later calls), and checks
-that the ISSUANCE matches the record's domain and governance ID, its
-entity key matches the current ek anchor, and the current operational
-key is recorded in the lifecycle (initial or via rotation).
+that the ISSUANCE matches the record's domain and governance ID, the
+entity key current at the end of the history (the ISSUANCE key unless
+an ENTITY_KEY_ROTATION replaced it) matches the record's ek, and the
+current operational key is recorded in the lifecycle (initial or via
+rotation).
 
 ### `verify_operational_continuity`
 
@@ -585,7 +592,8 @@ witness keys, quorum).  *transport* fetches URLs and must raise on HTTP
 errors (a testnet deployment typically routes it through the testnet DNS
 and CA).  *proofs* pre-supplies TlogProofV1 inclusion proofs keyed by
 entry index (as a string).  *entity_key* is the trusted entity key that
-anchors lifecycle verification (identity pinning).  *max_clock_skew_ms*
+anchors lifecycle verification (identity pinning): the verified history
+must end with it as the current entity key.  *max_clock_skew_ms*
 is the tolerated clock skew for checkpoint/cosignature timestamps.
 *checkpoint_freshness_ms* bounds checkpoint staleness for non-revocation.
 *max_tree_size* is an upper bound on the accepted tree size (resource
@@ -764,7 +772,8 @@ A process that countersigns a prepared event (notably the operational side
 of a split ISSUANCE) supplies what it expects the envelope to authorize —
 its own ``fqdn``/``gi``/``operational_key`` and, when known, the trusted
 ``entity_key`` — so a malicious preparer cannot obtain a signature for
-an unexpected identity. ``new_lr`` pins a MIGRATION destination. Only
+an unexpected identity. For an ENTITY_KEY_ROTATION, ``entity_key`` is the
+current (previous) entity key. ``new_lr`` pins a MIGRATION destination. Only
 ISSUANCE carries ``gi``; other events require independent trusted chain
 validation to bind them to a governance identity.
 
@@ -929,8 +938,11 @@ from dnsid.c2sp_tlog import MigrationVerificationResult
 
 Prior state for the advanced low-level lifecycle-selection callback.
 
-Standard readers do not accept caller-constructed migration results; they
-recover this state through bounded recursive log verification.
+*entity_key* is the entity key current at the end of the verified prior
+history (the prior ISSUANCE key unless an ENTITY_KEY_ROTATION replaced
+it); it must sign the inbound MIGRATION.  Standard readers do not accept
+caller-constructed migration results; they recover this state through
+bounded recursive log verification.
 
 ## `NoteSignature`
 
@@ -1166,6 +1178,9 @@ from dnsid.c2sp_tlog import StreamVerifierOptions
 ```
 
 Options for advanced lifecycle selection over already proven entries.
+
+*signer_key* is the trusted entity key (the record's ``ek``): the selected
+lifecycle must end with it as the current entity key.
 
 ## `TlogProofV1`
 
@@ -1907,6 +1922,9 @@ verify_lifecycle(events: list[VerifiedLifecycleEvent], options: StreamVerifierOp
 ```
 
 Verify that *events* forms one valid, fully signed lifecycle.
+
+With ``options.signer_key`` set, the entity key current at the end of
+*events* must be that key.
 
 ## `verify_logged_event_signature`
 

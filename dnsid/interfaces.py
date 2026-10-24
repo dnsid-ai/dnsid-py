@@ -338,8 +338,10 @@ class LogReader(ABC):
         """Verify the draft 01 bilateral ISSUANCE binding for *record*.
 
         Confirms the logged ISSUANCE (or verified MIGRATION genesis) binds the
-        record's identity to *entity_key* (ek) and an initial operational key,
-        with both authorizing signatures verified.
+        record's identity to an initial operational key, and that *entity_key*
+        (ek) is the entity key current at the end of the verified history (the
+        ISSUANCE key unless an ENTITY_KEY_ROTATION replaced it), with every
+        authorizing signature verified.
 
         Returns:
             A binding object exposing at least ``initial_operational_thumbprint``.

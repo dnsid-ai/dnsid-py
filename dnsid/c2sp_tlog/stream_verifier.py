@@ -4,6 +4,12 @@ Given every entry of a stream, selects the entries that form a valid signed
 lifecycle for one domain: an ISSUANCE (or verified MIGRATION genesis)
 establishing the entity and operational keys, followed by rotations and
 entity-signed lifecycle events, with logical-event chaining in every scope.
+
+A reader that trusts an entity key (the DNS record's ``ek``) anchors selection
+on the entity key current at the *end* of the selected history: genesis
+candidates are replayed in log order and the first whose history ends with
+that key is accepted.  Without ENTITY_KEY_ROTATION this selects exactly the
+genesis whose own entity key is the trusted key.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from ..exceptions import VerificationError
 from ..models import (
     JWK,
     AnyLogEvent,
+    EntityKeyRotationEvent,
     IssuanceEvent,
     KeyRotationEvent,
     MigrationEvent,
@@ -59,8 +66,11 @@ class VerifiedLifecycleEvent:
 class MigrationVerificationResult:
     """Prior state for the advanced low-level lifecycle-selection callback.
 
-    Standard readers do not accept caller-constructed migration results; they
-    recover this state through bounded recursive log verification.
+    *entity_key* is the entity key current at the end of the verified prior
+    history (the prior ISSUANCE key unless an ENTITY_KEY_ROTATION replaced
+    it); it must sign the inbound MIGRATION.  Standard readers do not accept
+    caller-constructed migration results; they recover this state through
+    bounded recursive log verification.
     """
 
     entity_key: JWK
@@ -71,7 +81,11 @@ class MigrationVerificationResult:
 
 @dataclass
 class StreamVerifierOptions:
-    """Options for advanced lifecycle selection over already proven entries."""
+    """Options for advanced lifecycle selection over already proven entries.
+
+    *signer_key* is the trusted entity key (the record's ``ek``): the selected
+    lifecycle must end with it as the current entity key.
+    """
 
     context: C2spEventContext | None = None
     unchained: bool = False
@@ -109,8 +123,16 @@ def _verify_stream_lifecycle_steps(
     options: StreamVerifierOptions | None = None,
     *,
     migration_results: dict[int, MigrationVerificationResult] | None = None,
+    migration_entries: dict[int, bytes] | None = None,
+    anchor: _EntityKeyAnchor | None = None,
 ) -> Generator[MigrationEvent, MigrationVerificationResult, list[VerifiedLifecycleEvent]]:
-    """Pause only for authenticated predecessor reads; all validation is shared."""
+    """Pause only for authenticated predecessor reads; all validation is shared.
+
+    *migration_entries* receives the exact entry bytes of every MIGRATION
+    genesis handed to the predecessor resolver, keyed like
+    *migration_results*.  *anchor* overrides ``options.signer_key`` as the
+    end-of-history entity key the selected lifecycle must reach.
+    """
     opts = options or StreamVerifierOptions()
     if (type(opts.max_entries) is not int or opts.max_entries <= 0
             or type(opts.max_entry_bytes) is not int or opts.max_entry_bytes <= 0):
@@ -119,6 +141,8 @@ def _verify_stream_lifecycle_steps(
         raise C2spTlogVerificationError("lifecycle input limit exceeded")
     if migration_results is None:
         migration_results = {}
+    if migration_entries is None:
+        migration_entries = {}
     if opts.verify_migration is not None:
         verify_migration = opts.verify_migration
 
@@ -131,8 +155,105 @@ def _verify_stream_lifecycle_steps(
             return result
 
         opts = replace(opts, verify_migration=memoized_migration)
-    selected: list[VerifiedLifecycleEvent] = []
-    applied: dict[str, VerifiedLifecycleEvent] = {}
+    if anchor is None and opts.signer_key is not None:
+        anchor = _EntityKeyAnchor(key=opts.signer_key)
+    parsed = _parse_candidates(entries, domain, opts)
+    if anchor is None:
+        selected = yield from _select_lifecycle(
+            parsed, domain, opts, None, None, migration_results, migration_entries,
+        )
+    else:
+        selected = yield from _select_anchored(
+            parsed, domain, opts, anchor, migration_results, migration_entries,
+        )
+    verify_lifecycle(selected, opts)
+    if opts.cutoff_index is not None:
+        cutoff_entry = next((e for e in entries if e.index == opts.cutoff_index), None)
+        if cutoff_entry is None:
+            raise C2spTlogVerificationError("missing exact migration cutoff occurrence")
+        occurrence = verify_occurrence(cutoff_entry, selected, opts)
+        if occurrence.event_id != selected[-1].event_id:
+            raise C2spTlogVerificationError("cutoff does not identify final logical event")
+        selected[-1] = replace(selected[-1], index=cutoff_entry.index, data=cutoff_entry.data,
+                               leaf_hash=occurrence.leaf_hash)
+    return selected
+
+
+@dataclass(frozen=True, eq=False)
+class _EntityKeyAnchor:
+    """The entity key a selected lifecycle must hold at the end of its history.
+
+    Either an exact trusted key (the record's ``ek``), or, for a predecessor
+    log behind a MIGRATION, "the key that produced this MIGRATION's ``ae``
+    signature" (kid plus signature over the MIGRATION's signed bytes).
+    """
+
+    key: JWK | None = None
+    kid: str = ""
+    signed_bytes: bytes = b""
+    sig: str = ""
+
+    @classmethod
+    def for_migration_entry(cls, data: bytes) -> _EntityKeyAnchor:
+        """Anchor a predecessor history on the signer of a MIGRATION entry."""
+        try:
+            obj = parse_json_no_duplicate_members(data)
+            signed = signed_c2sp_entry_bytes(data)
+            sigs = obj.get("sigs") if isinstance(obj, dict) else None
+            ae = sigs.get("ae") if isinstance(sigs, dict) else None
+            kid = ae.get("kid") if isinstance(ae, dict) else None
+            sig = ae.get("sig") if isinstance(ae, dict) else None
+        except Exception as exc:
+            raise C2spTlogVerificationError(
+                "MIGRATION entry is malformed",
+                category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
+            ) from exc
+        if not isinstance(kid, str) or not kid or not isinstance(sig, str) or not sig:
+            raise C2spTlogVerificationError(
+                "MIGRATION entry is missing its entity signature",
+                category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
+            )
+        return cls(kid=kid, signed_bytes=signed, sig=sig)
+
+    def matches(self, key: JWK | None) -> bool:
+        """Return whether *key* satisfies this anchor."""
+        if key is None:
+            return False
+        try:
+            if self.key is not None:
+                return key.thumbprint() == self.key.thumbprint()
+            if not self.kid or key.kid != self.kid:
+                return False
+            return key.verify(self.signed_bytes, b64url_decode(self.sig))
+        except Exception:
+            return False
+
+    def cache_id(self) -> str:
+        """Stable identity for history caches."""
+        if self.key is not None:
+            return self.key.thumbprint()
+        return "migration:" + b64url_encode(
+            sha256(self.signed_bytes, self.sig.encode())
+        )
+
+
+@dataclass
+class _ParsedCandidate:
+    entry: IndexedEntry
+    raw: dict[str, Any]
+    signed: bytes
+    identifier: str
+    event: AnyLogEvent | None
+    parse_error: Exception | None
+    chain: dict[str, int | str]
+    chain_error: Exception | None
+
+
+def _parse_candidates(
+    entries: list[IndexedEntry], domain: str, opts: StreamVerifierOptions,
+) -> list[_ParsedCandidate]:
+    """Parse every entry for *domain* once; trials reuse the same event objects."""
+    parsed: list[_ParsedCandidate] = []
     for entry in sorted(entries, key=lambda e: e.index):
         remaining_seconds()
         try:
@@ -144,36 +265,268 @@ def _verify_stream_lifecycle_steps(
             continue
         if obj.get("fqdn") != domain:
             continue
-        previous_copy = applied.get(identifier)
-        if previous_copy is not None:
-            if signed_c2sp_entry_bytes(previous_copy.data) != signed:
-                raise C2spTlogVerificationError("logical event ID collision")
-            continue
+        event: AnyLogEvent | None = None
+        parse_error: Exception | None = None
         try:
             event = parse_c2sp_event_entry(entry.data, opts.context, candidate=True)
         except Exception as exc:
-            if _malformed_authenticated(entry.data, domain, selected, opts):
+            parse_error = exc
+        chain: dict[str, int | str] = {}
+        chain_error: Exception | None = None
+        try:
+            chain = parse_chain_fields(obj)
+        except Exception as exc:
+            chain_error = exc
+        parsed.append(_ParsedCandidate(
+            entry, obj, signed, identifier, event, parse_error, chain, chain_error,
+        ))
+    return parsed
+
+
+def _select_anchored(
+    parsed: list[_ParsedCandidate],
+    domain: str,
+    opts: StreamVerifierOptions,
+    anchor: _EntityKeyAnchor,
+    migration_results: dict[int, MigrationVerificationResult],
+    migration_entries: dict[int, bytes],
+) -> Generator[MigrationEvent, MigrationVerificationResult, list[VerifiedLifecycleEvent]]:
+    """Accept the first genesis whose replayed history ends with the anchor key.
+
+    The first eligible genesis that authenticates decides: if its history ends
+    with a different entity key, the anchor is stale and selection fails.
+
+    A genesis is tried only when it could end at the anchor: its own entity
+    key satisfies the anchor (for a MIGRATION, it is signed by the anchor
+    key), or it is the chain root of an ENTITY_KEY_ROTATION whose new key
+    satisfies the anchor and proved possession of it.  Any other genesis is
+    noise and is skipped unexamined, exactly as a pinned genesis filter skips
+    it; an attacker can only reach the anchor by signing ``new_ae`` with it.
+    """
+    trial_opts = replace(opts, signer_key=None)
+    roots = _anchor_rotation_roots(parsed, anchor)
+    chain_thumbprints, migration_root_signers = _anchor_chain_keys(parsed, anchor)
+
+    def genesis_entity_ok(key: JWK) -> bool:
+        """Entity keys of the eligible chain make a malformed genesis fatal.
+
+        They are the record key, every key an anchor-reaching rotation chain
+        installed or rotated away from (its ISSUANCE root included), and the
+        key that signed a MIGRATION root. Unrelated keys stay noise.
+        """
+        if anchor.matches(key):
+            return True
+        try:
+            if key.thumbprint() in chain_thumbprints:
+                return True
+        except Exception:
+            return False
+        return any(signer.matches(key) for signer in migration_root_signers)
+
+    def eligible(item: _ParsedCandidate) -> bool:
+        event = item.event
+        if event is None or not isinstance(event, (IssuanceEvent, MigrationEvent)):
+            return False
+        if isinstance(event, IssuanceEvent):
+            # Only a self-authenticated ISSUANCE is worth a replay; this keeps
+            # forged candidates from multiplying the selection work.
+            if not (item.identifier in roots or anchor.matches(event.entity_key)):
+                return False
+            return _candidate_is_authenticated(_as_candidate(item), [], trial_opts)
+        if item.identifier in roots:
+            return True
+        if anchor.key is not None:
+            return _migration_signed_by(_as_candidate(item), anchor.key)
+        return bool(anchor.kid) and event.signing_kid == anchor.kid
+
+    # One candidate per logical genesis: a later byte copy of an event is the
+    # same event, never a second, shorter history.
+    candidates: list[int] = []
+    seen_genesis: set[str] = set()
+    for item in parsed:
+        if item.identifier in seen_genesis or not eligible(item):
+            continue
+        seen_genesis.add(item.identifier)
+        candidates.append(item.entry.index)
+    # With no candidate, one pass still applies the malformed-genesis checks.
+    for genesis in candidates or [-1]:
+        selected = yield from _select_lifecycle(
+            parsed, domain, trial_opts, genesis, genesis_entity_ok,
+            migration_results, migration_entries,
+        )
+        if not selected:
+            continue
+        post_keys = selected[-1].post_keys
+        if post_keys is not None and anchor.matches(post_keys[0]):
+            return selected
+        # An eligible genesis authenticated by the anchor key whose history
+        # moved to another entity key is this identity's history: a stale
+        # anchor must not fall back to a later, shorter one (for example a
+        # fresh genesis by a superseded key, which would drop later events).
+        raise C2spTlogVerificationError(
+            f"c2sp-tlog current entity key does not match record ek for {domain}"
+        )
+    return []
+
+
+def _anchor_rotation_roots(
+    parsed: list[_ParsedCandidate], anchor: _EntityKeyAnchor,
+) -> set[str]:
+    """Chain roots of ENTITY_KEY_ROTATIONs that prove possession of an anchor key."""
+    by_id: dict[str, _ParsedCandidate] = {}
+    for item in parsed:
+        if item.event is not None:
+            by_id.setdefault(item.identifier, item)
+    resolved: dict[str, str | None] = {}
+
+    def root_of(item: _ParsedCandidate) -> str | None:
+        path: list[str] = []
+        current = item
+        root: str | None
+        while True:
+            if current.identifier in resolved:
+                root = resolved[current.identifier]
+                break
+            if current.identifier in path:
+                root = None
+                break
+            path.append(current.identifier)
+            previous = current.chain.get("prev_event_id")
+            if not isinstance(previous, str) or not previous:
+                root = current.identifier
+                break
+            predecessor = by_id.get(previous)
+            if predecessor is None:
+                root = None
+                break
+            current = predecessor
+        for identifier in path:
+            resolved[identifier] = root
+        return root
+
+    roots: set[str] = set()
+    for item in parsed:
+        remaining_seconds()
+        event = item.event
+        if not isinstance(event, EntityKeyRotationEvent):
+            continue
+        new_key = event.new_entity_public_key
+        if new_key is None or not anchor.matches(new_key):
+            continue
+        try:
+            proven = bool(event.new_entity_proof) and new_key.verify(
+                item.signed, b64url_decode(event.new_entity_proof)
+            )
+        except Exception:
+            proven = False
+        if not proven:
+            continue
+        root = root_of(item)
+        if root is not None:
+            roots.add(root)
+    return roots
+
+
+def _anchor_chain_keys(
+    parsed: list[_ParsedCandidate], anchor: _EntityKeyAnchor,
+) -> tuple[set[str], list[_EntityKeyAnchor]]:
+    """Entity keys along every anchor-reaching rotation chain.
+
+    Walks back from each ENTITY_KEY_ROTATION that proves possession of an
+    anchor key. The path is fixed by hashes inside bytes the anchor key
+    signed, so only keys the identity holds or has held are collected:
+    every rotated-in key, the ISSUANCE root key, and (as a signature check)
+    the signer of a MIGRATION root.
+    """
+    by_id: dict[str, _ParsedCandidate] = {}
+    for item in parsed:
+        if item.event is not None:
+            by_id.setdefault(item.identifier, item)
+    thumbprints: set[str] = set()
+    migration_signers: list[_EntityKeyAnchor] = []
+    visited: set[str] = set()
+    for item in parsed:
+        remaining_seconds()
+        event = item.event
+        if not isinstance(event, EntityKeyRotationEvent):
+            continue
+        new_key = event.new_entity_public_key
+        if new_key is None or not anchor.matches(new_key):
+            continue
+        try:
+            proven = bool(event.new_entity_proof) and new_key.verify(
+                item.signed, b64url_decode(event.new_entity_proof)
+            )
+        except Exception:
+            proven = False
+        if not proven:
+            continue
+        current: _ParsedCandidate | None = item
+        while current is not None and current.identifier not in visited:
+            visited.add(current.identifier)
+            step = current.event
+            if isinstance(step, EntityKeyRotationEvent) and step.new_entity_public_key:
+                thumbprints.add(step.new_entity_public_key.thumbprint())
+            previous = current.chain.get("prev_event_id")
+            if isinstance(previous, str) and previous:
+                current = by_id.get(previous)
+                continue
+            if isinstance(step, IssuanceEvent) and step.entity_key is not None:
+                thumbprints.add(step.entity_key.thumbprint())
+            elif isinstance(step, MigrationEvent):
+                try:
+                    migration_signers.append(
+                        _EntityKeyAnchor.for_migration_entry(current.entry.data)
+                    )
+                except C2spTlogVerificationError:
+                    pass
+            current = None
+    return thumbprints, migration_signers
+
+
+def _as_candidate(item: _ParsedCandidate) -> VerifiedLifecycleEvent:
+    assert item.event is not None
+    return VerifiedLifecycleEvent(
+        index=item.entry.index,
+        leaf_hash=leaf_hash(item.entry.data),
+        data=item.entry.data,
+        event=item.event,
+        chain=item.chain,
+    )
+
+
+def _select_lifecycle(
+    parsed: list[_ParsedCandidate],
+    domain: str,
+    opts: StreamVerifierOptions,
+    genesis_index: int | None,
+    genesis_entity_ok: Callable[[JWK], bool] | None,
+    migration_results: dict[int, MigrationVerificationResult],
+    migration_entries: dict[int, bytes],
+) -> Generator[MigrationEvent, MigrationVerificationResult, list[VerifiedLifecycleEvent]]:
+    """One greedy selection pass; *genesis_index* (when set) is the only genesis."""
+    selected: list[VerifiedLifecycleEvent] = []
+    applied: dict[str, VerifiedLifecycleEvent] = {}
+    for item in parsed:
+        remaining_seconds()
+        entry = item.entry
+        previous_copy = applied.get(item.identifier)
+        if previous_copy is not None:
+            if signed_c2sp_entry_bytes(previous_copy.data) != item.signed:
+                raise C2spTlogVerificationError("logical event ID collision")
+            continue
+        event = item.event
+        if event is None:
+            if _malformed_authenticated(entry.data, domain, selected, opts, genesis_entity_ok):
                 raise C2spTlogVerificationError(
                     "authenticated lifecycle candidate is malformed",
                     category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
                     failing_candidate_index=entry.index,
-                ) from exc
+                ) from item.parse_error
             continue
         if event.domain != domain:
             continue
-        chain_error: Exception | None = None
-        try:
-            chain = parse_chain_fields(parse_json_no_duplicate_members(entry.data))
-        except Exception as exc:
-            chain = {}
-            chain_error = exc
-        candidate = VerifiedLifecycleEvent(
-            index=entry.index,
-            leaf_hash=leaf_hash(entry.data),
-            data=entry.data,
-            event=event,
-            chain=chain,
-        )
+        candidate = _as_candidate(item)
         if not selected and not isinstance(event, (IssuanceEvent, MigrationEvent)):
             continue
         if not selected and isinstance(event, MigrationEvent) and opts.verify_migration is None:
@@ -182,15 +535,17 @@ def _verify_stream_lifecycle_steps(
                 category=C2spLifecycleErrorCategory.INVALID_MIGRATION,
                 failing_candidate_index=entry.index,
             )
+        if not selected and genesis_index is not None and entry.index != genesis_index:
+            continue
         try:
-            raw = parse_json_no_duplicate_members(entry.data)
-            predecessor = applied.get(str(raw.get("prev_event_id", "")))
+            predecessor = applied.get(str(item.raw.get("prev_event_id", "")))
             authority = selected
             if predecessor is not None:
                 authority = selected[:selected.index(predecessor) + 1]
-            if not selected and isinstance(event, MigrationEvent):
-                if opts.signer_key is None or _migration_signed_by(candidate, opts.signer_key):
-                    migration_results[id(event)] = yield event
+            if (not selected and isinstance(event, MigrationEvent)
+                    and id(event) not in migration_results):
+                migration_entries[id(event)] = entry.data
+                migration_results[id(event)] = yield event
             authenticated = _candidate_is_authenticated(candidate, authority, opts)
         except Exception as exc:
             if not selected and isinstance(event, MigrationEvent):
@@ -202,12 +557,12 @@ def _verify_stream_lifecycle_steps(
             authenticated = False
         if not authenticated:
             continue
-        if chain_error is not None:
+        if item.chain_error is not None:
             raise C2spTlogVerificationError(
                 "authenticated lifecycle candidate has invalid chain fields",
                 category=C2spLifecycleErrorCategory.CHAIN_CONTINUITY,
                 failing_candidate_index=entry.index,
-            ) from chain_error
+            ) from item.chain_error
         if selected and isinstance(event, IssuanceEvent):
             raise C2spTlogVerificationError(
                 "authenticated duplicate ISSUANCE event",
@@ -226,16 +581,6 @@ def _verify_stream_lifecycle_steps(
         selected.append(candidate)
         candidate.post_keys = _applied_keys(selected, opts)
         applied[candidate.event_id] = candidate
-    verify_lifecycle(selected, opts)
-    if opts.cutoff_index is not None:
-        cutoff_entry = next((e for e in entries if e.index == opts.cutoff_index), None)
-        if cutoff_entry is None:
-            raise C2spTlogVerificationError("missing exact migration cutoff occurrence")
-        occurrence = verify_occurrence(cutoff_entry, selected, opts)
-        if occurrence.event_id != selected[-1].event_id:
-            raise C2spTlogVerificationError("cutoff does not identify final logical event")
-        selected[-1] = replace(selected[-1], index=cutoff_entry.index, data=cutoff_entry.data,
-                               leaf_hash=occurrence.leaf_hash)
     return selected
 
 
@@ -264,6 +609,7 @@ def verify_occurrence(
 def _malformed_authenticated(
     data: bytes, domain: str, selected: list[VerifiedLifecycleEvent],
     options: StreamVerifierOptions,
+    genesis_entity_ok: Callable[[JWK], bool] | None = None,
 ) -> bool:
     from .._crypto import jwk_from_dict
     from .event_codec import _validate_public_fields, parse_c2sp_signatures
@@ -280,6 +626,8 @@ def _malformed_authenticated(
             entity, operational = jwk_from_dict(obj["ek"]), jwk_from_dict(obj["ku"])
             if options.signer_key and entity.thumbprint() != options.signer_key.thumbprint():
                 return False
+            if genesis_entity_ok is not None and not genesis_entity_ok(entity):
+                return False
         else:
             predecessor = next(
                 (v for v in selected if v.event_id == obj.get("prev_event_id")), None
@@ -287,15 +635,29 @@ def _malformed_authenticated(
             authority = (selected if predecessor is None
                          else selected[:selected.index(predecessor) + 1])
             entity, operational = _applied_keys(authority, options)
-        keys = {"ae": entity, "prev_op": operational}
+        keys = {"ae": entity, "prev_ae": entity, "prev_op": operational}
         if "op" in signatures:
             if jwk_from_dict(obj["ek"]).thumbprint() != entity.thumbprint():
                 return False
             keys["op"] = jwk_from_dict(obj["ku"])
         if "new_op" in signatures:
             keys["new_op"] = jwk_from_dict(obj["new_ku"])
-        return all(sig.kid == keys[role].kid and keys[role].verify(signed, b64url_decode(sig.sig))
-                   for role, sig in signatures.items())
+        if "new_ae" in signatures:
+            from ..models import _PRIVATE_JWK_MEMBERS
+
+            new_entity = obj["new_ek"]
+            # A private new_ek is never used as a verification key: noise.
+            if not isinstance(new_entity, dict) or _PRIVATE_JWK_MEMBERS & new_entity.keys():
+                return False
+            keys["new_ae"] = jwk_from_dict(new_entity)
+
+        # Every role must name its key: a new_ek without a kid, or a new_ae
+        # naming another kid, cannot authenticate and is noise.
+        return all(
+            bool(sig.kid) and sig.kid == keys[role].kid
+            and keys[role].verify(signed, b64url_decode(sig.sig))
+            for role, sig in signatures.items()
+        )
     except Exception:
         return False
 
@@ -320,29 +682,17 @@ def _candidate_is_authenticated(
     event = candidate.event
     if not selected and isinstance(event, MigrationEvent):
         assert options.verify_migration is not None
-        # A standard reader already has the entity key authenticated by the
-        # DNS record. Reject unauthenticated noise before fetching prior logs.
-        key = options.signer_key
-        migrated = None
-        if key is None:
-            migrated = options.verify_migration(event)
-            key = migrated.entity_key
-        if not _migration_signed_by(candidate, key):
-            return False
-        if migrated is None:
-            options.verify_migration(event)
-        return True
+        # Authorized by the entity key current at the end of the verified
+        # prior history. Selection has already filtered unanchored noise
+        # before any prior-log read.
+        migrated = options.verify_migration(event)
+        return _migration_signed_by(candidate, migrated.entity_key)
     try:
         if not selected:
             if isinstance(event, IssuanceEvent):
                 if event.entity_key is None or event.operational_key is None:
                     return False
                 if event.signing_kid != event.entity_key.kid:
-                    return False
-                if (
-                    options.signer_key is not None
-                    and options.signer_key.thumbprint() != event.entity_key.thumbprint()
-                ):
                     return False
                 _verify_event_signature(
                     candidate, event.sig, event.entity_key, "invalid ISSUANCE entity signature"
@@ -375,6 +725,20 @@ def _candidate_is_authenticated(
             _verify_event_signature(candidate, event.new_operational_proof,
                                     event.new_public_key, "invalid KEY_ROTATION proof")
             return True
+        if isinstance(event, EntityKeyRotationEvent):
+            # prev_ae authorizes with the entity key current at the predecessor;
+            # new_ae proves possession of the key being installed.
+            if event.signing_kid != entity_key.kid:
+                return False
+            _verify_event_signature(
+                candidate, event.sig, entity_key, "invalid ENTITY_KEY_ROTATION signature"
+            )
+            new_key = event.new_entity_public_key
+            if new_key is None or event.new_entity_kid != new_key.kid:
+                return False
+            _verify_event_signature(candidate, event.new_entity_proof, new_key,
+                                    "invalid ENTITY_KEY_ROTATION proof")
+            return True
         if event.signing_kid != entity_key.kid:
             return False
         _verify_event_signature(
@@ -406,6 +770,9 @@ def _applied_keys(
         if isinstance(item.event, KeyRotationEvent):
             assert item.event.new_public_key is not None
             operational_key = item.event.new_public_key
+        elif isinstance(item.event, EntityKeyRotationEvent):
+            assert item.event.new_entity_public_key is not None
+            entity_key = item.event.new_entity_public_key
     return entity_key, operational_key
 
 
@@ -417,7 +784,7 @@ def _authenticated_failure_category(
     message = str(error)
     if "seq" in message or "prev_" in message or "public lifecycle event" in message:
         return C2spLifecycleErrorCategory.CHAIN_CONTINUITY
-    if isinstance(event, KeyRotationEvent):
+    if isinstance(event, (KeyRotationEvent, EntityKeyRotationEvent)):
         return C2spLifecycleErrorCategory.KEY_CONTINUITY
     if isinstance(event, MigrationEvent):
         return C2spLifecycleErrorCategory.INVALID_MIGRATION
@@ -431,10 +798,17 @@ def verify_lifecycle(
     events: list[VerifiedLifecycleEvent],
     options: StreamVerifierOptions | None = None,
 ) -> None:
-    """Verify that *events* forms one valid, fully signed lifecycle."""
+    """Verify that *events* forms one valid, fully signed lifecycle.
+
+    With ``options.signer_key`` set, the entity key current at the end of
+    *events* must be that key.
+    """
     opts = options or StreamVerifierOptions()
     if not events:
         raise C2spTlogVerificationError("lifecycle contains no ISSUANCE event")
+    # Without entity-key rotation the genesis key is the final key, so the
+    # trusted-key check keeps its historical genesis-time error.
+    rotates_entity = any(isinstance(item.event, EntityKeyRotationEvent) for item in events)
     terminal = False
     prev_state: object = None
     entity_key: JWK | None = None
@@ -481,6 +855,7 @@ def verify_lifecycle(
             operational_key = event.operational_key
             if (
                 opts.signer_key is not None
+                and not rotates_entity
                 and opts.signer_key.thumbprint() != entity_key.thumbprint()
             ):
                 raise C2spTlogVerificationError(
@@ -523,6 +898,7 @@ def verify_lifecycle(
                 )
             if (
                 opts.signer_key is not None
+                and not rotates_entity
                 and opts.signer_key.thumbprint() != entity_key.thumbprint()
             ):
                 raise C2spTlogVerificationError(
@@ -574,6 +950,8 @@ def verify_lifecycle(
                     "invalid KEY_ROTATION new-key proof of possession",
                 )
                 operational_key = event.new_public_key
+            elif isinstance(event, EntityKeyRotationEvent):
+                entity_key = _verify_entity_rotation(item, event, entity_key, operational_key)
             else:
                 if isinstance(event, MigrationEvent) and (
                     not event.previous_log or event.previous_log == event.new_log
@@ -599,6 +977,53 @@ def verify_lifecycle(
             prev_state = _next_state(prev_state, event, entity_key, operational_key)
         if isinstance(event, (RevocationEvent, RetirementEvent)):
             terminal = True
+    if (
+        opts.signer_key is not None
+        and entity_key is not None
+        and opts.signer_key.thumbprint() != entity_key.thumbprint()
+    ):
+        raise C2spTlogVerificationError(
+            f"c2sp-tlog current entity key does not match record ek for {events[0].event.domain}"
+        )
+
+
+def _verify_entity_rotation(
+    item: VerifiedLifecycleEvent,
+    event: EntityKeyRotationEvent,
+    entity_key: JWK,
+    operational_key: JWK,
+) -> JWK:
+    """Apply an authenticated ENTITY_KEY_ROTATION; return the new entity key."""
+    if event.signing_kid != entity_key.kid:
+        raise C2spTlogVerificationError(
+            "ENTITY_KEY_ROTATION signature kid does not match entity key"
+        )
+    _verify_event_signature(
+        item, event.sig, entity_key, "invalid ENTITY_KEY_ROTATION previous-entity signature"
+    )
+    _assert_entity_rotation_key_metadata(event)
+    new_key = event.new_entity_public_key
+    assert new_key is not None
+    if not event.new_entity_proof:
+        raise C2spTlogVerificationError(
+            "ENTITY_KEY_ROTATION missing new entity proof of possession"
+        )
+    _verify_event_signature(
+        item, event.new_entity_proof, new_key,
+        "invalid ENTITY_KEY_ROTATION new-key proof of possession",
+    )
+    current = entity_key.thumbprint()
+    if event.previous_entity_thumbprint != current:
+        raise C2spTlogVerificationError(
+            "authenticated ENTITY_KEY_ROTATION does not continue from the active entity key",
+            category=C2spLifecycleErrorCategory.KEY_CONTINUITY,
+        )
+    if event.new_entity_thumbprint in (current, operational_key.thumbprint()):
+        raise C2spTlogVerificationError(
+            "authenticated ENTITY_KEY_ROTATION new key binding is invalid",
+            category=C2spLifecycleErrorCategory.KEY_CONTINUITY,
+        )
+    return new_key
 
 
 def verify_logged_event_signature(item: VerifiedLifecycleEvent, signer_key: JWK) -> None:
@@ -650,6 +1075,24 @@ def _assert_rotation_key_metadata(event: KeyRotationEvent) -> None:
         )
     if event.new_kid != event.new_public_key.kid:
         raise C2spTlogVerificationError("KEY_ROTATION new key metadata mismatch")
+
+
+def _assert_entity_rotation_key_metadata(event: EntityKeyRotationEvent) -> None:
+    key = event.new_entity_public_key
+    if key is None or not event.new_entity_thumbprint or not event.previous_entity_thumbprint:
+        raise C2spTlogVerificationError(
+            "ENTITY_KEY_ROTATION is missing c2sp-tlog key metadata"
+        )
+    if event.new_entity_thumbprint != key.thumbprint():
+        raise C2spTlogVerificationError(
+            "ENTITY_KEY_ROTATION new thumbprint does not match public key"
+        )
+    if event.new_entity_thumbprint == event.previous_entity_thumbprint:
+        raise C2spTlogVerificationError(
+            "ENTITY_KEY_ROTATION new thumbprint must differ from previous thumbprint"
+        )
+    if event.new_entity_kid != key.kid:
+        raise C2spTlogVerificationError("ENTITY_KEY_ROTATION new key metadata mismatch")
 
 
 def _assert_chain_fields(

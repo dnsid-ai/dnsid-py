@@ -65,6 +65,7 @@ from .stream_verifier import (
     MigrationVerificationResult,
     StreamVerifierOptions,
     VerifiedLifecycleEvent,
+    _EntityKeyAnchor,
     _verify_stream_lifecycle_steps,
 )
 
@@ -182,11 +183,12 @@ class _FetchedStreamBundleSource:
         self,
         reference: ParsedC2spTlogLr,
         fqdn: str,
-        entity_key: JWK,
+        entity_key: JWK | _EntityKeyAnchor,
         verify_migration: Callable[[MigrationEvent], MigrationVerificationResult] | None,
         *,
         cutoff_index: int | None = None,
         account_response: Callable[[int], None] | None = None,
+        migration_entries: dict[int, bytes] | None = None,
     ) -> VerifiedC2spStreamBundle | None:
         """Fetch and verify the bundle bound to the authenticated reference."""
         normalized = normalize_fqdn(fqdn, agent_fqdn=True)
@@ -201,9 +203,11 @@ class _FetchedStreamBundleSource:
             raise
         if account_response is not None:
             account_response(len(data))
-        options = self._verifier_options(entity_key)
+        anchor = _as_anchor(entity_key)
+        options = self._verifier_options(anchor)
         verified = _verify_c2sp_stream_bundle(
-            data, options, verify_migration, cutoff_index, reference.lr
+            data, options, verify_migration, cutoff_index, reference.lr,
+            anchor=anchor, migration_entries=migration_entries,
         )
         if verified.fqdn != normalized:
             raise C2spTlogVerificationError(
@@ -233,11 +237,13 @@ class _FetchedStreamBundleSource:
             )
         return verified
 
-    def _verifier_options(self, entity_key: JWK) -> C2spStreamBundleVerifierOptions:
+    def _verifier_options(self, anchor: _EntityKeyAnchor) -> C2spStreamBundleVerifierOptions:
         return C2spStreamBundleVerifierOptions(
             policy_bytes=self._policy_bytes,
             bundle_keys=self._bundle_keys,
-            entity_key=entity_key,
+            # Selection uses the explicit anchor; a predecessor anchored on a
+            # MIGRATION signature has no single trusted key to carry here.
+            entity_key=anchor.key if anchor.key is not None else _NO_TRUSTED_KEY,
             checkpoint_freshness_ms=self._checkpoint_freshness_ms,
             max_bundle_lifetime_ms=self._max_bundle_lifetime_ms,
             max_bundle_bytes=self._max_bundle_bytes,
@@ -253,11 +259,12 @@ class _FetchedStreamBundleSource:
         self,
         reference: ParsedC2spTlogLr,
         fqdn: str,
-        entity_key: JWK,
+        entity_key: JWK | _EntityKeyAnchor,
         verify_migration: Callable[[MigrationEvent], Awaitable[MigrationVerificationResult]] | None,
         *,
         cutoff_index: int | None = None,
         account_response: Callable[[int], None] | None = None,
+        migration_entries: dict[int, bytes] | None = None,
     ) -> VerifiedC2spStreamBundle | None:
         """Await native reads; offload deterministic validation and atomic storage."""
         from ._async import async_run_verification, call_async
@@ -272,9 +279,11 @@ class _FetchedStreamBundleSource:
             raise
         if account_response is not None:
             account_response(len(data))
-        options = self._verifier_options(entity_key)
+        anchor = _as_anchor(entity_key)
+        options = self._verifier_options(anchor)
         steps = _verify_c2sp_stream_bundle_steps(
             data, options, verify_migration is not None, cutoff_index, reference.lr,
+            anchor=anchor, migration_entries=migration_entries,
         )
         verified = await async_run_verification(steps, verify_migration)
         if verified.fqdn != normalized:
@@ -368,12 +377,16 @@ def _verify_c2sp_stream_bundle(
     | None,
     cutoff_index: int | None,
     expected_lr: str | None,
+    *,
+    anchor: _EntityKeyAnchor | None = None,
+    migration_entries: dict[int, bytes] | None = None,
 ) -> VerifiedC2spStreamBundle:
     from ._async import run_verification
 
     return run_verification(
         _verify_c2sp_stream_bundle_steps(
             data, options, migration_verifier is not None, cutoff_index, expected_lr,
+            anchor=anchor, migration_entries=migration_entries,
         ),
         migration_verifier,
     )
@@ -385,6 +398,9 @@ def _verify_c2sp_stream_bundle_steps(
     allow_migration: bool,
     cutoff_index: int | None,
     expected_lr: str | None,
+    *,
+    anchor: _EntityKeyAnchor | None = None,
+    migration_entries: dict[int, bytes] | None = None,
 ) -> Generator[MigrationEvent, MigrationVerificationResult, VerifiedC2spStreamBundle]:
     _validate_options(options)
     if len(data) > options.max_bundle_bytes:
@@ -492,7 +508,7 @@ def _verify_c2sp_stream_bundle_steps(
             context=context,
             cutoff_index=cutoff_index,
             unchained=normalized_origin_policy(policy, reference.origin).unchained,
-            signer_key=options.entity_key,
+            signer_key=anchor.key if anchor is not None else options.entity_key,
             checkpoint_integration_time_ms=(
                 witness_time_ms + options.max_clock_skew_ms
             ),
@@ -501,6 +517,8 @@ def _verify_c2sp_stream_bundle_steps(
             ),
         ),
         migration_results=migration_results,
+        migration_entries=migration_entries,
+        anchor=anchor or _EntityKeyAnchor(key=options.entity_key),
     )
     if cutoff_index is not None and (
         not verified or verified[-1].index != cutoff_index
@@ -545,6 +563,18 @@ def _verify_c2sp_stream_bundle_steps(
         reference, checkpoint, witness_time, options
     )
     return result
+
+
+#: Placeholder carried in bundle options when selection is anchored on a
+#: MIGRATION signature instead of a key; it has no key material and never
+#: matches, so it cannot authorize anything if consulted.
+_NO_TRUSTED_KEY = JWK(kty="", alg="")
+
+
+def _as_anchor(entity_key: JWK | _EntityKeyAnchor) -> _EntityKeyAnchor:
+    if isinstance(entity_key, _EntityKeyAnchor):
+        return entity_key
+    return _EntityKeyAnchor(key=entity_key)
 
 
 def _stream_evidence_bytes(evidence: C2spStreamEvidence) -> int:

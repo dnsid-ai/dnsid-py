@@ -598,6 +598,42 @@ non-revocation is operation policy, not part of `verify_domain`: callers
 gating high-value or irreversible operations should call
 `result.log_reader.verify_non_revocation(domain, at)` themselves (liveness is
 otherwise covered by the `su` status check).
+
+### Entity-key continuity (`ENTITY_KEY_ROTATION`)
+
+A registry that custodies an accountable-entity key can rotate it without
+breaking verification of the identities it signs. An `ENTITY_KEY_ROTATION`
+event moves the identity from the current entity key to a new one; it carries
+`prev_ek_thumb`, `new_ek_thumb` and the new public key `new_ek`, and is signed
+by both keys (`sigs.prev_ae` authorizes with the current key, `sigs.new_ae`
+proves possession of the new one). After the event:
+
+- the record's `ek` must be the entity key current at the end of the verified
+  history; `verify_bilateral_binding` reports both `initial_entity_thumbprint`
+  (from ISSUANCE) and `current_entity_thumbprint`;
+- REVOCATION, RETIREMENT and DELEGATION must be signed by the then-current
+  entity key, and a MIGRATION imports the entity key current at the end of the
+  previous log's history;
+- relying-party pins are unchanged: they are evaluated against the current
+  `ek`, so a pinned relying party rejects a rotated identity until it updates
+  its pins.
+
+Prepare the event with `prepare_event(...)` and collect the
+`C2spSignerRole.PREVIOUS_ENTITY` then `C2spSignerRole.NEW_ENTITY` signatures.
+Verifiers anchored on the record `ek` still skip self-signed genesis events
+for other keys: a history is accepted only if it ends at the record `ek`,
+which requires a valid `new_ae` signature by that key.
+
+Verifiers that predate this event treat it as unsupported and keep rejecting
+rotated identities with the ISSUANCE entity-key mismatch, so upgrade verifiers
+before rotating entity keys. The minimum SDK versions are listed in the release
+notes.
+
+An authenticated `ENTITY_KEY_ROTATION` (both signatures verify) that fails
+structural validation is fatal invalid evidence. A `new_ek` carrying private
+key members, a `new_ek` without a kid, or a `new_ae` naming a different kid
+cannot authenticate, so the event is skipped.
+
 See the [transparency-log reference](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/transparency-log.md)
 and [examples/a2a/startup.py](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/a2a/startup.py) for a complete setup.
 

@@ -18,6 +18,7 @@ from ..models import (
     JWK,
     AnyLogEvent,
     DelegationEvent,
+    EntityKeyRotationEvent,
     IssuanceEvent,
     KeyRotationEvent,
     MigrationEvent,
@@ -35,7 +36,15 @@ from .merkle import sha256
 
 _MAX_ENTRY_BYTES = 0xFFFF
 _SUPPORTED = frozenset(
-    ["ISSUANCE", "KEY_ROTATION", "REVOCATION", "RETIREMENT", "MIGRATION", "DELEGATION"]
+    [
+        "ISSUANCE",
+        "KEY_ROTATION",
+        "ENTITY_KEY_ROTATION",
+        "REVOCATION",
+        "RETIREMENT",
+        "MIGRATION",
+        "DELEGATION",
+    ]
 )
 _SIGNATURE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _REVOCATION_REASONS = frozenset(
@@ -89,6 +98,11 @@ def event_to_c2sp_envelope(
         obj["prev_thumb"] = event.previous_thumbprint
         obj["new_ku"] = dict(event.new_public_key._raw)
         obj["new_thumb"] = event.new_thumbprint
+    elif isinstance(event, EntityKeyRotationEvent):
+        new_entity_key = _require_entity_rotation_fields(event)
+        obj["prev_ek_thumb"] = event.previous_entity_thumbprint
+        obj["new_ek"] = dict(new_entity_key._raw)
+        obj["new_ek_thumb"] = event.new_entity_thumbprint
     elif isinstance(event, RevocationEvent):
         obj["reason"] = event.reason
     elif isinstance(event, RetirementEvent):
@@ -175,6 +189,26 @@ def c2sp_envelope_to_event(obj: object) -> AnyLogEvent:
             signing_kid=prev_op.kid,
             sig=prev_op.sig,
             new_operational_proof=new_op.sig,
+        )
+    if type_ == "ENTITY_KEY_ROTATION":
+        new_entity_key = _as_signing_jwk(e.get("new_ek"), "new_ek")
+        previous_thumbprint = _as_str(e.get("prev_ek_thumb"), "prev_ek_thumb")
+        new_thumbprint = _as_str(e.get("new_ek_thumb"), "new_ek_thumb")
+        _assert_entity_rotation_binding(new_entity_key, previous_thumbprint, new_thumbprint)
+        prev_ae, new_ae = sigs["prev_ae"], sigs["new_ae"]
+        if new_ae.kid != new_entity_key.kid:
+            raise C2spTlogParseError("ENTITY_KEY_ROTATION new_ae kid does not match new_ek")
+        return EntityKeyRotationEvent(
+            domain=domain,
+            timestamp=timestamp,
+            previous_entity_kid=prev_ae.kid,
+            previous_entity_thumbprint=previous_thumbprint,
+            new_entity_kid=new_entity_key.kid,
+            new_entity_thumbprint=new_thumbprint,
+            new_entity_public_key=new_entity_key,
+            signing_kid=prev_ae.kid,
+            sig=prev_ae.sig,
+            new_entity_proof=new_ae.sig,
         )
     ae = sigs["ae"]
     if type_ == "REVOCATION":
@@ -310,6 +344,19 @@ def _signatures_from_event(event: AnyLogEvent) -> dict[str, dict[str, str]]:
         if event.new_operational_proof:
             sigs["new_op"] = {"kid": event.new_kid, "sig": event.new_operational_proof}
         return sigs
+    if isinstance(event, EntityKeyRotationEvent):
+        sigs = {}
+        if event.sig:
+            sigs["prev_ae"] = {
+                "kid": event.signing_kid or event.previous_entity_kid,
+                "sig": event.sig,
+            }
+        if event.new_entity_proof:
+            new_kid = event.new_entity_kid or (
+                event.new_entity_public_key.kid if event.new_entity_public_key else ""
+            )
+            sigs["new_ae"] = {"kid": new_kid, "sig": event.new_entity_proof}
+        return sigs
     if event.sig:
         return {"ae": {"kid": event.signing_kid or "", "sig": event.sig}}
     return {}
@@ -329,6 +376,8 @@ def required_c2sp_signature_names(type_: str) -> list[str]:
         return ["ae", "op"]
     if type_ == "KEY_ROTATION":
         return ["prev_op", "new_op"]
+    if type_ == "ENTITY_KEY_ROTATION":
+        return ["prev_ae", "new_ae"]
     if type_ in _SUPPORTED:
         return ["ae"]
     raise C2spTlogParseError(f"unsupported DNSid lifecycle event type: {type_}")
@@ -459,6 +508,72 @@ def _as_jwk(value: object, name: str) -> JWK:
     _as_str(value.get("kid"), f"{name}.kid")
     _as_str(value.get("alg"), f"{name}.alg")
     return jwk_from_dict(value)
+
+
+def _as_signing_jwk(value: object, name: str) -> JWK:
+    """Parse a public signing JWK with the full c2sp-tlog key checks.
+
+    Used for ``new_ek``: public members only, ``use`` (when present) is
+    ``sig``, kid and alg present, and EdDSA/Ed25519 or ES256/P-256.
+    """
+    from ..models import _PRIVATE_JWK_MEMBERS
+
+    if not isinstance(value, dict):
+        raise C2spTlogParseError(f"missing {name}")
+    kty = _as_str(value.get("kty"), f"{name}.kty")
+    _as_str(value.get("kid"), f"{name}.kid")
+    alg = _as_str(value.get("alg"), f"{name}.alg")
+    if any(member in value for member in _PRIVATE_JWK_MEMBERS):
+        raise C2spTlogParseError(f"{name} JWK must be public")
+    if "use" in value and value["use"] != "sig":
+        raise C2spTlogParseError(f"{name} JWK must be for signatures")
+    crv = value.get("crv")
+    if kty == "OKP":
+        if alg != "EdDSA" or crv != "Ed25519" or not isinstance(value.get("x"), str):
+            raise C2spTlogParseError(f"{name} JWK must use EdDSA with Ed25519")
+    elif kty == "EC":
+        if (
+            alg != "ES256"
+            or crv != "P-256"
+            or not isinstance(value.get("x"), str)
+            or not isinstance(value.get("y"), str)
+        ):
+            raise C2spTlogParseError(f"{name} JWK must use ES256 with P-256")
+    else:
+        raise C2spTlogParseError(f"{name} JWK uses an unsupported key type")
+    key = jwk_from_dict(value)
+    try:
+        key.thumbprint()
+    except Exception as exc:
+        raise C2spTlogParseError(f"{name} JWK is malformed") from exc
+    return key
+
+
+def _assert_entity_rotation_binding(
+    new_entity_key: JWK, previous_thumbprint: str, new_thumbprint: str
+) -> None:
+    if new_entity_key.thumbprint() != new_thumbprint:
+        raise C2spTlogParseError("ENTITY_KEY_ROTATION new_ek_thumb does not match new_ek")
+    if new_thumbprint == previous_thumbprint:
+        raise C2spTlogParseError(
+            "ENTITY_KEY_ROTATION new_ek_thumb must differ from prev_ek_thumb"
+        )
+
+
+def _require_entity_rotation_fields(event: EntityKeyRotationEvent) -> JWK:
+    if event.new_entity_public_key is None:
+        raise C2spTlogParseError("ENTITY_KEY_ROTATION is missing new_entity_public_key")
+    key = _as_signing_jwk(event.new_entity_public_key._raw, "new_ek")
+    if not event.previous_entity_thumbprint:
+        raise C2spTlogParseError("missing prev_ek_thumb")
+    if not event.new_entity_thumbprint:
+        raise C2spTlogParseError("missing new_ek_thumb")
+    _assert_entity_rotation_binding(
+        key, event.previous_entity_thumbprint, event.new_entity_thumbprint
+    )
+    if event.new_entity_kid and event.new_entity_kid != key.kid:
+        raise C2spTlogParseError("ENTITY_KEY_ROTATION new_entity_kid does not match new_ek")
+    return key
 
 
 def _as_revocation_reason(value: object) -> str:

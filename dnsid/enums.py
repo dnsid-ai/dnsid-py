@@ -122,6 +122,7 @@ class EventType(StrEnum):
 
     ISSUANCE = "ISSUANCE"
     KEY_ROTATION = "KEY_ROTATION"
+    ENTITY_KEY_ROTATION = "ENTITY_KEY_ROTATION"
     REVOCATION = "REVOCATION"
     RETIREMENT = "RETIREMENT"
     MIGRATION = "MIGRATION"
@@ -155,3 +156,5 @@ class LogSignerRole(StrEnum):
     OPERATIONAL = "Operational"
     OPERATIONAL_COUNTERSIGNATURE = "OperationalCountersignature"
     PREVIOUS_OPERATIONAL = "PreviousOperational"
+    PREVIOUS_ENTITY = "PreviousEntity"
+    NEW_ENTITY = "NewEntity"
