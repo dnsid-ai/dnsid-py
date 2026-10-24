@@ -450,22 +450,65 @@ def test_case10_rotation_after_retirement_is_terminal_state(keys):
         assert exc.value.category == C2spLifecycleErrorCategory.TERMINAL_STATE
 
 
-def test_case11_authenticated_malformed_rotation_is_fatal_unauthenticated_is_skipped(keys):
+def _resigned_rotation(keys: SimpleNamespace, mutate, *, new_signer: _Signer | None = None):
+    """ISSUANCE plus a rotation mutated after signing, then signed by E1 and E2."""
     stream = _Stream()
     stream.issuance(keys.e1, keys.o1)
     rotation = json.loads(stream.entity_rotation(keys.e2, apply=False))
-    sigs = rotation.pop("sigs")
-    rotation["new_ek"] = dict(rotation["new_ek"], d="AAAA")
+    original_sigs = rotation.pop("sigs")
+    mutate(rotation)
     signed = canonical_bytes(rotation)
+    signer = new_signer or keys.e2
     authenticated = canonical_bytes(dict(rotation, sigs={
         "prev_ae": {"kid": keys.e1.kid, "sig": keys.e1.sign(signed)},
+        "new_ae": {"kid": signer.kid, "sig": signer.sign(signed)},
+    }))
+    unauthenticated = canonical_bytes(dict(rotation, sigs=original_sigs))
+    return stream.entries[0], authenticated, unauthenticated
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda o: o.update(new_ek_thumb=o["prev_ek_thumb"][::-1]),
+        lambda o: o.update(prev_ek_thumb=o["new_ek_thumb"]),
+        lambda o: o["new_ek"].pop("kid"),
+        lambda o: o["new_ek"].pop("alg"),
+        lambda o: o["new_ek"].update(alg="ES256"),
+        lambda o: o["new_ek"].update(use="enc"),
+    ],
+    ids=["thumb-mismatch", "same-thumb", "missing-kid", "missing-alg", "wrong-alg", "enc-use"],
+)
+def test_case11_authenticated_malformed_rotation_is_fatal(keys, mutate):
+    genesis, authenticated, unauthenticated = _resigned_rotation(keys, mutate)
+    assert _types(_verify([genesis, unauthenticated], keys.e1.jwk)) == ["ISSUANCE"]
+    with pytest.raises(C2spTlogVerificationError) as exc:
+        _verify([genesis, authenticated], keys.e1.jwk)
+    assert exc.value.category == C2spLifecycleErrorCategory.INVALID_EVIDENCE
+    assert exc.value.failing_candidate_index == 1
+
+
+def test_case11_private_new_ek_is_noise_even_when_both_signatures_verify(keys):
+    genesis, authenticated, _ = _resigned_rotation(
+        keys, lambda o: o["new_ek"].update(d=b64url_encode(bytes(32))),
+    )
+    assert _types(_verify([genesis, authenticated], keys.e1.jwk)) == ["ISSUANCE"]
+    with pytest.raises(C2spTlogVerificationError):
+        _verify([genesis, authenticated], keys.e2.jwk)
+
+
+def test_malformed_rotation_by_a_non_active_key_is_skipped(keys):
+    stream = _Stream()
+    stream.issuance(keys.e1, keys.o1)
+    rotation = json.loads(stream.entity_rotation(keys.e2, apply=False))
+    rotation.pop("sigs")
+    rotation["new_ek_thumb"] = rotation["prev_ek_thumb"][::-1]
+    signed = canonical_bytes(rotation)
+    forged = canonical_bytes(dict(rotation, sigs={
+        "prev_ae": {"kid": keys.e1.kid, "sig": keys.attacker.sign(signed)},
         "new_ae": {"kid": keys.e2.kid, "sig": keys.e2.sign(signed)},
     }))
-    unauthenticated = canonical_bytes(dict(rotation, sigs=sigs))
-    assert _types(_verify([stream.entries[0], unauthenticated], keys.e1.jwk)) == ["ISSUANCE"]
-    with pytest.raises(C2spTlogVerificationError) as exc:
-        _verify([stream.entries[0], authenticated], keys.e1.jwk)
-    assert exc.value.category == C2spLifecycleErrorCategory.INVALID_EVIDENCE
+    assert _types(_verify([stream.entries[0], forged], keys.e1.jwk)) == ["ISSUANCE"]
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +565,31 @@ def test_end_of_history_mismatch_with_competing_genesis_reports_no_lifecycle(key
     # Record still names E2; the only genesis replays to E3.
     with pytest.raises(C2spTlogVerificationError, match="does not match record ek"):
         _verify(first.entries, keys.e2.jwk)
+
+
+def test_forged_genesis_claiming_the_record_key_is_not_replayed(keys, monkeypatch):
+    import dnsid.c2sp_tlog.stream_verifier as verifier
+
+    real = _Stream()
+    real.issuance(keys.e1, keys.o1)
+    real.entity_rotation(keys.e2)
+    forged = []
+    for _ in range(5):
+        obj = json.loads(_Stream().issuance(keys.attacker, _key("forged-op")))
+        obj["ek"] = keys.e2.jwk._raw
+        obj["sigs"]["ae"]["kid"] = keys.e2.kid
+        forged.append(canonical_bytes(obj))
+    trials = []
+    original = verifier._select_lifecycle
+
+    def counting(*args, **kwargs):
+        trials.append(args[3])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(verifier, "_select_lifecycle", counting)
+    selected = _verify([*forged, *real.entries], keys.e2.jwk)
+    assert [item.index for item in selected] == [5, 6]
+    assert trials == [5]
 
 
 # ---------------------------------------------------------------------------

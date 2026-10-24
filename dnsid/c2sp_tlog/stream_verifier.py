@@ -307,10 +307,14 @@ def _select_anchored(
         event = item.event
         if event is None or not isinstance(event, (IssuanceEvent, MigrationEvent)):
             return False
+        if isinstance(event, IssuanceEvent):
+            # Only a self-authenticated ISSUANCE is worth a replay; this keeps
+            # forged candidates from multiplying the selection work.
+            if not (item.identifier in roots or anchor.matches(event.entity_key)):
+                return False
+            return _candidate_is_authenticated(_as_candidate(item), [], trial_opts)
         if item.identifier in roots:
             return True
-        if isinstance(event, IssuanceEvent):
-            return anchor.matches(event.entity_key)
         if anchor.key is not None:
             return _migration_signed_by(_as_candidate(item), anchor.key)
         return bool(anchor.kid) and event.signing_kid == anchor.kid
@@ -553,9 +557,22 @@ def _malformed_authenticated(
         if "new_op" in signatures:
             keys["new_op"] = jwk_from_dict(obj["new_ku"])
         if "new_ae" in signatures:
-            keys["new_ae"] = jwk_from_dict(obj["new_ek"])
-        return all(sig.kid == keys[role].kid and keys[role].verify(signed, b64url_decode(sig.sig))
-                   for role, sig in signatures.items())
+            from ..models import _PRIVATE_JWK_MEMBERS
+
+            new_entity = obj["new_ek"]
+            # A private new_ek is never used as a verification key: noise.
+            if not isinstance(new_entity, dict) or _PRIVATE_JWK_MEMBERS & new_entity.keys():
+                return False
+            keys["new_ae"] = jwk_from_dict(new_entity)
+
+        def signed_by(role: str, sig: Any) -> bool:
+            key = keys[role]
+            # A new_ek missing its kid is itself the structural defect; the
+            # signature still authenticates the malformed payload.
+            kid_ok = sig.kid == key.kid or (role == "new_ae" and not key.kid)
+            return kid_ok and key.verify(signed, b64url_decode(sig.sig))
+
+        return all(signed_by(role, sig) for role, sig in signatures.items())
     except Exception:
         return False
 
