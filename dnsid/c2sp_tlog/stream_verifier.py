@@ -305,24 +305,23 @@ def _select_anchored(
     """
     trial_opts = replace(opts, signer_key=None)
     roots = _anchor_rotation_roots(parsed, anchor)
-    # Entity keys of ISSUANCE roots of an anchor-reaching rotation chain: a
-    # malformed genesis authenticated by one of them is fatal, like one
-    # authenticated by the anchor key itself.
-    root_entity_thumbprints = {
-        item.event.entity_key.thumbprint()
-        for item in parsed
-        if item.identifier in roots
-        and isinstance(item.event, IssuanceEvent)
-        and item.event.entity_key is not None
-    }
+    chain_thumbprints, migration_root_signers = _anchor_chain_keys(parsed, anchor)
 
     def genesis_entity_ok(key: JWK) -> bool:
+        """Entity keys of the eligible chain make a malformed genesis fatal.
+
+        They are the record key, every key an anchor-reaching rotation chain
+        installed or rotated away from (its ISSUANCE root included), and the
+        key that signed a MIGRATION root. Unrelated keys stay noise.
+        """
         if anchor.matches(key):
             return True
         try:
-            return key.thumbprint() in root_entity_thumbprints
+            if key.thumbprint() in chain_thumbprints:
+                return True
         except Exception:
             return False
+        return any(signer.matches(key) for signer in migration_root_signers)
 
     def eligible(item: _ParsedCandidate) -> bool:
         event = item.event
@@ -426,6 +425,63 @@ def _anchor_rotation_roots(
         if root is not None:
             roots.add(root)
     return roots
+
+
+def _anchor_chain_keys(
+    parsed: list[_ParsedCandidate], anchor: _EntityKeyAnchor,
+) -> tuple[set[str], list[_EntityKeyAnchor]]:
+    """Entity keys along every anchor-reaching rotation chain.
+
+    Walks back from each ENTITY_KEY_ROTATION that proves possession of an
+    anchor key. The path is fixed by hashes inside bytes the anchor key
+    signed, so only keys the identity holds or has held are collected:
+    every rotated-in key, the ISSUANCE root key, and (as a signature check)
+    the signer of a MIGRATION root.
+    """
+    by_id: dict[str, _ParsedCandidate] = {}
+    for item in parsed:
+        if item.event is not None:
+            by_id.setdefault(item.identifier, item)
+    thumbprints: set[str] = set()
+    migration_signers: list[_EntityKeyAnchor] = []
+    visited: set[str] = set()
+    for item in parsed:
+        remaining_seconds()
+        event = item.event
+        if not isinstance(event, EntityKeyRotationEvent):
+            continue
+        new_key = event.new_entity_public_key
+        if new_key is None or not anchor.matches(new_key):
+            continue
+        try:
+            proven = bool(event.new_entity_proof) and new_key.verify(
+                item.signed, b64url_decode(event.new_entity_proof)
+            )
+        except Exception:
+            proven = False
+        if not proven:
+            continue
+        current: _ParsedCandidate | None = item
+        while current is not None and current.identifier not in visited:
+            visited.add(current.identifier)
+            step = current.event
+            if isinstance(step, EntityKeyRotationEvent) and step.new_entity_public_key:
+                thumbprints.add(step.new_entity_public_key.thumbprint())
+            previous = current.chain.get("prev_event_id")
+            if isinstance(previous, str) and previous:
+                current = by_id.get(previous)
+                continue
+            if isinstance(step, IssuanceEvent) and step.entity_key is not None:
+                thumbprints.add(step.entity_key.thumbprint())
+            elif isinstance(step, MigrationEvent):
+                try:
+                    migration_signers.append(
+                        _EntityKeyAnchor.for_migration_entry(current.entry.data)
+                    )
+                except C2spTlogVerificationError:
+                    pass
+            current = None
+    return thumbprints, migration_signers
 
 
 def _as_candidate(item: _ParsedCandidate) -> VerifiedLifecycleEvent:

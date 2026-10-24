@@ -709,9 +709,9 @@ def test_prepared_new_entity_signing_rejects_a_malformed_new_ek(keys):
         sign_prepared_event(prepared, C2spSignerRole.NEW_ENTITY, _provider(keys.e2))
 
 
-def _malformed_issuance(entity: _Signer, operational: _Signer) -> bytes:
+def _malformed_issuance(entity: _Signer, operational: _Signer, lr: str = LR) -> bytes:
     """An ISSUANCE authenticated by both keys whose payload fails parsing."""
-    obj = json.loads(_Stream().issuance(entity, operational))
+    obj = json.loads(_Stream(lr).issuance(entity, operational))
     obj.pop("sigs")
     obj["gi"] = 7
     signed = canonical_bytes(obj)
@@ -736,6 +736,43 @@ def test_malformed_genesis_authenticated_by_the_root_key_is_fatal(keys):
     assert _types(_verify([spam, *stream.entries], keys.e2.jwk)) == [
         "ISSUANCE", "ENTITY_KEY_ROTATION",
     ]
+
+
+def test_malformed_genesis_authenticated_by_an_intermediate_chain_key_is_fatal(keys):
+    stream = _Stream()
+    stream.issuance(keys.e1, keys.o1)
+    stream.entity_rotation(keys.e2)
+    stream.entity_rotation(keys.e3)
+    for signer in (keys.e1, keys.e2, keys.e3):
+        malformed = _malformed_issuance(signer, keys.o1)
+        with pytest.raises(C2spTlogVerificationError) as exc:
+            _verify([malformed, *stream.entries], keys.e3.jwk)
+        assert exc.value.category == C2spLifecycleErrorCategory.INVALID_EVIDENCE
+    unrelated = _malformed_issuance(keys.attacker, keys.o1)
+    assert len(_verify([unrelated, *stream.entries], keys.e3.jwk)) == 3
+
+
+@pytest.mark.parametrize("bundles", [False, True])
+def test_malformed_genesis_authenticated_by_a_migration_root_signer_is_fatal(keys, bundles):
+    first, second = _lr("first"), _lr("second")
+    prior = _Stream(first)
+    prior.issuance(keys.e1, keys.o1)
+    destination = _Stream(second)
+    _migration(destination, first, prior.entries, keys.e1, keys.e1, keys.o1)
+    destination.entity_rotation(keys.e2)
+    malformed = _malformed_issuance(keys.e1, keys.o1, second)
+    logs = {first: prior.entries, second: [malformed, *destination.entries]}
+    for record in (keys.e1, keys.e2):
+        with pytest.raises(VerificationError, match="malformed"):
+            _registry(logs, bundles=bundles).new_reader(second).verify_bilateral_binding(
+                _record(), record.jwk, keys.o1.jwk,
+            )
+    unrelated = _malformed_issuance(keys.attacker, keys.o1, second)
+    reader = _registry(
+        {first: prior.entries, second: [unrelated, *destination.entries]}, bundles=bundles,
+    ).new_reader(second)
+    binding = reader.verify_bilateral_binding(_record(), keys.e2.jwk, keys.o1.jwk)
+    assert binding.current_entity_thumbprint == keys.e2.jwk.thumbprint()
 
 
 def test_fresh_genesis_by_an_intermediate_key_after_chained_rotations(keys):
@@ -903,6 +940,14 @@ def _audit_path(leaves: list[bytes], index: int) -> list[bytes]:
     return _audit_path(leaves[split:], index - split) + [_subtree_root(leaves[:split])]
 
 
+def _parses(entry: bytes) -> bool:
+    try:
+        parse_c2sp_event_entry(entry)
+    except C2spTlogParseError:
+        return False
+    return True
+
+
 def _bundle(lr: str, entries: list[bytes], checkpoint: bytes, policy: bytes,
             private: ed25519.Ed25519PrivateKey, key: Any) -> bytes:
     leaves = [leaf_hash(entry) for entry in entries]
@@ -922,7 +967,8 @@ def _bundle(lr: str, entries: list[bytes], checkpoint: bytes, policy: bytes,
             for index, entry in enumerate(entries)
         ],
         "state": {
-            "event_count": len(entries),
+            # The fixtures' only non-lifecycle entries are unparseable noise.
+            "event_count": sum(1 for entry in entries if _parses(entry)),
             "last_event_type": str(final.event_type),
             "logged_state": "ACTIVE",
         },
