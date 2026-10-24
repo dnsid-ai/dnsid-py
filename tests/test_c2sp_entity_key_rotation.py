@@ -282,6 +282,21 @@ def test_structural_validation_rejects(keys, name, mutate, message):
         parse_c2sp_event_entry(_envelope(keys, mutate), CONTEXT)
 
 
+def test_envelope_signature_members_for_entity_rotation():
+    from dnsid.c2sp_tlog.event_codec import parse_c2sp_signatures
+
+    sig = {"kid": "k", "sig": b64url_encode(bytes(64))}
+    parsed = parse_c2sp_signatures({"prev_ae": sig, "new_ae": sig}, "ENTITY_KEY_ROTATION")
+    assert set(parsed) == {"prev_ae", "new_ae"}
+    for extra in ("ae", "prev_op", "new_op", "op"):
+        with pytest.raises(C2spTlogParseError, match="unexpected signature role"):
+            parse_c2sp_signatures(
+                {"prev_ae": sig, "new_ae": sig, extra: sig}, "ENTITY_KEY_ROTATION",
+            )
+    with pytest.raises(C2spTlogParseError, match="unexpected signature role"):
+        parse_c2sp_signatures({"prev_op": sig, "new_ae": sig}, "KEY_ROTATION")
+
+
 def test_encoder_applies_the_same_structural_rules(keys):
     context = replace(CONTEXT, seq=1, prev_event_id=b64url_encode(bytes(32)),
                       prev_state_hash=b64url_encode(bytes(32)))
@@ -507,10 +522,13 @@ def test_new_ek_kid_problems_are_noise_even_when_both_signatures_verify(
         _verify([genesis, authenticated], keys.e2.jwk)
 
 
-def test_case11_private_new_ek_is_noise_even_when_both_signatures_verify(keys):
+@pytest.mark.parametrize("member", ["d", "p", "q", "dp", "dq", "qi", "k", "oth"])
+def test_case11_private_new_ek_is_noise_even_when_both_signatures_verify(keys, member):
     genesis, authenticated, _ = _resigned_rotation(
-        keys, lambda o: o["new_ek"].update(d=b64url_encode(bytes(32))),
+        keys, lambda o: o["new_ek"].update({member: b64url_encode(bytes(32))}),
     )
+    with pytest.raises(C2spTlogParseError, match="must be public"):
+        parse_c2sp_event_entry(authenticated, CONTEXT)
     assert _types(_verify([genesis, authenticated], keys.e1.jwk)) == ["ISSUANCE"]
     with pytest.raises(C2spTlogVerificationError):
         _verify([genesis, authenticated], keys.e2.jwk)
