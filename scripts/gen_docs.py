@@ -236,6 +236,7 @@ PAGES: list[dict] = [
             "AnyLogEvent",
             "IssuanceEvent",
             "KeyRotationEvent",
+            "EntityKeyRotationEvent",
             "RevocationEvent",
             "RetirementEvent",
             "MigrationEvent",

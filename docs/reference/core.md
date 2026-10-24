@@ -91,11 +91,14 @@ Signer roles are event-type-owned:
 * ISSUANCE — Entity and OperationalCountersignature
 * KEY_ROTATION — PreviousOperational (signs by kid via
   KeyProvider.sign_key)
+* ENTITY_KEY_ROTATION — PreviousEntity then NewEntity (both sign by
+  kid via the entity KeyProvider.sign_key)
 * all other lifecycle events — Entity
 
-Entity signatures require deps.entity_key_provider; the other roles
-use the agent key_provider.  Concrete bindings enforce any
-method-owned additions without weakening these profile requirements.
+Entity, PreviousEntity, and NewEntity signatures require
+deps.entity_key_provider; the other roles use the agent key_provider.
+Concrete bindings enforce any method-owned additions without weakening
+these profile requirements.
 
 **Arguments:**
 
@@ -113,9 +116,10 @@ IdentityManager.sign_event(event: LogEvent, role: LogSignerRole) -> LogEvent
 
 Add the signature for one role using this manager's matching provider.
 
-Entity signatures come from deps.entity_key_provider; Operational,
-OperationalCountersignature, and PreviousOperational signatures come
-from the agent key_provider.  Does not write to the log.
+Entity, PreviousEntity, and NewEntity signatures come from
+deps.entity_key_provider; Operational, OperationalCountersignature,
+and PreviousOperational signatures come from the agent key_provider.
+Does not write to the log.
 
 **Arguments:**
 
@@ -732,4 +736,4 @@ providers for any other role and does not write to the log.
 
 **Raises:**
 
-- `ArgumentError`: If PreviousOperational signing is requested for an event that is not a KEY_ROTATION event with previous_kid set.
+- `ArgumentError`: If PreviousOperational signing is requested for an event that is not a KEY_ROTATION event with previous_kid set, or PreviousEntity/NewEntity signing for an event that is not an ENTITY_KEY_ROTATION with the corresponding kid set.

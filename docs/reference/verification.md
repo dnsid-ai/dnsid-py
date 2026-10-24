@@ -173,7 +173,7 @@ countersignature.
 from dnsid import AnyLogEvent
 ```
 
-*Value:* `IssuanceEvent | KeyRotationEvent | RevocationEvent | RetirementEvent | MigrationEvent | DelegationEvent`
+*Value:* `IssuanceEvent | KeyRotationEvent | EntityKeyRotationEvent | RevocationEvent | RetirementEvent | MigrationEvent | DelegationEvent`
 
 ## `IssuanceEvent`
 
@@ -194,6 +194,23 @@ from dnsid import KeyRotationEvent
 *Bases:* `LogEvent`
 
 Rotation to a new signing key; establishes continuity from previous key.
+
+## `EntityKeyRotationEvent`
+
+```python
+from dnsid import EntityKeyRotationEvent
+```
+
+*Bases:* `LogEvent`
+
+Rotation to a new accountable-entity record-signing key.
+
+Establishes entity-key continuity the way KEY_ROTATION does for the
+operational key: *sig* (with *signing_kid*) is the previous entity key's
+authorization (the c2sp-tlog ``sigs.prev_ae`` role) and
+*new_entity_proof* is the new entity key's proof of possession over the
+same canonical event content (``sigs.new_ae``).  Later lifecycle events
+and the record's ``ek`` key bind to the new entity key.
 
 ## `RevocationEvent`
 
@@ -252,3 +269,5 @@ replacing or weakening these.
 - `OPERATIONAL` = `'Operational'`
 - `OPERATIONAL_COUNTERSIGNATURE` = `'OperationalCountersignature'`
 - `PREVIOUS_OPERATIONAL` = `'PreviousOperational'`
+- `PREVIOUS_ENTITY` = `'PreviousEntity'`
+- `NEW_ENTITY` = `'NewEntity'`

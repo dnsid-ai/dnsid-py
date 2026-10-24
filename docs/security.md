@@ -13,7 +13,8 @@ Security properties enforced by the SDK's verification path (not configurable of
   (`ku` on the agent's domain, `ek` on the governance domain); registry-hosted
   `su` URLs are permitted with the same fetch-time bounds.
 - **Draft 01 fail-safe** — `v=dnsid-draft-01` and pre-RFC `v=DNSid1` records require log-binding lifecycle
-  verification (bilateral ISSUANCE binding, operational-key continuity).
+  verification (bilateral ISSUANCE binding, operational- and entity-key
+  continuity).
   Verification without a capable registered log reader fails closed rather
   than skipping the checks. Current non-revocation is operation policy:
   callers gating high-value operations invoke
@@ -61,6 +62,12 @@ Operator guidance:
 4. For emergency key compromise, rotate immediately and revoke or retire the
    identity in the status/lifecycle plane. Do not wait for token overlap to
    drain; preserving compromised tokens is worse than breaking them.
+
+Accountable-entity keys rotate through a logged `ENTITY_KEY_ROTATION`, signed
+by both the current and the new entity key. Verifiers then require the record's
+`ek` to be the entity key current at the end of the verified lifecycle history;
+publish the new `ek` JWKS only after the event is logged. Relying parties that
+pin entity keys reject the identity until they update their pins.
 
 Recommended overlap periods are policy choices, not SDK constants. A reasonable
 starting point for production is:
