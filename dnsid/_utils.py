@@ -59,19 +59,19 @@ _HTTP_FIELD_NAME_RE = re.compile(r"^[a-z][a-z0-9!#$%&'*+\-.^_`|~]*$")
 
 
 def is_valid_tag_name(name: str) -> bool:
-    return bool(_TAG_NAME_RE.match(name))
+    return bool(_TAG_NAME_RE.fullmatch(name))
 
 
 def is_valid_tag_value(value: str) -> bool:
-    return bool(_TAG_VALUE_RE.match(value))
+    return bool(_TAG_VALUE_RE.fullmatch(value))
 
 
 def is_valid_ledger_method(method: str) -> bool:
-    return bool(_LEDGER_METHOD_RE.match(method))
+    return bool(_LEDGER_METHOD_RE.fullmatch(method))
 
 
 def is_lowercase_http_field_name(name: str) -> bool:
-    return bool(_HTTP_FIELD_NAME_RE.match(name))
+    return bool(_HTTP_FIELD_NAME_RE.fullmatch(name))
 
 
 def jose_alg_to_http_sig_alg(alg: str) -> str:
@@ -134,9 +134,9 @@ def normalize_fqdn(name: str, agent_fqdn: bool = False) -> str:
         if not label:
             raise ValidationError(f"FQDN contains empty label: {name!r}")
         try:
-            # Lowercase before encoding. uts46=True enables UTS#46 mapping (IDNA2003-compatible),
-            # while still applying IDNA2008 validity checks.
-            normalized.append(idna.encode(label.lower(), uts46=True).decode("ascii"))
+            # UTS#46 mapping lowercases; str.lower() first would apply the final-sigma rule.
+            # uts46=True keeps IDNA2008 validity checks.
+            normalized.append(idna.encode(label, uts46=True).decode("ascii"))
         except (UnicodeError, Exception) as exc:
             raise ValidationError(f"Invalid FQDN label {label!r}: {exc}") from exc
 
@@ -164,7 +164,8 @@ def is_domain_name(s: str) -> bool:
     that do not look like dot-separated DNS labels.
     """
     v = s[:-1] if s.endswith(".") else s
-    return bool(_DOMAIN_NAME_RE.match(v))
+    # An all-numeric top label is an IPv4 literal, not a domain name (RFC 1123 section 2.1).
+    return bool(_DOMAIN_NAME_RE.fullmatch(v)) and not v.rsplit(".", 1)[-1].isdigit()
 
 
 # ---------------------------------------------------------------------------

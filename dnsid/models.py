@@ -903,7 +903,9 @@ class DnsIdTxtRecord:
         Draft 01 sorts all tags alphabetically. Returns a pure-ASCII string;
         callers sign and verify its ASCII bytes.
         """
-        return ";".join(sorted(t for t in self._all_tags() if not t.startswith("sg=")))
+        tags = (t for t in self._all_tags() if not t.startswith("sg="))
+        # Sort by tag name: whole "tag=value" strings put "a0=" before "a=".
+        return ";".join(sorted(tags, key=lambda t: t.partition("=")[0]))
 
     def known_tags_canonical(self) -> str:
         """Canonical form including only known protocol tags (excluding sg and unknown tags).
