@@ -853,11 +853,15 @@ class DnsIdTxtRecord:
         gi_domain = normalize_fqdn(self.gi) if gi_is_domain else ""
 
         # ku must be HTTPS with host == identity FQDN.
+        # A root dot in the ku/ek host is invalid: fetchers compare hosts exactly.
         ku_host = _parse_https_uri_host(self.ku, field_name="ku")
-        if normalize_fqdn(ku_host) != identity:
+        if ku_host.endswith(".") or normalize_fqdn(ku_host) != identity:
             raise ValidationError("ku host must equal identity FQDN")
 
-        ek_host = normalize_fqdn(_parse_https_uri_host(self.ek, field_name="ek"))
+        ek_host = _parse_https_uri_host(self.ek, field_name="ek")
+        if ek_host.endswith("."):
+            raise ValidationError("ek host must not end with a root dot")
+        ek_host = normalize_fqdn(ek_host)
         if ek_host != gi_domain and not ek_host.endswith("." + gi_domain):
             raise ValidationError("ek host must equal or be beneath gi")
 
