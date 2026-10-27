@@ -237,6 +237,49 @@ signed = http_sig.create_signed_http_request(req)
 vd = http_sig.verify_signed_http_request(signed)
 ```
 
+### Negotiated response authentication (RFC 9421 §5)
+
+Request signing alone does not authenticate the responder's DNSid identity.
+Enable response authentication with a locally selected agent domain:
+
+```python
+import httpx
+from dnsid import HttpSigningOptions, ResponseSignatureOptions
+
+options = HttpSigningOptions(response_signature=ResponseSignatureOptions(
+    expected_domain="payments-agent.example",
+    additional_components=["content-type"],
+))
+with httpx.Client(transport=httpx.HTTPTransport(retries=0)) as base:
+    with http_sig.create_signed_http_client(base, options) as client:
+        response = client.post("https://gateway.example/charge", content=b'{"amount":100}')
+```
+
+The client verifies every response before return, including HTTP errors, and
+rejects missing signatures. It snapshots policy and outgoing request context,
+disables redirects and automatic resends, and does not cache responses. The async
+signed client supports the same option. The expected DNSid domain can differ
+from the endpoint host; configure the resolver's `trusted_entities` separately
+when entity acceptance is required. HTTPS remains mandatory, and request data
+is sent before the responder's DNSid identity is authenticated.
+
+Server code explicitly calls
+`server_profile.sign_requested_http_response(request, response)` with the trusted
+originating request and a final buffered `HttpRequest(..., status=200)` response.
+This does not verify or authorize the caller. Without negotiation it is a no-op.
+
+Standalone callers use `create_signed_http_request(request, options)` followed by
+`verify_signed_http_response(request, response, policy, peer_cert=current_peer)`
+(or `async_verify_signed_http_response`). **Retain an unmodified prepared request
+and the original response-policy snapshot for each invocation.** Prepare a fresh
+unsigned request for each explicit retry.
+
+Only covered fields are authenticated. `Content-Type`, `Content-Encoding`, and
+`Location` are not covered by default; request required metadata through
+`additional_components`. See [the response-authentication guide](https://docs.dnsid.ai/reference/py/profile-http-signatures/)
+and [`docs/negotiated-responses.md`](docs/negotiated-responses.md) for limits,
+transport restrictions, standalone usage, and the conformance test map.
+
 ### Web Bot Auth (RFC 9421)
 
 Sign and verify DNSid WBA requests, including signed-directory discovery:

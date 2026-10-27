@@ -138,13 +138,12 @@ before rolling forward.
 
 ### Sync lifecycle and resource ownership
 
-The public API is synchronous. `IdentityManager`, profile verifiers, and
-`RegistryClient` methods block the calling thread while they perform DNS, HTTPS,
-registry, and log work. The narrow exceptions are helpers that wrap sync work for
-convenience: `RegistryClient.async_wait_for_status()` sleeps asynchronously
-between synchronous status polls, HTTP Message Signatures can produce an
-`httpx.AsyncClient` for outbound signing, and `async_retry_transient()` retries
-awaitables.
+Synchronous `IdentityManager`, profile verifier, and `RegistryClient` methods
+block the calling thread during DNS, HTTPS, registry, and log work. Async domain,
+profile, and registry verification paths are also available. HTTP Message
+Signatures provides an `httpx.AsyncClient` for signing and opt-in negotiated
+response verification. Sync-only injected dependencies still run in workers;
+those dependencies must honor the finite shared verification budget.
 
 Reuse `IdentityManager` and profile objects for a process or request pool when
 their configuration and dependencies are stable. The default identity cache is
@@ -160,6 +159,36 @@ SDK-managed one-shot fetches create and close their own `httpx.Client` objects.
 `IdentityManager.create_dnsid_http_client()` and profile methods that return an
 `httpx.Client` or `httpx.AsyncClient` transfer lifecycle ownership to the caller;
 close them with `close()` / `aclose()` or a context manager.
+
+### Negotiated response authentication
+
+Request signatures alone do not authenticate the responder's DNSid identity.
+`HttpSigningOptions.response_signature` enables mandatory response verification
+against a locally configured expected agent domain and a fresh per-send challenge.
+The signed clients verify errors and redirects before return, disable automatic
+redirects/auth resends, reject retry-enabled or unknown transports, and do not
+cache responses. Current-connection server peer evidence is passed to VerifyDomain
+on every invocation, including cache hits. Entity acceptance remains resolver policy.
+
+Standalone response helpers require the caller to retain an unmodified prepared
+request and the original policy snapshot. Only covered metadata is authenticated;
+Content-Type, Content-Encoding, and Location are not covered by default. Request
+coverage through `ResponseSignatureOptions.additional_components` when needed.
+HTTPS remains required, but response verification occurs after sensitive request
+data may already have been sent.
+
+The enabled clients share a default 30-second send/read/verification budget. Raw
+and decoded response content are each limited to 8 MiB, with bounded decoding
+only after signature and digest verification. Accept-Signature is limited to
+16 KiB, challenge nonces to 1024 encoded characters, combined signature fields to
+64 KiB, Content-Digest to 16 KiB, signature dictionaries to 16 labels, and each
+component list to 64 entries. Standalone hosts must also enforce allocation and
+streaming-read bounds before constructing buffered messages. Rejected or
+cancelled client responses are closed and are not returned as authenticated.
+
+See the [HTTP signature reference](https://docs.dnsid.ai/reference/py/profile-http-signatures/)
+for the APIs and snapshot contract. Server code still verifies and authorizes
+requests separately, and must finalize covered bytes before signing responses.
 
 ### HTTP timeouts, retries, and limits
 

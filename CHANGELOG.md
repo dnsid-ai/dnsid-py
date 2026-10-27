@@ -1,4 +1,10 @@
 
+## [unreleased]
+
+### Features
+
+- feat: add opt-in RFC 9421 negotiated DNSid response signing and verification, including fail-closed synchronous and asynchronous HTTP clients.
+
 ## [0.31.0] - 2026-10-27
 
 ### Bug Fixes

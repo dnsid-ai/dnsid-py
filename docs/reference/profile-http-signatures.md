@@ -62,7 +62,10 @@ Sign an outgoing HTTP request (RFC 9421 HTTP Message Signatures).
 
 Sets Signature-Input and Signature headers on *req* and returns it.
 When *req* has a body, a Content-Digest header is computed and covered
-by the signature.
+by the signature. With response_signature set, requires HTTPS and prepares
+Accept-Signature; this helper does not send or verify a response. Retain
+an unmodified prepared request and original policy snapshot for the
+standalone response verifier.
 
 **Arguments:**
 
@@ -93,7 +96,7 @@ Wrap an httpx.Client so every outbound request is automatically signed.
 
 **Returns:**
 
-- `httpx.Client` — A new httpx.Client that signs each request before sending it. Content is buffered up to 8 MiB; replay streams retain original cleanup. The base client and its transport remain caller-owned.
+- `httpx.Client` — A new httpx.Client that signs each request before sending it. Content is buffered up to 8 MiB; replay streams retain original cleanup. The base client and its transport remain caller-owned. With response_signature, snapshots policy and verifies every response (including HTTP errors) before returning it. Disables redirects/auth resends and rejects transports other than HTTPX/SDK transports with retries=0 or MockTransport. Does not inherit base-client hooks, mounts, authentication flows, or caches. Uses a shared 30-second budget and 8 MiB raw/decoded response limits.
 
 ### `create_signed_async_http_client`
 
@@ -112,7 +115,64 @@ Return an httpx.AsyncClient that auto-signs every outbound request.
 
 **Returns:**
 
-- `httpx.AsyncClient` — An httpx.AsyncClient that signs each request before sending it. Content is buffered up to 8 MiB; replay streams retain original cleanup.
+- `httpx.AsyncClient` — An httpx.AsyncClient that signs each request before sending it. Content is buffered up to 8 MiB; replay streams retain original cleanup. With response_signature, snapshots policy and verifies every response before return, including errors. Disables redirects/auth resends; accepts only HTTPX/SDK transports with retries=0 or MockTransport. The shared budget defaults to 30 seconds; raw and decoded content are each capped at 8 MiB. Rejected/cancelled responses are closed, never cached.
+
+### `sign_requested_http_response`
+
+```python
+HttpSignatureProfile.sign_requested_http_response(request: HttpRequest, response: HttpRequest) -> HttpRequest
+```
+
+Fulfill one strict RFC 9421 response signature request atomically.
+
+**Arguments:**
+
+- `request` (`HttpRequest`): Trusted originating request, with its final signature fields.
+- `response` (`HttpRequest`): Final buffered response, represented by HttpRequest with status. Finalize content coding and covered fields before calling this method.
+
+**Returns:**
+
+- `HttpRequest` — The same response, unchanged when Accept-Signature is absent. Otherwise sets Content-Digest, adds no-store, and signs with the operational key.
+
+**Raises:**
+
+- `VerificationError`: Malformed/unsupported peer negotiation, unavailable content or fields, colliding label, unsupported status, or resource limit.
+- `ArgumentError`: Missing signing configuration or a key change during signing.
+
+### `verify_signed_http_response`
+
+```python
+HttpSignatureProfile.verify_signed_http_response(request: HttpRequest, response: HttpRequest, opts: ResponseSignatureOptions, *, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify the requested response label against local identity policy.
+
+**Arguments:**
+
+- `request` (`HttpRequest`): Unmodified prepared originating request. Standalone callers must retain this request and the original policy snapshot for this invocation.
+- `response` (`HttpRequest`): Actual buffered response (HttpRequest with status). None content is accepted only for HEAD, 204, or 304, never for an unavailable body.
+- `opts` (`ResponseSignatureOptions`): Original expected domain and additional coverage policy.
+- `peer_cert` (`TLSCertificate | None`): Trusted server certificate from the current application connection. — default `None`
+
+**Returns:**
+
+- `VerifiedDomain` — Verified DNSid identity after signature, digest, and no-store checks. Uncovered metadata, including Content-Type and Location, is not authenticated.
+
+**Raises:**
+
+- `ArgumentError`: Invalid local policy or non-HTTPS target.
+- `VerificationError`: Missing/invalid negotiation or response authentication. Resolver failures retain their native classification.
+
+### `async_verify_signed_http_response`
+
+```python
+HttpSignatureProfile.async async_verify_signed_http_response(request: HttpRequest, response: HttpRequest, opts: ResponseSignatureOptions, *, peer_cert: TLSCertificate | None = None) -> VerifiedDomain
+```
+
+Verify a response with async resolution and the standalone snapshot contract.
+
+Uses the same policy, bounds, current-peer evidence, and checks as
+verify_signed_http_response. Sync-only resolvers run in a worker.
 
 ### `verify_signed_http_request`
 
@@ -204,6 +264,20 @@ Options for HttpSignatureProfile.create_signed_http_request.
 - `label` (`str`): Signature label used in Signature/Signature-Input headers.
 - `tag` (`str`): RFC 9421 tag parameter identifying the signature's application.
 - `expires_in_seconds` (`int`): Signature validity window from creation.
+- `response_signature` (`ResponseSignatureOptions | None`): When present, request mandatory response authentication.
+
+## `ResponseSignatureOptions`
+
+```python
+from dnsid import ResponseSignatureOptions
+```
+
+Local policy for opt-in negotiated HTTP response authentication.
+
+**Attributes:**
+
+- `expected_domain` (`str`): Expected DNSid agent FQDN, independent of the endpoint host.
+- `additional_components` (`list[str]`): Extra response components in caller order, using the same component strings as SignatureParams (for example ``content-type``).
 
 ## `HttpVerificationOptions`
 
