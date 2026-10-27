@@ -1676,6 +1676,23 @@ another signature.  For roles whose key is not embedded in the envelope,
 the corresponding trusted key must be supplied via *context*; a signature
 whose key cannot be resolved fails closed.
 
+## `parse_prepared_issuance`
+
+```python
+from dnsid.c2sp_tlog import parse_prepared_issuance
+```
+
+```python
+parse_prepared_issuance(data: bytes, context: C2spVerificationContext) -> PreparedC2spTlogEvent
+```
+
+Parse ISSUANCE bytes against their signed bound reference.
+
+Use only for issuance, where no verified stream reference exists yet.
+Later events must use `parse_prepared_event` with the identity's
+verified reference. Supply the expected identity and keys in *context*;
+operational countersigning requires the complete context.
+
 ## `parse_signed_note_verifier_key`
 
 ```python

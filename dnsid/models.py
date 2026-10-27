@@ -1984,10 +1984,9 @@ class PublishedRecord:
 
 @dataclass(frozen=True)
 class PreparedRegistryEvent:
-    """Raw untrusted bytes and log context returned by a prepare endpoint."""
+    """Exact untrusted response bytes returned by a prepare endpoint."""
 
     entry_bytes: bytes
-    log_reference: str
 
 
 @dataclass

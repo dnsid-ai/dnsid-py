@@ -780,8 +780,9 @@ AbstractRegistryClient.prepare_issuance(domain: str, idempotency_key: str) -> Pr
 Fetch exact untrusted accountable-entity-signed ISSUANCE bytes.
 
 POST ``{baseUrl}/api/v1/agent/{domain}/tlog/issuance/prepare`` with no
-body and the supplied ``Idempotency-Key`` header. The returned log
-reference is transport context and remains unparsed at this boundary.
+body and the supplied ``Idempotency-Key`` header. Validate the returned
+bytes with ``dnsid.c2sp_tlog.parse_prepared_issuance`` against the
+expected identity and keys before countersigning.
 
 ### `prepare_key_rotation`
 
@@ -792,7 +793,7 @@ AbstractRegistryClient.prepare_key_rotation(domain: str, request: KeyRotationPre
 Return an untrusted registry-prepared KEY_ROTATION response.
 
 The caller independently parses and verifies the exact returned bytes
-against the returned log reference before adding any signature.
+against the identity's verified log reference before adding any signature.
 
 ### `submit_prepared_event`
 

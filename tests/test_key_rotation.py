@@ -9,6 +9,7 @@ and Idempotency).
 from __future__ import annotations
 
 import datetime
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
@@ -128,7 +129,6 @@ class FakeRotationRegistry:
         ))
         return PreparedRegistryEvent(
             entry_bytes=canonical_json(prepared.envelope).encode(),
-            log_reference=_LR,
         )
 
     def submit_prepared_event(
@@ -656,6 +656,27 @@ class TestRotateOperationalKey:
         assert provider.active_kid == "ku-1"
         assert provider.superseded == []
 
+    def test_preparation_is_bound_to_identity_log_reference(self):
+        from dnsid.c2sp_tlog import C2spTlogParseError, canonical_bytes
+
+        class WrongStreamRegistry(FakeRotationRegistry):
+            def prepare_key_rotation(self, domain, request, idempotency_key):
+                response = super().prepare_key_rotation(domain, request, idempotency_key)
+                envelope = json.loads(response.entry_bytes)
+                envelope["stream_id"] = "other_instance"
+                envelope["lr"] = _LR.split("#")[0] + "#other_instance"
+                return PreparedRegistryEvent(canonical_bytes(envelope))
+
+        provider = RotationProvider()
+        registry = WrongStreamRegistry()
+        manager = _manager(provider)
+        hooks, saved, pauses = _hooks()
+        with pytest.raises(C2spTlogParseError, match="mismatch"):
+            manager.rotate_operational_key(registry, idempotency_key="idem-1", **hooks)
+        assert not registry.submit_calls and not saved and not pauses
+        assert provider.active_kid == "ku-1"
+        assert provider.superseded == []
+
     def test_tampered_preparation_fails_closed(self):
         """An envelope naming a foreign new key must not obtain our signatures."""
 
@@ -689,13 +710,14 @@ class TestRegistryRotationEndpoints:
         raw, _ = _ed25519_jwk("ku-2")
         return KeyRotationPreparationRequest(previous_key_id="thumb", public_key=jwk_from_dict(raw))
 
-    def test_prepare_sends_exact_request_and_preserves_untrusted_response(self):
+    @pytest.mark.parametrize("headers", [{}, {"DNSID-Log-Reference": "ignored"}])
+    def test_prepare_sends_exact_request_and_preserves_untrusted_response(self, headers):
         captured: dict = {}
         response = MagicMock()
         response.is_success = True
         response.status_code = 200
         response.content = b"prepared-bytes"
-        response.headers = {"DNSID-Log-Reference": _LR}
+        response.headers = headers
 
         def fake_post(url, json=None, headers=None, timeout=None):
             captured.update(url=url, json=json, headers=headers, timeout=timeout)
@@ -704,7 +726,7 @@ class TestRegistryRotationEndpoints:
         with patch_registry_http("httpx.post", fake_post):
             data = self._client().prepare_key_rotation(_DOMAIN, self._request(), "idem-9")
 
-        assert data == PreparedRegistryEvent(b"prepared-bytes", _LR)
+        assert data == PreparedRegistryEvent(b"prepared-bytes")
         assert captured["url"].endswith("/tlog/key-rotation/prepare")
         assert captured["headers"] == {
             "Authorization": f"Bearer {_FAKE_API_KEY}",
@@ -712,16 +734,6 @@ class TestRegistryRotationEndpoints:
         }
         assert captured["json"]["previous_key_id"] == "thumb"
         assert captured["json"]["public_key"]["kid"] == "ku-2"
-
-    def test_prepare_requires_log_reference(self):
-        response = MagicMock()
-        response.is_success = True
-        response.status_code = 200
-        response.content = b"prepared-bytes"
-        response.headers = {}
-        with patch_registry_http("httpx.post", return_value=response):
-            with pytest.raises(VerificationError, match="DNSID-Log-Reference"):
-                self._client().prepare_key_rotation(_DOMAIN, self._request(), "idem-9")
 
     def test_prepare_rejects_private_jwk_members(self):
         raw, _ = _ed25519_jwk("ku-2")

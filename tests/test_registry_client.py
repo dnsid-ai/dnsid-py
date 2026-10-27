@@ -480,7 +480,7 @@ class TestPrepareIssuance:
     @staticmethod
     def _response(
         entry: bytes = b'{"kind":"dnsid.lifecycle"}',
-        log_reference: str | None = "c2sp-tlog:testnet:https://log.example#agent.example.com",
+        log_reference: str | None = None,
     ) -> MagicMock:
         response = MagicMock()
         response.status_code = 200
@@ -505,9 +505,7 @@ class TestPrepareIssuance:
 
         assert isinstance(result, PreparedRegistryEvent)
         assert result.entry_bytes == entry
-        assert result.log_reference == (
-            "c2sp-tlog:testnet:https://log.example#agent.example.com"
-        )
+        assert result == PreparedRegistryEvent(entry)
         assert captured["url"].endswith(
             f"/api/v1/agent/{_DOMAIN}/tlog/issuance/prepare"
         )
@@ -516,6 +514,97 @@ class TestPrepareIssuance:
             "Content-Type": "application/json",
             "Idempotency-Key": "issuance-1",
         }
+
+    @staticmethod
+    def _signed_issuance():
+        from dnsid import IssuanceEvent, LocalKeyProvider
+        from dnsid.c2sp_tlog import (
+            C2spSignerRole,
+            C2spVerificationContext,
+            canonical_bytes,
+            prepare_event,
+            sign_prepared_event,
+        )
+
+        entity = LocalKeyProvider.generate()
+        operational = LocalKeyProvider.generate()
+        context = C2spVerificationContext(
+            fqdn=_DOMAIN, gi="example.com",
+            entity_key=entity.signing_key(),
+            operational_key=operational.signing_key(),
+        )
+        event = IssuanceEvent(
+            domain=_DOMAIN, governance_id=context.gi,
+            timestamp=datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC),
+            entity_key=context.entity_key, operational_key=context.operational_key,
+        )
+        prepared = prepare_event(
+            event, "c2sp-tlog:testnet:https://log.example#instance_AAAAAAAAAAAAAAAAAAAAAA",
+        )
+        signed = sign_prepared_event(prepared, C2spSignerRole.ENTITY, entity, context)
+        return canonical_bytes(signed.envelope), context, operational
+
+    @pytest.mark.parametrize("header", [None, "c2sp-tlog:testnet:https://other.example#other"])
+    def test_issuance_validates_signed_reference_and_countersigns(self, header):
+        from dnsid.c2sp_tlog import (
+            C2spSignerRole,
+            entry_bytes,
+            parse_prepared_issuance,
+            sign_prepared_event,
+        )
+
+        wire, context, operational = self._signed_issuance()
+        with patch_registry_http("httpx.post", return_value=self._response(wire, header)):
+            response = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
+        assert response.entry_bytes == wire
+        prepared = parse_prepared_issuance(response.entry_bytes, context)
+        assert prepared.reference.lr == json.loads(wire)["lr"]
+        complete = sign_prepared_event(
+            prepared, C2spSignerRole.OPERATIONAL_COUNTERSIGNATURE, operational, context,
+        )
+        assert entry_bytes(complete, context)
+
+    @pytest.mark.parametrize(
+        "problem",
+        ["missing", "null", "non-string", "malformed", "indexed", "noncanonical-reference",
+         "duplicate", "noncanonical-json", "not-object", "not-issuance"],
+    )
+    def test_issuance_rejects_invalid_signed_reference(self, problem):
+        from dnsid.c2sp_tlog import (
+            C2spTlogParseError,
+            canonical_bytes,
+            parse_prepared_issuance,
+        )
+
+        wire, context, _ = self._signed_issuance()
+        envelope = json.loads(wire)
+        if problem == "missing":
+            del envelope["lr"]
+        elif problem == "null":
+            envelope["lr"] = None
+        elif problem == "non-string":
+            envelope["lr"] = 7
+        elif problem == "malformed":
+            envelope["lr"] = "not-a-log-reference"
+        elif problem == "indexed":
+            envelope["lr"] += "@0"
+        elif problem == "noncanonical-reference":
+            envelope["lr"] = envelope["lr"].replace("https://log.example", "https://LOG.example")
+        elif problem == "not-issuance":
+            envelope["type"] = "KEY_ROTATION"
+        if problem == "duplicate":
+            wire = wire[:-1] + b',"lr":"c2sp-tlog:testnet:https://other.example#other"}'
+        elif problem == "noncanonical-json":
+            wire += b"\n"
+        elif problem == "not-object":
+            wire = b"[]"
+        else:
+            wire = canonical_bytes(envelope)
+        with patch_registry_http("httpx.post", return_value=self._response(wire)):
+            response = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
+        assert response.entry_bytes == wire
+        with pytest.raises(C2spTlogParseError):
+            parse_prepared_issuance(response.entry_bytes, context)
 
     def test_domain_is_path_escaped(self):
         response = self._response()
@@ -538,27 +627,17 @@ class TestPreparedEventTransport:
     @staticmethod
     def _response(
         entry: bytes = b'{"prepared":"exact bytes"}',
-        log_reference: str | None = (
-            "c2sp-tlog:testnet:https://log.example#instance_AAAAAAAAAAAAAAAAAAAAAA"
-        ),
     ) -> MagicMock:
         response = MagicMock()
         response.status_code = 200
         response.is_success = True
         response.content = entry
-        response.headers = (
-            {"DNSID-Log-Reference": log_reference} if log_reference is not None else {}
-        )
+        response.headers = {}
         return response
 
     def test_submit_uses_the_same_idempotency_validation(self):
         with pytest.raises(ArgumentError, match="1 to 200 bytes"):
             _make_client().submit_prepared_event(_DOMAIN, b"entry", " trailing")
-
-    def test_missing_log_reference_is_rejected_without_parsing_body(self):
-        with patch_registry_http("httpx.post", return_value=self._response(b"not-json", None)):
-            with pytest.raises(VerificationError, match="DNSID-Log-Reference"):
-                _make_client().prepare_issuance(_DOMAIN, "issuance-1")
 
     def test_http_failure_does_not_surface_response_body(self):
         response = self._response(b"secret response body")

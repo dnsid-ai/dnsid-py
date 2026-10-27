@@ -593,8 +593,10 @@ RegistryClient.prepare_issuance(domain: str, idempotency_key: str) -> PreparedRe
 Fetch exact raw ISSUANCE bytes for operational countersigning.
 
 ``POST /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
-body. Both the response bytes and ``DNSID-Log-Reference`` header are
-untrusted and must be validated by the C2SP prepared-event binding.
+body. The response bytes are untrusted. Use
+``dnsid.c2sp_tlog.parse_prepared_issuance`` with the expected identity
+and keys to validate them against the entry's signed ``lr`` before
+countersigning.
 
 ### `async_prepare_issuance`
 
@@ -621,8 +623,8 @@ does a second preparation against the same previous key.  Only public
 JWK members are sent — a *request.public_key* carrying private
 material is rejected locally before any request.
 
-Returns the exact canonical prepared-envelope bytes and bound log
-reference as UNTRUSTED input: the caller must parse both with the bound log implementation
+Returns the exact prepared-envelope bytes as UNTRUSTED input. The
+caller must parse them against the identity's verified log reference
 (``dnsid.c2sp_tlog.parse_prepared_event``), independently reproduce
 the signed bytes, and verify domain, previous key, new key, log
 context, and stream-chain fields before adding any signature.
@@ -783,7 +785,7 @@ Record returned after a successful publish_to_registry call.
 from dnsid import PreparedRegistryEvent
 ```
 
-Raw untrusted bytes and log context returned by a prepare endpoint.
+Exact untrusted response bytes returned by a prepare endpoint.
 
 ## `KeyRotationPreparationRequest`
 

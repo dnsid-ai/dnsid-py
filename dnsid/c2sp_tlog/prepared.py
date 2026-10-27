@@ -181,6 +181,29 @@ def parse_prepared_event(
     return prepared
 
 
+def parse_prepared_issuance(
+    data: bytes,
+    context: C2spVerificationContext,
+) -> PreparedC2spTlogEvent:
+    """Parse ISSUANCE bytes against their signed bound reference.
+
+    Use only for issuance, where no verified stream reference exists yet.
+    Later events must use :func:`parse_prepared_event` with the identity's
+    verified reference. Supply the expected identity and keys in *context*;
+    operational countersigning requires the complete context.
+    """
+    _assert_entry_size(data)
+    obj = parse_json_no_duplicate_members(data)
+    assert_canonical_json_bytes(data, obj)
+    if not isinstance(obj, dict) or obj.get("type") != "ISSUANCE":
+        raise C2spTlogParseError("prepared issuance must be an ISSUANCE object")
+    lr = obj.get("lr")
+    if not isinstance(lr, str):
+        raise C2spTlogParseError("prepared issuance requires a signed lr string")
+    reference = _bound_reference(lr)
+    return parse_prepared_event(data, reference.lr, context)
+
+
 def sign_prepared_event(
     prepared: PreparedC2spTlogEvent,
     role: C2spSignerRole,
