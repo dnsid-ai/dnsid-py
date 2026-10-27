@@ -27,7 +27,7 @@ dependencies = [
     # HTTP client for JWKS, status endpoint fetches, and DoH queries
     "httpx>=0.27",
     # System DNS resolver (TXT record lookup with DNSSEC awareness)
-    "dnspython>=2.8",
+    "dnspython>=2.9.0",
     # Cryptographic operations (JWK thumbprint, ECDSA/EdDSA verify/sign)
     "cryptography>=42.0",
     # RFC 8941/9651 Structured Field parsing and serialization
