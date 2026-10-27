@@ -372,7 +372,7 @@ def test_rejected_bundle_does_not_advance_checkpoint() -> None:
     assert options.checkpoint_store.get("log.example") is None
 
 
-def test_fetched_bundle_uses_complete_scan_for_missing_consistency() -> None:
+def test_custom_reader_without_tiles_can_scan_for_missing_consistency() -> None:
     vector = _vector()
     bundle = json.loads(vector["bundle"])
     reference = parse_c2sp_tlog_lr(bundle["lr"])
@@ -569,8 +569,7 @@ def test_consistency_proof_can_extend_a_trusted_empty_tree():
 
     class Source:
         def fetch_consistency_proof(self, reference, from_size, to_size):
-            assert from_size == 0
-            return []
+            raise AssertionError("empty trusted trees do not need a proof")
 
     options.consistency_source = Source()
     verify_c2sp_stream_bundle(vector["bundle"].encode(), options)

@@ -35,7 +35,7 @@ def _reader(store):
 
 @pytest.mark.parametrize("field,value", [
     ("origin", ""), ("origin", " "), ("tree_size", True), ("tree_size", 1.0),
-    ("tree_size", -1), ("root_hash", b"short"), ("root_hash", bytearray(32)),
+    ("tree_size", -1), ("root_hash", bytes(32)), ("root_hash", b"short"), ("root_hash", bytearray(32)),
     ("witness_time", datetime.datetime(2026, 1, 1)), ("witness_time", "2026-01-01"),
 ])
 def test_store_rejects_invalid_input_without_changing_trust(store, field, value):

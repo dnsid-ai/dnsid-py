@@ -1,4 +1,4 @@
-"""Async stream bundles retain bounded raw consistency fallback."""
+"""Custom readers without tile capability retain bounded consistency fallback."""
 
 import json
 from dataclasses import replace
@@ -23,7 +23,7 @@ from tests.test_c2sp_stream_bundle import _options, _seed_old_checkpoint, _vecto
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["valid", "newer", "conflict", "short", "required", "trusted-fork"])
-async def test_consistency_fallback_keeps_atomic_store_checks(mode):
+async def test_custom_reader_consistency_fallback_keeps_atomic_store_checks(mode):
     vector = _vector()
     bundle = json.loads(vector["bundle"])
     reference = parse_c2sp_tlog_lr(bundle["lr"])

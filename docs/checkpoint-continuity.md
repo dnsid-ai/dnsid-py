@@ -20,7 +20,19 @@ not restore the lost continuity baseline.
 - Malformed supplied consistency proofs reject as inconsistent evidence rather
   than leaking a type error. Empty-tree proofs are checked explicitly. Missing
   capability has the machine-readable `condition="consistency_unavailable"`.
-  Only missing consistency evidence permits consistency-related raw fallback.
+  Only lower-level custom readers without a proof source or tile capability may
+  scan for missing consistency evidence, in preferred-bundle mode only.
+- Standard network readers use candidate-authenticated C2SP hash tiles for growing
+  checkpoints in both preferred- and required-bundle modes. Already verified scans
+  take precedence over explicit proof sources, which take precedence over tiles.
+  Neither proof-source nor tile failures permit a scan or another evidence source.
+- Tile reads use at most two tiles per level of the candidate tree. Missing partial
+  tiles (HTTP 404 or 403) get one full-tile retry, with no checkpoint refresh. Exact
+  lengths and candidate authentication precede trusted-root comparison: bad tiles
+  are `INVALID_EVIDENCE`; authenticated contradictory prefixes are `LOG_INCONSISTENT`.
+  Tile reads share cancellation and the overall budget, not the entry-byte cap.
+- Size-zero checkpoints must use SHA-256 of the empty string. Invalid candidates
+  are `INVALID_EVIDENCE`; invalid stored roots are `CHECKPOINT_STORE_ERROR`.
 - The memory store validates inputs and retains immutable UTC snapshots. Seeding
   cannot overwrite an equal-size conflicting root. Diagnostic roots are immutable
   byte strings.
@@ -51,11 +63,14 @@ durable-storage, crash, cross-process locking, or administrative-recovery guaran
 
 ## Validation
 
-After removing the built-in durable adapter:
+After implementing hash-tile checkpoint consistency:
 
-- `.venv/bin/pytest -q`: **1,847 passed**, eight expected local-key safety warnings.
+- `.venv/bin/pytest -q`: **2,640 passed**, eight expected local-key safety warnings.
+- `.venv/bin/pytest -q tests/test_c2sp_hash_tiles.py tests/test_c2sp_tile_continuity.py`:
+  **94 passed**, covering tile geometry, authentication, retries, source selection,
+  bundle modes, empty roots, exact-state race checks, cancellation, and deadlines.
 - `.venv/bin/ruff check .`: passed.
-- `.venv/bin/mypy dnsid`: passed, 47 source files.
+- `.venv/bin/mypy dnsid`: passed, 51 source files.
 - `.venv/bin/python scripts/gen_docs.py`: regenerated API reference.
 
 The cross-SDK compliance harness and live interoperability were not rerun.
