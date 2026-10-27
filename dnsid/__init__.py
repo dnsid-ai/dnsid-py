@@ -185,6 +185,7 @@ from .models import (
     PublishedRecord,
     RegistryAgentStatus,
     RegistryConfig,
+    ResponseSignatureOptions,
     RetirementEvent,
     RevocationEvent,
     SignatureParams,
@@ -305,6 +306,7 @@ __all__ = [
     "JWTOptions",
     "HttpRequest",
     "HttpSigningOptions",
+    "ResponseSignatureOptions",
     "HttpVerificationOptions",
     "SignatureParams",
     # JOSE / HTTP signatures profiles
