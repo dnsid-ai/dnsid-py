@@ -23,7 +23,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 from .._verification_budget import remaining_seconds
-from .errors import C2spCheckpointConsistencyError, C2spLifecycleErrorCategory
+from .errors import (
+    C2spCheckpointConsistencyError,
+    C2spCheckpointStoreError,
+    C2spLifecycleErrorCategory,
+)
+from .merkle import sha256
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,8 @@ def _checkpoint_snapshot(checkpoint: TrustedCheckpoint) -> TrustedCheckpoint:
         raise ValueError("checkpoint tree size must be a non-negative integer")
     if type(checkpoint.root_hash) is not bytes or len(checkpoint.root_hash) != 32:
         raise ValueError("checkpoint root must be a 32-byte SHA-256 hash")
+    if checkpoint.tree_size == 0 and checkpoint.root_hash != sha256():
+        raise ValueError("empty checkpoint root must be SHA-256 of the empty string")
     if (
         not isinstance(checkpoint.witness_time, datetime.datetime)
         or checkpoint.witness_time.utcoffset() is None
@@ -55,6 +62,20 @@ def _checkpoint_snapshot(checkpoint: TrustedCheckpoint) -> TrustedCheckpoint:
     except OverflowError as exc:
         raise ValueError("checkpoint witness time is outside the supported range") from exc
     return TrustedCheckpoint(checkpoint.origin, checkpoint.tree_size, checkpoint.root_hash, instant)
+
+
+def _stored_checkpoint(
+    checkpoint: TrustedCheckpoint | None, origin: str,
+) -> TrustedCheckpoint | None:
+    if checkpoint is None:
+        return None
+    try:
+        snapshot = _checkpoint_snapshot(checkpoint)
+        if snapshot.origin != origin:
+            raise ValueError("stored checkpoint origin mismatch")
+        return snapshot
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise C2spCheckpointStoreError("malformed stored checkpoint") from exc
 
 
 def _validate_origin(origin: str) -> None:
@@ -151,7 +172,7 @@ class InMemoryCheckpointStore(CheckpointStore):
     def get(self, origin: str) -> TrustedCheckpoint | None:
         """Return the immutable trusted checkpoint for *origin*, or None if unseen."""
         with self._locked(origin):
-            return self._by_origin.get(origin)
+            return _stored_checkpoint(self._by_origin.get(origin), origin)
 
     def put(self, checkpoint: TrustedCheckpoint) -> None:
         """Seed advancing state without proof checks; reject equal-size conflicts."""
@@ -169,7 +190,7 @@ class InMemoryCheckpointStore(CheckpointStore):
         """
         candidate = _checkpoint_snapshot(candidate)
         with self._locked(candidate.origin):
-            verify(self._by_origin.get(candidate.origin))
+            verify(_stored_checkpoint(self._by_origin.get(candidate.origin), candidate.origin))
             remaining_seconds()
             self._advance_locked(candidate)
 

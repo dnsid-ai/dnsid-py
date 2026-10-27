@@ -9,9 +9,15 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
-from .._verification_budget import async_run_blocking, async_verification_operation
+from .._verification_budget import (
+    async_run_blocking,
+    async_verification_operation,
+    verification_operation,
+)
 from .checkpoint import Checkpoint, parse_checkpoint
+from .checkpoint_store import TrustedCheckpoint
 from .errors import C2spTlogError, C2spTlogTransportError, C2spTlogVerificationError
+from .hash_tiles import consistency_tiles
 from .lr import ParsedC2spTlogLr
 from .resource_fetcher import (
     C2spBoundedResourceFetcher,
@@ -242,6 +248,37 @@ class ScanStreamSource:
             completeness_mode="full-scan",
             complete_through_size=checkpoint.tree_size,
             response_bytes=len(checkpoint_bytes) + total_entry_bytes,
+        )
+
+    @verification_operation
+    def verify_checkpoint_consistency(
+        self, reference: ParsedC2spTlogLr,
+        trusted: TrustedCheckpoint, candidate: TrustedCheckpoint,
+    ) -> None:
+        """Authenticate continuity from bounded hash tiles, without scanning entries."""
+        from ._async import run_verification
+
+        run_verification(
+            consistency_tiles(reference.log_prefix, trusted, candidate, self._max_tree_size),
+            lambda request: self._bytes(*request),
+        )
+
+    @async_verification_operation
+    async def async_verify_checkpoint_consistency(
+        self, reference: ParsedC2spTlogLr,
+        trusted: TrustedCheckpoint, candidate: TrustedCheckpoint,
+    ) -> None:
+        """Authenticate continuity with native async tile reads when available."""
+        from ._async import async_run_verification
+
+        async def read(request: tuple[str, int]) -> bytes:
+            if callable(getattr(self._transport, "fetch_bounded", None)):
+                return await async_fetch_bounded_bytes(self._transport, *request)
+            return await async_run_blocking(self._bytes, *request)
+
+        await async_run_verification(
+            consistency_tiles(reference.log_prefix, trusted, candidate, self._max_tree_size),
+            read,
         )
 
     def security_guarantees(self) -> C2spResourceFetchGuarantees | None:

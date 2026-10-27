@@ -38,6 +38,7 @@ from .checkpoint_store import (
     CheckpointStore,
     InMemoryCheckpointStore,
     TrustedCheckpoint,
+    _stored_checkpoint,
 )
 from .errors import (
     C2spCheckpointConsistencyError,
@@ -177,7 +178,8 @@ class C2spTlogReaderOptions:
     A scan transport must also implement ``fetch_bounded(url, maximum)``.
     Supplying independently trusted ``bundle_keys`` and the exact
     ``bundle_policy_document`` prefers bounded per-domain stream bundles;
-    the scanner remains the availability and consistency fallback.
+    hash tiles establish checkpoint continuity, while the scanner remains
+    the bundle-availability fallback.
     """
 
     policy: C2spTlogPolicy
@@ -1460,6 +1462,7 @@ class C2spTlogReader(LogReader):
         entries = sorted(evidence.entries, key=lambda e: e.index)
 
         def _verify(stored: TrustedCheckpoint | None) -> None:
+            stored = _stored_checkpoint(stored, origin)
             if stored is None:
                 return
             if stored.tree_size > new_size:

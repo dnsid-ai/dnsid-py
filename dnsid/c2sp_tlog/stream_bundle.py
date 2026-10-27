@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import threading
 import time
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from .._utils import b64url_decode_strict, b64url_encode, normalize_fqdn
 from .._verification_budget import (
     async_run_blocking,
     async_verification_operation,
+    verification_budget,
     verification_operation,
 )
 from ..models import JWK, IssuanceEvent, KeyRotationEvent, MigrationEvent
@@ -30,6 +32,7 @@ from .checkpoint_store import (
     CheckpointStore,
     InMemoryCheckpointStore,
     TrustedCheckpoint,
+    _stored_checkpoint,
 )
 from .errors import (
     C2spCheckpointConsistencyError,
@@ -216,9 +219,11 @@ class _FetchedStreamBundleSource:
                 verified.checkpoint,
                 verified.checkpoint_witness_time,
                 options,
+                tile_consistency=getattr(self._fallback, "verify_checkpoint_consistency", None),
             )
         except _MissingC2spConsistencyEvidenceError:
-            if self._require_bundle:
+            if (self._require_bundle or options.consistency_source is not None
+                    or callable(getattr(self._fallback, "verify_checkpoint_consistency", None))):
                 raise
             evidence = self._fallback.load_stream(reference, fqdn)
             if account_response is not None:
@@ -281,12 +286,12 @@ class _FetchedStreamBundleSource:
             raise C2spTlogVerificationError("stream bundle fqdn does not match requested domain")
         options.checkpoint_store = self._checkpoint_store
         try:
-            await async_run_blocking(
-                _verify_and_advance_checkpoint, verified.reference, verified.checkpoint,
-                verified.checkpoint_witness_time, options,
+            await _async_verify_and_advance_checkpoint(
+                verified, options, self._fallback,
             )
         except _MissingC2spConsistencyEvidenceError:
-            if self._require_bundle:
+            if (self._require_bundle or options.consistency_source is not None
+                    or callable(getattr(self._fallback, "verify_checkpoint_consistency", None))):
                 raise
             evidence = await call_async(self._fallback, "load_stream", reference, fqdn)
             if account_response is not None:
@@ -591,6 +596,9 @@ def _verify_and_advance_checkpoint(
     options: C2spStreamBundleVerifierOptions,
     *,
     complete_entries: list[IndexedEntry] | None = None,
+    tile_consistency: Callable[
+        [ParsedC2spTlogLr, TrustedCheckpoint, TrustedCheckpoint], None
+    ] | None = None,
 ) -> None:
     candidate = TrustedCheckpoint(
         origin=reference.origin,
@@ -599,9 +607,22 @@ def _verify_and_advance_checkpoint(
         witness_time=witness_time,
     )
 
+    if candidate.tree_size == 0 and candidate.root_hash != sha256():
+        raise C2spTlogVerificationError(
+            "empty checkpoint root must be SHA-256 of the empty string",
+            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
+        )
+    if complete_entries is not None and any(
+        type(entry.index) is not int or entry.index < 0 for entry in complete_entries
+    ):
+        raise C2spTlogVerificationError(
+            "complete scan contains an invalid index",
+            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
+        )
     entries = sorted(complete_entries or [], key=lambda entry: entry.index)
 
     def _verify(stored: TrustedCheckpoint | None) -> None:
+        stored = _stored_checkpoint(stored, reference.origin)
         if complete_entries is not None:
             _verify_checkpoint_prefix(entries, candidate, "candidate")
         if stored is None:
@@ -622,6 +643,19 @@ def _verify_and_advance_checkpoint(
                     observed=candidate,
                 )
             return
+        if stored.tree_size == 0:
+            return
+        if complete_entries is not None:
+            try:
+                _verify_checkpoint_prefix(entries, stored, "previously trusted")
+            except C2spTlogVerificationError as exc:
+                raise C2spCheckpointConsistencyError(
+                    "stream bundle checkpoint is not consistent with previously trusted prefix",
+                    category=C2spLifecycleErrorCategory.LOG_INCONSISTENT,
+                    trusted=stored,
+                    observed=candidate,
+                ) from exc
+            return
         if options.consistency_source is not None:
             proof = options.consistency_source.fetch_consistency_proof(
                 reference, stored.tree_size, candidate.tree_size
@@ -640,22 +674,70 @@ def _verify_and_advance_checkpoint(
                     observed=candidate,
                 )
             return
-        if complete_entries is not None:
-            try:
-                _verify_checkpoint_prefix(entries, stored, "previously trusted")
-            except C2spTlogVerificationError as exc:
-                raise C2spCheckpointConsistencyError(
-                    "stream bundle checkpoint is not consistent with previously trusted prefix",
-                    category=C2spLifecycleErrorCategory.LOG_INCONSISTENT,
-                    trusted=stored,
-                    observed=candidate,
-                ) from exc
+        if tile_consistency is not None:
+            tile_consistency(reference, stored, candidate)
             return
         raise _MissingC2spConsistencyEvidenceError(
-            "stream bundle checkpoint growth requires a consistency-proof source"
+            "stream bundle checkpoint growth requires a consistency-proof source or hash tiles"
         )
 
     options.checkpoint_store.verify_and_advance(candidate, _verify)
+
+
+class _CheckpointChanged(Exception):
+    pass
+
+
+async def _async_verify_and_advance_checkpoint(
+    verified: VerifiedC2spStreamBundle,
+    options: C2spStreamBundleVerifierOptions,
+    source: C2spTlogSource,
+) -> None:
+    from ._async import call_async
+
+    cancel = threading.Event()
+    try:
+        with verification_budget(cancelled=cancel):
+            reference = verified.reference
+            checkpoint = verified.checkpoint
+            if (options.consistency_source is not None
+                    or not callable(getattr(source, "verify_checkpoint_consistency", None))):
+                await async_run_blocking(
+                    _verify_and_advance_checkpoint, reference, checkpoint,
+                    verified.checkpoint_witness_time, options,
+                )
+                return
+            candidate = TrustedCheckpoint(
+                reference.origin, checkpoint.tree_size, checkpoint.root_hash,
+                verified.checkpoint_witness_time,
+            )
+            while True:
+                stored = _stored_checkpoint(
+                    await async_run_blocking(options.checkpoint_store.get, reference.origin),
+                    reference.origin,
+                )
+                if stored is not None and 0 < stored.tree_size < candidate.tree_size:
+                    await call_async(
+                        source, "verify_checkpoint_consistency", reference, stored, candidate,
+                    )
+
+                def check(
+                    ref: ParsedC2spTlogLr, current: TrustedCheckpoint, observed: TrustedCheckpoint,
+                ) -> None:
+                    # Async reads cannot hold the store's synchronous lock.
+                    if current != stored:
+                        raise _CheckpointChanged()
+
+                try:
+                    await async_run_blocking(
+                        _verify_and_advance_checkpoint, reference, checkpoint,
+                        verified.checkpoint_witness_time, options, tile_consistency=check,
+                    )
+                    return
+                except _CheckpointChanged:
+                    continue
+    finally:
+        cancel.set()
 
 
 def _verified_complete_scan_entries(evidence: C2spStreamEvidence) -> list[IndexedEntry]:

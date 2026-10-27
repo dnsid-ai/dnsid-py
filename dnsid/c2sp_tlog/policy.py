@@ -7,7 +7,8 @@ import re
 from dataclasses import dataclass, field
 
 from .checkpoint import Checkpoint
-from .errors import C2spTlogVerificationError
+from .errors import C2spLifecycleErrorCategory, C2spTlogVerificationError
+from .merkle import sha256
 from .signed_note import (
     SignedNoteKey,
     parse_signed_note_verifier_key,
@@ -150,6 +151,11 @@ def enforce_checkpoint_policy(
         )
     if checkpoint.origin != origin:
         raise C2spTlogVerificationError(f"checkpoint origin mismatch: {checkpoint.origin}")
+    if checkpoint.tree_size == 0 and checkpoint.root_hash != sha256():
+        raise C2spTlogVerificationError(
+            "empty checkpoint root must be SHA-256 of the empty string",
+            category=C2spLifecycleErrorCategory.INVALID_EVIDENCE,
+        )
     p = normalized_origin_policy(policy, origin)
     accepted_log_keys = (
         [k for k in p.log_keys if k.signature_type == b"\x01"]

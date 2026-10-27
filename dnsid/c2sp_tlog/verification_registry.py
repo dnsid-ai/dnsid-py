@@ -57,9 +57,9 @@ class C2spTlogVerificationOptions:
 
     A trust profile or direct ``bundle_verifier_keys`` enables verified
     per-domain stream bundles. Unavailable endpoints fall back to the bounded
-    complete scanner. A valid newer bundle without a separate consistency proof
-    uses a complete scan to verify both checkpoint roots.
-    ``require_stream_bundle`` disables both fallbacks. A positive
+    complete scanner. Growing checkpoints use candidate-authenticated hash tiles,
+    never a consistency-related scan fallback.
+    ``require_stream_bundle`` disables availability fallback, not tile reads. A positive
     ``max_bundle_lifetime_ms`` is required whenever bundle keys are configured;
     bundle byte and event limits retain finite defaults.
 

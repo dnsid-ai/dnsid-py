@@ -604,7 +604,8 @@ capability contract, including DNS-rebinding and redirect protections.
 A scan transport must also implement ``fetch_bounded(url, maximum)``.
 Supplying independently trusted ``bundle_keys`` and the exact
 ``bundle_policy_document`` prefers bounded per-domain stream bundles;
-the scanner remains the availability and consistency fallback.
+hash tiles establish checkpoint continuity, while the scanner remains
+the bundle-availability fallback.
 
 ## `C2spTlogSource`
 
@@ -736,9 +737,9 @@ decoded bytes during reads, and uses finite deadlines.
 
 A trust profile or direct ``bundle_verifier_keys`` enables verified
 per-domain stream bundles. Unavailable endpoints fall back to the bounded
-complete scanner. A valid newer bundle without a separate consistency proof
-uses a complete scan to verify both checkpoint roots.
-``require_stream_bundle`` disables both fallbacks. A positive
+complete scanner. Growing checkpoints use candidate-authenticated hash tiles,
+never a consistency-related scan fallback.
+``require_stream_bundle`` disables availability fallback, not tile reads. A positive
 ``max_bundle_lifetime_ms`` is required whenever bundle keys are configured;
 bundle byte and event limits retain finite defaults.
 
@@ -1086,6 +1087,22 @@ ScanStreamSource.async async_load(prefix: str) -> StreamEvidence
 ```
 
 Scan standard resources asynchronously, authenticating before tile reads.
+
+### `verify_checkpoint_consistency`
+
+```python
+ScanStreamSource.verify_checkpoint_consistency(reference: ParsedC2spTlogLr, trusted: TrustedCheckpoint, candidate: TrustedCheckpoint) -> None
+```
+
+Authenticate continuity from bounded hash tiles, without scanning entries.
+
+### `async_verify_checkpoint_consistency`
+
+```python
+ScanStreamSource.async async_verify_checkpoint_consistency(reference: ParsedC2spTlogLr, trusted: TrustedCheckpoint, candidate: TrustedCheckpoint) -> None
+```
+
+Authenticate continuity with native async tile reads when available.
 
 ### `security_guarantees`
 
