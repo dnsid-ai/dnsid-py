@@ -833,18 +833,12 @@ class IdentityManager:
             public_key=new_key,
         )
         prepared_response = registry_client.prepare_key_rotation(domain, request, idempotency_key)
-        if prepared_response.log_reference != lr:
-            raise ValidationError(
-                "registry preparation returned an unexpected log reference: "
-                f"{prepared_response.log_reference!r} != {lr!r}"
-            )
-
         context = C2spVerificationContext(
             previous_operational_key=previous_key,
             fqdn=domain,
         )
         prepared = parse_prepared_event(
-            prepared_response.entry_bytes, prepared_response.log_reference, context
+            prepared_response.entry_bytes, lr, context
         )
         if prepared.envelope.get("type") != "KEY_ROTATION":
             raise ValidationError(

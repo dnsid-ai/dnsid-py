@@ -78,7 +78,7 @@ def _response(request):
     if path.endswith("/record"):
         return httpx.Response(200, json={"canonicalContent": _VALID_CANONICAL, "signingKid": "kid-1"})
     if path.endswith("/prepare"):
-        return httpx.Response(200, content=_ENTRY, headers={"DNSID-Log-Reference": "c2sp-tlog:testnet:https://log.example#agent.example.com"})
+        return httpx.Response(200, content=_ENTRY)
     if path.endswith("/events"):
         return httpx.Response(200, json={"state": "accepted", "entryHash": hashlib.sha256(_ENTRY).hexdigest()})
     return httpx.Response(200, json={"id": "agent-123", "status": "VERIFIED"})

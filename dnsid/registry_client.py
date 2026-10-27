@@ -1323,8 +1323,10 @@ class RegistryClient(AbstractRegistryClient):
         """Fetch exact raw ISSUANCE bytes for operational countersigning.
 
         ``POST /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
-        body. Both the response bytes and ``DNSID-Log-Reference`` header are
-        untrusted and must be validated by the C2SP prepared-event binding.
+        body. The response bytes are untrusted. Use
+        ``dnsid.c2sp_tlog.parse_prepared_issuance`` with the expected identity
+        and keys to validate them against the entry's signed ``lr`` before
+        countersigning.
         """
         return self._run_registry(self._prepare_issuance_steps(domain, idempotency_key))
 
@@ -1371,16 +1373,7 @@ class RegistryClient(AbstractRegistryClient):
                 f"Registry request to {path!r} returned HTTP {response.status_code}",
                 transient=response.status_code >= 500,
             )
-        log_reference = response.headers.get("DNSID-Log-Reference", "")
-        if not log_reference:
-            raise VerificationError(
-                VerificationCode.RECORD_INVALID,
-                "registry prepared event is missing DNSID-Log-Reference",
-            )
-        return PreparedRegistryEvent(
-            entry_bytes=bytes(response.content),
-            log_reference=log_reference,
-        )
+        return PreparedRegistryEvent(entry_bytes=bytes(response.content))
 
     def prepare_key_rotation(
         self,
@@ -1399,8 +1392,8 @@ class RegistryClient(AbstractRegistryClient):
         JWK members are sent — a *request.public_key* carrying private
         material is rejected locally before any request.
 
-        Returns the exact canonical prepared-envelope bytes and bound log
-        reference as UNTRUSTED input: the caller must parse both with the bound log implementation
+        Returns the exact prepared-envelope bytes as UNTRUSTED input. The
+        caller must parse them against the identity's verified log reference
         (``dnsid.c2sp_tlog.parse_prepared_event``), independently reproduce
         the signed bytes, and verify domain, previous key, new key, log
         context, and stream-chain fields before adding any signature.
@@ -1474,16 +1467,7 @@ class RegistryClient(AbstractRegistryClient):
                 f"Registry request to {path!r} returned HTTP {response.status_code}",
                 transient=response.status_code >= 500,
             )
-        log_reference = response.headers.get("DNSID-Log-Reference", "")
-        if not log_reference:
-            raise VerificationError(
-                VerificationCode.RECORD_INVALID,
-                "registry prepared event is missing DNSID-Log-Reference",
-            )
-        return PreparedRegistryEvent(
-            entry_bytes=bytes(response.content),
-            log_reference=log_reference,
-        )
+        return PreparedRegistryEvent(entry_bytes=bytes(response.content))
 
     def submit_prepared_event(
         self,
