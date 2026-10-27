@@ -1,4 +1,23 @@
 
+## [0.31.0] - 2026-10-27
+
+### Bug Fixes
+
+- fix: reject DER ES256, oversized P-256 coordinates and small-order Ed25519 keys ([#99](https://github.com/dnsid-ai/dnsid-py/pull/99))
+- fix: sort TXT canonical form by tag name and reject trailing newlines ([#97](https://github.com/dnsid-ai/dnsid-py/pull/97))
+- fix: reject a root dot in the ku and ek hosts ([#98](https://github.com/dnsid-ai/dnsid-py/pull/98))
+- fix(deps): require dnspython 2.9.0 to resolve security audit ([#106](https://github.com/dnsid-ai/dnsid-py/pull/106))
+
+### Chores
+
+- ci(security): pin shared workflow to v1.2.0 and drop duplicate lint/test ([#103](https://github.com/dnsid-ai/dnsid-py/pull/103))
+- refactor: remove prepared-event log reference header dependency ([#105](https://github.com/dnsid-ai/dnsid-py/pull/105))
+
+### Features
+
+- feat(c2sp): verify checkpoint consistency with hash tiles ([#104](https://github.com/dnsid-ai/dnsid-py/pull/104))
+
+
 ## [0.30.0] - 2026-10-23
 
 ### Bug Fixes
