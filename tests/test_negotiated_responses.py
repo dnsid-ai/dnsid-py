@@ -763,21 +763,19 @@ def test_server_requires_local_key_only_when_negotiating(env):
 
 
 @pytest.mark.parametrize("field", ["signature", "signature-input"])
-def test_self_referential_additions_do_not_publish_invalid_signatures(env, field):
+def test_self_referential_additions_are_rejected(env, field):
     env.policy.additional_components = [field]
+    with pytest.raises(ArgumentError):
+        prepared(env)
+    env.policy.additional_components = []
     request = prepared(env)
-    _, old = signed(env, prepared_without_additions(env))
-    response = HttpRequest("", "", {field: old.get_header(field).replace("sig1=", "other=", 1)}, b"response", 200)
-    before = deepcopy(response)
+    request.set_header(
+        "accept-signature", request.get_header("accept-signature").replace(")", f' "{field}")', 1),
+    )
+    response = HttpRequest("", "", {}, b"response", 200)
     with pytest.raises(VerificationError):
         env.server.sign_requested_http_response(request, response)
-    assert response == before
-
-
-def prepared_without_additions(env):
-    opts = deepcopy(env.opts)
-    opts.response_signature.additional_components = []
-    return env.client.create_signed_http_request(HttpRequest("GET", "https://gateway.example/"), opts)
+    assert response.headers == {}
 
 
 @pytest.mark.parametrize("digest", ["sha-512=:AA==:", "sha-256=:AA==:", "sha-256=token"])

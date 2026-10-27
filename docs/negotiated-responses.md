@@ -91,9 +91,8 @@ verification-only profile. Apply signing to application errors as well.
 No middleware may alter covered bytes afterward. Unsupported/incomplete peer
 negotiation is a non-transient `VerificationError`; missing local signing
 configuration is `ArgumentError`. A provider failure or a key change is an error,
-not permission to send an unsigned response. Self-referential coverage that would
-change when signature fields are published also rejects rather than emitting an
-invalid signature. Informational responses, upgrades, and successful CONNECT
+not permission to send an unsigned response. Coverage of the response's own
+Signature or Signature-Input fields is rejected during negotiation. Informational responses, upgrades, and successful CONNECT
 tunnels are not supported authenticated responses.
 
 ## Signed HTTPX clients and resource limits
@@ -166,7 +165,7 @@ Malformed/tampered messages are intentionally rejected, not test-supplied verdic
 | Server without negotiation | `option_absent_and_server_no_negotiation` |
 | Alternate label / reordered components / true flags | `nondefault_reordered_and_equivalent_flags`, `equivalent_parameter_order_and_dictionary_selection` |
 | Additional metadata | `additional_metadata_and_standalone_policy` |
-| Malformed / duplicate / wrong types / nonce / unsupported / multi-member | `strict_negotiation_rejects_atomically` |
+| Malformed / duplicate / wrong types / nonce / unsupported / multi-member | `strict_negotiation_rejects_atomically`, `self_referential_additions_are_rejected` |
 | Ordinary / empty / HEAD / 204 / 304 content | `content_semantics`, `client_no_content_with_representation_coding`, `raw_coded_content_verified_before_decoding` |
 | Unavailable content / incompatible decoder | `unavailable_content`, `sync_rejection_closes_resources[decoded]` |
 | Label collision / other labels preserved | `colliding_labels_and_preservation` |

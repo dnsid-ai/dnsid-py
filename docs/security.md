@@ -164,31 +164,10 @@ close them with `close()` / `aclose()` or a context manager.
 
 Request signatures alone do not authenticate the responder's DNSid identity.
 `HttpSigningOptions.response_signature` enables mandatory response verification
-against a locally configured expected agent domain and a fresh per-send challenge.
-The signed clients verify errors and redirects before return, disable automatic
-redirects/auth resends, reject retry-enabled or unknown transports, and do not
-cache responses. Current-connection server peer evidence is passed to VerifyDomain
-on every invocation, including cache hits. Entity acceptance remains resolver policy.
-
-Standalone response helpers require the caller to retain an unmodified prepared
-request and the original policy snapshot. Only covered metadata is authenticated;
-Content-Type, Content-Encoding, and Location are not covered by default. Request
-coverage through `ResponseSignatureOptions.additional_components` when needed.
-HTTPS remains required, but response verification occurs after sensitive request
-data may already have been sent.
-
-The enabled clients share a default 30-second send/read/verification budget. Raw
-and decoded response content are each limited to 8 MiB, with bounded decoding
-only after signature and digest verification. Accept-Signature is limited to
-16 KiB, challenge nonces to 1024 encoded characters, combined signature fields to
-64 KiB, Content-Digest to 16 KiB, signature dictionaries to 16 labels, and each
-component list to 64 entries. Standalone hosts must also enforce allocation and
-streaming-read bounds before constructing buffered messages. Rejected or
-cancelled client responses are closed and are not returned as authenticated.
-
-See the [HTTP signature reference](https://docs.dnsid.ai/reference/py/profile-http-signatures/)
-for the APIs and snapshot contract. Server code still verifies and authorizes
-requests separately, and must finalize covered bytes before signing responses.
+against a locally configured expected agent domain. Only covered metadata is
+authenticated, and request data is sent before the responder is authenticated.
+See [negotiated-responses.md](negotiated-responses.md) for the snapshot contract,
+transport restrictions, and resource limits.
 
 ### HTTP timeouts, retries, and limits
 

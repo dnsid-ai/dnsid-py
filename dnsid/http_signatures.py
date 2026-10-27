@@ -533,8 +533,6 @@ class HttpSignatureProfile:
             "signature", _replace_signature_member(signatures, params.label, signature),
         )
         self._signature_candidates(staged, HttpVerificationOptions())
-        if not key.verify(_build_signature_base(staged, params, request), signature):
-            raise _response_error("response signature fields changed their own covered values")
         # Commit only after all validation, signing, and output bounds checks succeed.
         response.headers = staged.headers
         return response
@@ -932,8 +930,12 @@ def _validate_response_components(components: list[str]) -> None:
     _validate_component_identifiers(components, request_context=True)
     for component in components:
         name, parameters = _parse_component_identifier(component)
-        if name.startswith("@") and name != "@status" and dict(parameters).get("req") is not True:
+        req = dict(parameters).get("req") is True
+        if name.startswith("@") and name != "@status" and not req:
             raise _response_error("request derived response components require req")
+        # The response signature fields are written by signing, so they cannot cover themselves.
+        if name in {"signature", "signature-input"} and not req:
+            raise _response_error("response components cannot cover response signature fields")
 
 
 def _response_policy(opts: ResponseSignatureOptions) -> ResponseSignatureOptions:

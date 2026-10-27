@@ -22,6 +22,7 @@ from ._verification_budget import (
 )
 from .exceptions import ArgumentError
 from .http_signatures import (
+    _CONTENT_SUPPLIED_EXTENSION,
     _MAX_BODY,
     HttpSignatureProfile,
     _check_message_limits,
@@ -71,7 +72,7 @@ def _outgoing(
     body: bytes, opts: HttpSigningOptions,
 ) -> tuple[httpx.Request, HttpRequest]:
     supplied = bool(body) or bool(request.extensions.get(
-        "dnsid.content_supplied", type(request.stream) is not httpx.ByteStream,
+        _CONTENT_SUPPLIED_EXTENSION, type(request.stream) is not httpx.ByteStream,
     ))
     saved.body = body if supplied else None
     profile.create_signed_http_request(saved, opts)
@@ -170,7 +171,7 @@ def signed_client(
     class Client(httpx.Client):
         def build_request(self, method: str, url: Any, **kwargs: Any) -> httpx.Request:
             request = super().build_request(method, url, **kwargs)
-            request.extensions["dnsid.content_supplied"] = any(
+            request.extensions[_CONTENT_SUPPLIED_EXTENSION] = any(
                 kwargs.get(name) is not None for name in ("content", "data", "files", "json")
             )
             return request
@@ -241,7 +242,7 @@ def signed_async_client(
     class Client(httpx.AsyncClient):
         def build_request(self, method: str, url: Any, **kwargs: Any) -> httpx.Request:
             request = super().build_request(method, url, **kwargs)
-            request.extensions["dnsid.content_supplied"] = any(
+            request.extensions[_CONTENT_SUPPLIED_EXTENSION] = any(
                 kwargs.get(name) is not None for name in ("content", "data", "files", "json")
             )
             return request
