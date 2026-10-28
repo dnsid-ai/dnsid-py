@@ -96,8 +96,15 @@ alice -> https://alice.test
 alice.test published _dnsid.alice.test
 verified: alice.test -> bob.test
 
+response signed by: bob.test
 reply: "[from: bob.test; verified sender: alice.test] hello from alice.test"
 ```
+
+Bob also signs every response, including the agent card and errors, with its
+DNSid operational key. Alice requests that signature and rejects any reply that
+is not signed by `bob.test`. Bob's server applies the response-signing
+middleware (`ResponseSigningMiddleware`) after restoring the public `https://bob.test` URL, because the
+signature covers the URL that Alice used.
 
 On subsequent runs (without a testnet reset), both agents show `already published (READY)`
 instead of `published identity record`.

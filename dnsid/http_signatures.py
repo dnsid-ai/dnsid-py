@@ -1179,7 +1179,7 @@ def _build_signature_base(
             authority = _resolve_authority(req)
             value = authority
         elif name == "@target-uri":
-            value = req.url
+            value = _target_uri(req.url)
         elif name == "@path":
             path = urlsplit(req.url).path or "/"
             value = path
@@ -1254,6 +1254,17 @@ def _replace_signature_member(header: str, label: str, signature: bytes) -> str:
     members = _parse_signature_dictionary(header) if header else {}
     members[label] = signature
     return ", ".join(f"{name}=:{b64_std_encode(value)}:" for name, value in members.items())
+
+
+def _target_uri(url: str) -> str:
+    """Return the target URI with an empty path normalized to ``/`` (RFC 9110 section 4.2.3)."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    origin = f"{parts.scheme}://{parts.netloc}"
+    if parts.path or not parts.netloc or url[: len(origin)].lower() != origin.lower():
+        return url
+    return f"{origin}/{url[len(origin):]}"
 
 
 def _sf_dictionary_member(field_value: str, member: str) -> str | None:

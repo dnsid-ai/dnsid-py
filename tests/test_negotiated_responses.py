@@ -997,3 +997,15 @@ async def test_asgi_response_signing_middleware(env):
             failed = await http.get(failed_request.url, headers=failed_request.headers)
             assert failed.status_code == 500 and failed.content == b""
             assert "x-app" not in failed.headers and "signature" not in failed.headers
+
+
+@pytest.mark.parametrize(("url", "expected"), [
+    ("https://bob.test", "https://bob.test/"),
+    ("https://bob.test?x=1", "https://bob.test/?x=1"),
+    ("https://bob.test/a?b", "https://bob.test/a?b"),
+])
+def test_target_uri_normalizes_empty_path(url, expected):
+    # Go and TS derive "/" for an empty path; the wire request target is "/" too.
+    params = SignatureParams.parse('sig1=("@target-uri");created=1')
+    base = _build_signature_base(HttpRequest("GET", url), params).decode()
+    assert base.splitlines()[0] == f'"@target-uri": {expected}'

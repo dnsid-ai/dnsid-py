@@ -60,7 +60,7 @@ async def send_hello(idm, agent, peer_fqdn: str) -> None:
     )
     print(f"verified: {idm.local_domain} -> {peer_fqdn}\n")
 
-    client = agent.create_client(f"https://{peer_fqdn}")
+    client = agent.create_client(f"https://{peer_fqdn}", peer_fqdn)
     result = await client.send_message(
         {
             "messageId": str(uuid.uuid4()),
@@ -69,6 +69,7 @@ async def send_hello(idm, agent, peer_fqdn: str) -> None:
         }
     )
     reply = " ".join(p.get("text", "") for p in result.get("parts", []) if "text" in p)
+    print(f"response signed by: {peer_fqdn}")
     print(f'reply: "{reply}"')
 
 
