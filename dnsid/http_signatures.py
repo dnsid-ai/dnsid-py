@@ -1073,12 +1073,12 @@ def _has_no_store(cache_control: str) -> bool:
         return False
     directives: list[str] = []
     current = ""
-    for token in tokens:
-        if token == ",":
+    for part in tokens:
+        if part == ",":
             directives.append(current.strip().lower())
             current = ""
         else:
-            current += token
+            current += part
     directives.append(current.strip().lower())
     return "no-store" in directives
 

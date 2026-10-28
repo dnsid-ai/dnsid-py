@@ -47,7 +47,8 @@ def _validate_transport(transport: object) -> None:
 
 def _snapshot_options(opts: HttpSigningOptions) -> HttpSigningOptions:
     snapshot = deepcopy(opts)
-    assert snapshot.response_signature is not None
+    if snapshot.response_signature is None:
+        raise ArgumentError("negotiated responses require response_signature options")
     snapshot.response_signature = _response_policy(snapshot.response_signature)
     return snapshot
 
@@ -132,13 +133,15 @@ def signed_client(
     class Transport(httpx.BaseTransport):
         @verification_operation
         def handle_request(self, request: httpx.Request) -> httpx.Response:
+            stream = request.stream
+            if not isinstance(stream, httpx.SyncByteStream):
+                raise ArgumentError("synchronous client requires a synchronous request stream")
             response: httpx.Response | None = None
             try:
                 saved = _request_snapshot(request)
                 invocation = deepcopy(policy)
                 body = bytearray()
-                assert isinstance(request.stream, httpx.SyncByteStream)
-                for chunk in request.stream:
+                for chunk in stream:
                     _append(body, chunk)
                 outgoing, saved = _outgoing(profile, request, saved, bytes(body), invocation)
                 _validate_transport(inner)
@@ -152,7 +155,8 @@ def signed_client(
                     for chunk in response.iter_raw():
                         _append(body, chunk)
                     content = bytes(body)
-                assert invocation.response_signature is not None
+                if invocation.response_signature is None:
+                    raise ArgumentError("negotiated responses require response_signature options")
                 profile.verify_signed_http_response(
                     saved, _response_message(response, content), invocation.response_signature,
                     peer_cert=peer,
@@ -165,8 +169,7 @@ def signed_client(
                     response.close()
                 raise
             finally:
-                assert isinstance(request.stream, httpx.SyncByteStream)
-                request.stream.close()
+                stream.close()
 
     class Client(httpx.Client):
         def build_request(self, method: str, url: Any, **kwargs: Any) -> httpx.Request:
@@ -198,13 +201,15 @@ def signed_async_client(
 
         @async_verification_operation
         async def _handle(self, request: httpx.Request) -> httpx.Response:
+            stream = request.stream
+            if not isinstance(stream, httpx.AsyncByteStream):
+                raise ArgumentError("asynchronous client requires an asynchronous request stream")
             response: httpx.Response | None = None
             try:
                 saved = _request_snapshot(request)
                 invocation = deepcopy(policy)
                 body = bytearray()
-                assert isinstance(request.stream, httpx.AsyncByteStream)
-                async for chunk in request.stream:
+                async for chunk in stream:
                     _append(body, chunk)
                 outgoing, saved = await async_run_blocking(
                     _outgoing, profile, request, saved, bytes(body), invocation,
@@ -220,7 +225,8 @@ def signed_async_client(
                     async for chunk in response.aiter_raw():
                         _append(body, chunk)
                     content = bytes(body)
-                assert invocation.response_signature is not None
+                if invocation.response_signature is None:
+                    raise ArgumentError("negotiated responses require response_signature options")
                 await profile.async_verify_signed_http_response(
                     saved, _response_message(response, content), invocation.response_signature,
                     peer_cert=peer,
@@ -233,8 +239,7 @@ def signed_async_client(
                     await response.aclose()
                 raise
             finally:
-                assert isinstance(request.stream, httpx.AsyncByteStream)
-                await request.stream.aclose()
+                await stream.aclose()
 
         async def aclose(self) -> None:
             await inner.aclose()
