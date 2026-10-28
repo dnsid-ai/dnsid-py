@@ -39,6 +39,7 @@ from starlette.responses import JSONResponse
 from dnsid import (
     DNSidError,
     IdentityManager,
+    ResponseSigningMiddleware,
     VerificationCode,
     VerificationError,
     active_status_document,
@@ -197,6 +198,24 @@ class _DnsidSignatureMiddleware:
         await self._app(scope, replay_receive, send)
 
 
+def _public_scheme(app):
+    """Restore the public scheme before response signing.
+
+    The testnet proxy forwards plain HTTP, but signed responses cover the public
+    HTTPS @target-uri. Like the verification middleware, this trusts the local
+    proxy's X-Forwarded-Proto; deployments must only trust their own proxy.
+    """
+
+    async def wrapped(scope, receive, send):
+        if scope["type"] == "http":
+            for name, value in scope.get("headers", []):
+                if name.lower() == b"x-forwarded-proto":
+                    scope = {**scope, "scheme": value.decode("latin-1")}
+        await app(scope, receive, send)
+
+    return wrapped
+
+
 class A2AClient:
     """Sends signed A2A messages to a peer agent via the a2a-sdk ClientFactory."""
 
@@ -204,15 +223,22 @@ class A2AClient:
         self,
         http_sig: HttpSignatureProfile,
         target_url: str,
+        expected_domain: str,
     ) -> None:
         from a2a.client.client import ClientConfig
         from a2a.client.client_factory import ClientFactory
 
-        from dnsid.models import HttpSigningOptions
+        from dnsid.models import HttpSigningOptions, ResponseSignatureOptions
 
+        # response_signature also requires the peer to sign every response,
+        # including the agent card and errors, with its DNSid key.
         signing_opts = HttpSigningOptions(
+            label="a2a",  # The Go and TS agents require the a2a label.
             additional_components=["content-type", "a2a-version", "a2a-extensions"],
             tag=DNSID_A2A_SIGNATURE_TAG,
+            response_signature=ResponseSignatureOptions(
+                expected_domain=expected_domain, additional_components=["content-type"],
+            ),
         )
         self._http_client = http_sig.create_signed_async_http_client(
             base_headers={
@@ -366,16 +392,16 @@ class EchoAgent:
     # A2A client: send signed messages to a peer agent
     # ------------------------------------------------------------------
 
-    def create_client(self, target_base_url: str) -> A2AClient:
+    def create_client(self, target_base_url: str, expected_domain: str) -> A2AClient:
         """Return a cached A2AClient for *target_base_url*, creating one on first use."""
         key = target_base_url.rstrip("/")
         if key not in self._clients:
-            self._clients[key] = A2AClient(self._http_sig, target_base_url)
+            self._clients[key] = A2AClient(self._http_sig, target_base_url, expected_domain)
         return self._clients[key]
 
     async def send_message(self, peer_fqdn: str, text: str) -> str:
         """Convenience wrapper: send a plain-text message to *peer_fqdn* and return reply text."""
-        client = self.create_client(f"https://{peer_fqdn}")
+        client = self.create_client(f"https://{peer_fqdn}", peer_fqdn)
         message = {
             "messageId": str(uuid.uuid4()),
             "role": "ROLE_USER",
@@ -384,7 +410,7 @@ class EchoAgent:
         result = await client.send_message(message)
         return " ".join(p.get("text", "") for p in result.get("parts", []) if "text" in p)
 
-    def _build_app(self) -> _DnsidSignatureMiddleware:
+    def _build_app(self):
         idm = self._idm
         card = self._card
         executor = self._executor
@@ -417,4 +443,7 @@ class EchoAgent:
         async def get_status():
             return active_status_document()
 
-        return _DnsidSignatureMiddleware(app, idm, self._http_sig)
+        # Outermost first: restore the public URL, sign negotiated responses
+        # (including verification errors), then verify the request.
+        verified = _DnsidSignatureMiddleware(app, idm, self._http_sig)
+        return _public_scheme(ResponseSigningMiddleware(verified, self._http_sig))

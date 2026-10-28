@@ -138,13 +138,12 @@ before rolling forward.
 
 ### Sync lifecycle and resource ownership
 
-The public API is synchronous. `IdentityManager`, profile verifiers, and
-`RegistryClient` methods block the calling thread while they perform DNS, HTTPS,
-registry, and log work. The narrow exceptions are helpers that wrap sync work for
-convenience: `RegistryClient.async_wait_for_status()` sleeps asynchronously
-between synchronous status polls, HTTP Message Signatures can produce an
-`httpx.AsyncClient` for outbound signing, and `async_retry_transient()` retries
-awaitables.
+Synchronous `IdentityManager`, profile verifier, and `RegistryClient` methods
+block the calling thread during DNS, HTTPS, registry, and log work. Async domain,
+profile, and registry verification paths are also available. HTTP Message
+Signatures provides an `httpx.AsyncClient` for signing and opt-in negotiated
+response verification. Sync-only injected dependencies still run in workers;
+those dependencies must honor the finite shared verification budget.
 
 Reuse `IdentityManager` and profile objects for a process or request pool when
 their configuration and dependencies are stable. The default identity cache is
@@ -160,6 +159,15 @@ SDK-managed one-shot fetches create and close their own `httpx.Client` objects.
 `IdentityManager.create_dnsid_http_client()` and profile methods that return an
 `httpx.Client` or `httpx.AsyncClient` transfer lifecycle ownership to the caller;
 close them with `close()` / `aclose()` or a context manager.
+
+### Negotiated response authentication
+
+Request signatures alone do not authenticate the responder's DNSid identity.
+`HttpSigningOptions.response_signature` enables mandatory response verification
+against a locally configured expected agent domain. Only covered metadata is
+authenticated, and request data is sent before the responder is authenticated.
+See [negotiated-responses.md](negotiated-responses.md) for the snapshot contract,
+transport restrictions, and resource limits.
 
 ### HTTP timeouts, retries, and limits
 

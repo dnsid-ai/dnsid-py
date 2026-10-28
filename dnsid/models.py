@@ -1506,6 +1506,20 @@ class JWTOptions:
 
 
 @dataclass
+class ResponseSignatureOptions:
+    """Local policy for opt-in negotiated HTTP response authentication.
+
+    Attributes:
+        expected_domain: Expected DNSid agent FQDN, independent of the endpoint host.
+        additional_components: Extra response components in caller order, using
+            the same component strings as SignatureParams (for example ``content-type``).
+    """
+
+    expected_domain: str
+    additional_components: list[str] = field(default_factory=list)
+
+
+@dataclass
 class HttpSigningOptions:
     """Options for HttpSignatureProfile.create_signed_http_request.
 
@@ -1516,12 +1530,14 @@ class HttpSigningOptions:
         label: Signature label used in Signature/Signature-Input headers.
         tag: RFC 9421 tag parameter identifying the signature's application.
         expires_in_seconds: Signature validity window from creation.
+        response_signature: When present, request mandatory response authentication.
     """
 
     additional_components: list[str] = field(default_factory=list)
     label: str = "sig1"
     tag: str = ""
     expires_in_seconds: int = 300
+    response_signature: ResponseSignatureOptions | None = None
 
 
 @dataclass
@@ -2084,7 +2100,9 @@ def _reject_rfc9651_values(value: Any) -> None:
             _reject_rfc9651_values(item)
 
 
-def _parse_sf_dictionary(value: str) -> dict[str, Any]:
+def _parse_sf_dictionary(
+    value: str, *, reject_duplicate_parameters: bool = False,
+) -> dict[str, Any]:
     """Parse a complete Structured Fields Dictionary with duplicate rejection."""
     import http_sf
 
@@ -2116,7 +2134,8 @@ def _parse_sf_dictionary(value: str) -> dict[str, Any]:
         (
             (key, context)
             for key, context in duplicates
-            if context == "dictionary" or key in profile_parameter_names
+            if (reject_duplicate_parameters or context == "dictionary"
+                or key in profile_parameter_names)
         ),
         None,
     )
