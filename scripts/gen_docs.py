@@ -265,6 +265,7 @@ PAGES: list[dict] = [
             "HttpRequest",
             "HttpSigningOptions",
             "ResponseSignatureOptions",
+            "ResponseSigningMiddleware",
             "HttpVerificationOptions",
             "SignatureParams",
         ],

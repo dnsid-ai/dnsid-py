@@ -42,7 +42,7 @@ from tests.test_verify_domain import _make_signed_txt_record, _stub_log_registry
 DOMAIN = "service.example.com"
 REQUIRED = [
     "@status", "@method;req", "@authority;req", "@target-uri;req",
-    "accept-signature;req", "signature-input;req", "signature;req",
+    "accept-signature;req", 'signature-input;req;key="sig1"', 'signature;req;key="sig1"',
     "content-digest", "cache-control",
 ]
 
@@ -648,14 +648,30 @@ def test_sync_rejection_closes_resources(env, failure):
 
 
 def test_raw_coded_content_verified_before_decoding(env):
+    env.opts.response_signature.additional_components = ["content-encoding"]
     raw = gzip.compress(b"response")
     body = SyncBody(raw)
     def handle(request):
+        assert request.headers["accept-encoding"] != "identity"
         _, response = signed(env, wire_request(request), body=raw, headers={"content-encoding": "gzip"})
         return httpx.Response(200, headers=response.headers, stream=body)
     with httpx.Client(transport=httpx.MockTransport(handle)) as base:
         with env.client.create_signed_http_client(base, env.opts) as client:
             assert client.get("https://gateway.example/").content == b"response"
+    assert body.closed
+
+
+def test_uncovered_content_encoding_is_not_decoded(env):
+    raw = gzip.compress(b"response")
+    body = SyncBody(raw)
+    def handle(request):
+        assert request.headers["accept-encoding"] == "identity"
+        _, response = signed(env, wire_request(request), body=raw, headers={"content-encoding": "gzip"})
+        return httpx.Response(200, headers=response.headers, stream=body)
+    with httpx.Client(transport=httpx.MockTransport(handle)) as base:
+        with env.client.create_signed_http_client(base, env.opts) as client:
+            with pytest.raises(VerificationError, match="Content-Encoding is not covered"):
+                client.get("https://gateway.example/")
     assert body.closed
 
 
@@ -829,6 +845,7 @@ def test_auth_resend_disabled_and_timeout_shared(env):
 
 
 def test_raw_decompression_is_bounded(env):
+    env.opts.response_signature.additional_components = ["content-encoding"]
     raw = gzip.compress(b"x" * (8 * 1024 * 1024 + 1))
     body = SyncBody(raw)
     def handle(request):
@@ -903,3 +920,80 @@ def test_client_no_content_with_representation_coding(env, method, status, strea
         with env.client.create_signed_http_client(base, env.opts) as client:
             assert client.request(method, "https://gateway.example/").content == b""
     assert body.closed or not streaming
+
+
+def test_fixed_lifetime_independent_of_max_age(env):
+    request = prepared(env)
+    env.server._config.max_age = datetime.timedelta(minutes=10)
+    env.client._config.max_age = datetime.timedelta(seconds=30)
+    _, response = signed(env, request)
+    params = SignatureParams.parse(response.get_header("signature-input"))
+    assert params.expires - params.created == 60
+    assert verify(env, request, response).domain == DOMAIN
+    resign(env, request, response, expires=params.created + 61)
+    with pytest.raises(VerificationError, match="lifetime"):
+        verify(env, request, response)
+
+
+@pytest.mark.parametrize(("method", "status"), [("HEAD", 200), ("GET", 205)])
+def test_signer_ignores_no_content_body(env, method, status):
+    request = prepared(env, method=method, body=None)
+    _, response = signed(env, request, status=status, body=b"ignored")
+    assert response.get_header("content-digest") == "sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:"
+    with pytest.raises(VerificationError, match="no-content"):
+        verify(env, request, response)
+    response.body = None
+    assert verify(env, request, response).domain == DOMAIN
+
+
+def test_intermediary_request_signature_does_not_break_response(env):
+    request = prepared(env)
+    received = HttpRequest(request.method, request.url, request.headers.copy(), request.body)
+    received.set_header("signature-input", request.get_header("signature-input") + ', gateway=("@method");created=1')
+    received.set_header("signature", request.get_header("signature") + ", gateway=:AA==:")
+    _, response = signed(env, received)
+    assert verify(env, request, response).domain == DOMAIN
+
+
+def test_failed_preparation_leaves_request_unchanged(env, monkeypatch):
+    request = HttpRequest("POST", "https://gateway.example/api", body=b"request")
+    before = request.headers.copy()
+    monkeypatch.setattr(env.provider, "sign", lambda payload: (_ for _ in ()).throw(RuntimeError("provider failed")))
+    with pytest.raises(RuntimeError):
+        env.client.create_signed_http_request(request, env.opts)
+    assert request.headers == before
+
+
+@pytest.mark.asyncio
+async def test_asgi_response_signing_middleware(env):
+    from dnsid import ResponseSigningMiddleware
+
+    async def app(scope, receive, send):
+        status = 200 if scope["path"] == "/api" else 201
+        headers = [(b"x-app", b"secret"), (b"set-cookie", b"a=1"), (b"set-cookie", b"b=2")]
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        size = 8 * 1024 * 1024 + 1 if scope["path"] == "/large" else 0
+        await send({"type": "http.response.body", "body": b"resp" + b"x" * size, "more_body": True})
+        await send({"type": "http.response.body", "body": b"onse"})
+
+    transport = httpx.ASGITransport(app=ResponseSigningMiddleware(app, env.server))
+    async with httpx.AsyncClient(transport=transport) as http:
+        request = prepared(env)
+        reply = await http.post(request.url, headers=request.headers, content=request.body)
+        assert reply.headers.get_list("set-cookie") == ["a=1", "b=2"]
+        response = HttpRequest("", "", dict(reply.headers), reply.content, status=reply.status_code)
+        assert reply.content == b"response"
+        assert verify(env, request, response).domain == DOMAIN
+
+        plain = await http.get("https://gateway.example/other")
+        assert plain.status_code == 201 and "signature" not in plain.headers
+
+        for path, opts in [("/large", env.opts), ("/api", HttpSigningOptions(
+            response_signature=ResponseSignatureOptions(DOMAIN, ["x-absent"]),
+        ))]:
+            failed_request = env.client.create_signed_http_request(
+                HttpRequest("GET", f"https://gateway.example{path}"), opts,
+            )
+            failed = await http.get(failed_request.url, headers=failed_request.headers)
+            assert failed.status_code == 500 and failed.content == b""
+            assert "x-app" not in failed.headers and "signature" not in failed.headers

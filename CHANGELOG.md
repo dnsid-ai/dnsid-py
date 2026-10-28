@@ -3,7 +3,8 @@
 
 ### Features
 
-- feat: add opt-in RFC 9421 negotiated DNSid response signing and verification, including fail-closed synchronous and asynchronous HTTP clients.
+- feat: add opt-in RFC 9421 negotiated DNSid response signing and verification, including fail-closed synchronous and asynchronous HTTP clients and ASGI response-signing middleware.
+- fix: serialize Inner List dictionary members selected by `;key` in signature bases.
 
 ## [0.31.0] - 2026-10-27
 

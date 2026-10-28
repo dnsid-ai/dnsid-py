@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
+import json
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -208,8 +209,19 @@ class HttpSignatureProfile:
                 "HTTP message signature expiry must be positive and no greater than max_age"
             )
 
+        if opts.response_signature is None:
+            return self._sign_http_request(req, opts)
+        # Negotiated preparation is atomic: a failure leaves the caller's request unchanged.
+        original = req.headers.copy()
+        try:
+            return self._sign_http_request(req, opts)
+        except BaseException:
+            req.headers = original
+            raise
+
+    def _sign_http_request(self, req: HttpRequest, opts: HttpSigningOptions) -> HttpRequest:
         if opts.response_signature is not None:
-            _prepare_response_negotiation(req, opts.response_signature)
+            _prepare_response_negotiation(req, opts.response_signature, opts.label)
 
         key_provider = self._require_signing_provider()
         signing_key = key_provider.signing_key()
@@ -501,7 +513,7 @@ class HttpSignatureProfile:
             or challenge.label in (_parse_signature_dictionary(signatures) if signatures else {})
         ):
             raise _response_error("requested response signature label already exists")
-        content = _response_content(request, response)
+        content = _response_content(request, response, signing=True)
         staged = replace(response, headers=response.headers.copy(), body=content)
         digest = b64_std_encode(hashlib.sha256(content).digest())
         staged.set_header("content-digest", f"sha-256=:{digest}:")
@@ -512,9 +524,7 @@ class HttpSignatureProfile:
         key = JWK.from_dict(provider.signing_key().to_dict())
         if not key.kid or "#" in key.kid:
             raise ArgumentError("signing key kid must be nonempty and must not contain '#'")
-        lifetime = int(self._config.max_age.total_seconds())
-        if lifetime <= 0:
-            raise ArgumentError("response signature max_age must permit an integer lifetime")
+        lifetime = _RESPONSE_SIGNATURE_LIFETIME
         now = int(_now().timestamp())
         params = SignatureParams(
             label=challenge.label, components=challenge.components,
@@ -612,10 +622,7 @@ class HttpSignatureProfile:
             or selected.nonce != challenge.nonce
         ):
             raise _response_error("response components or nonce differ from the saved challenge")
-        if (selected.expires is None or selected.created is None
-                or selected.created >= selected.expires):
-            raise _response_error("response signature requires created < expires")
-        self._check_freshness(selected)
+        self._check_response_freshness(selected)
         if selected.alg not in {"ed25519", "ecdsa-p256-sha256"}:
             raise _response_error("response signature requires a supported alg")
         try:
@@ -635,7 +642,7 @@ class HttpSignatureProfile:
         _check_content_digest(replace(response, body=content), params)
         if not _has_no_store(response.get_header("cache-control")):
             raise _response_error("signed response Cache-Control must contain no-store")
-        self._check_freshness(params)
+        self._check_response_freshness(params)
         return resolved
 
     # ------------------------------------------------------------------
@@ -834,6 +841,20 @@ class HttpSignatureProfile:
         _check_content_digest(req, sig_params, digest_matches)
         return domain, kid
 
+    def _check_response_freshness(self, sig_params: SignatureParams) -> None:
+        """Apply the fixed response lifetime, then local created-age and skew policy."""
+        created, expires = sig_params.created, sig_params.expires
+        if (
+            type(created) is not int or type(expires) is not int
+            or not 0 < expires - created <= _RESPONSE_SIGNATURE_LIFETIME
+        ):
+            raise _response_error("response signature lifetime must be 1 to 60 seconds")
+        self._check_freshness(replace(sig_params, expires=None))
+        if int(_now().timestamp()) > expires + int(self._config.clock_skew.total_seconds()):
+            raise VerificationError(
+                VerificationCode.SIGNATURE_INVALID, "response signature has expired",
+            )
+
     def _check_freshness(self, sig_params: SignatureParams) -> None:
         now_ts = int(_now().timestamp())
         if sig_params.created is None:
@@ -905,11 +926,19 @@ class HttpSignatureProfile:
 # ---------------------------------------------------------------------------
 
 
-_RESPONSE_COMPONENTS = [
-    "@status", "@method;req", "@authority;req", "@target-uri;req",
-    "accept-signature;req", "signature-input;req", "signature;req",
-    "content-digest", "cache-control",
-]
+def _response_components(request_label: str) -> list[str]:
+    """Required response coverage; the key selects the client's request signature member."""
+    key = json.dumps(request_label)
+    return [
+        "@status", "@method;req", "@authority;req", "@target-uri;req", "accept-signature;req",
+        f"signature-input;req;key={key}", f"signature;req;key={key}",
+        "content-digest", "cache-control",
+    ]
+
+
+# Fixed so peers with different max_age settings interoperate.
+_RESPONSE_SIGNATURE_LIFETIME = 60
+_NO_CONTENT_STATUSES = frozenset({204, 205, 304})
 _MAX_BODY = 8 * 1024 * 1024
 _MAX_ACCEPT_SIGNATURE = 16384
 _MAX_NONCE = 1024
@@ -938,7 +967,9 @@ def _validate_response_components(components: list[str]) -> None:
             raise _response_error("response components cannot cover response signature fields")
 
 
-def _response_policy(opts: ResponseSignatureOptions) -> ResponseSignatureOptions:
+def _response_policy(
+    opts: ResponseSignatureOptions, request_label: str = "sig1",
+) -> ResponseSignatureOptions:
     if (
         not isinstance(opts, ResponseSignatureOptions)
         or not isinstance(opts.expected_domain, str)
@@ -950,14 +981,15 @@ def _response_policy(opts: ResponseSignatureOptions) -> ResponseSignatureOptions
         domain = normalize_fqdn(opts.expected_domain, agent_fqdn=True)
         # Validate additions separately so equivalent required components are not duplicated.
         additions: list[str] = []
-        identities = {_component_identity(c) for c in _RESPONSE_COMPONENTS}
+        required = _response_components(request_label)
+        identities = {_component_identity(c) for c in required}
         for component in opts.additional_components:
             _validate_response_components([component])
             identity = _component_identity(component)
             if identity not in identities:
                 additions.append(component)
                 identities.add(identity)
-        _validate_response_components(_RESPONSE_COMPONENTS + additions)
+        _validate_response_components(required + additions)
     except (ValidationError, VerificationError, ValueError) as exc:
         raise ArgumentError(str(exc)) from exc
     return ResponseSignatureOptions(domain, additions)
@@ -975,15 +1007,17 @@ def _require_https(request: HttpRequest) -> None:
     raise ArgumentError("negotiated response authentication requires an HTTPS target")
 
 
-def _prepare_response_negotiation(request: HttpRequest, opts: ResponseSignatureOptions) -> None:
+def _prepare_response_negotiation(
+    request: HttpRequest, opts: ResponseSignatureOptions, request_label: str,
+) -> None:
     import http_sf
 
-    policy = _response_policy(opts)
+    policy = _response_policy(opts, request_label)
     _require_https(request)
     if request.has_header("accept-signature"):
         raise ArgumentError("Accept-Signature is already present")
     _check_message_limits(request)
-    components = _RESPONSE_COMPONENTS + policy.additional_components
+    components = _response_components(request_label) + policy.additional_components
     value: Any = {"sig1": (
         [_component_structure(c) for c in components],
         {"created": True, "expires": True, "nonce": _generate_nonce()},
@@ -1033,9 +1067,26 @@ def _parse_response_negotiation(request: HttpRequest) -> SignatureParams:
     ))
     _validate_response_components(parsed.components)
     identities = {_component_identity(c) for c in parsed.components}
-    if not all(_component_identity(c) in identities for c in _RESPONSE_COMPONENTS):
+    request_label = _requested_signature_member(parsed.components)
+    if not all(_component_identity(c) in identities for c in _response_components(request_label)):
         raise _response_error("Accept-Signature omits required response components")
     return parsed
+
+
+def _requested_signature_member(components: list[str]) -> str:
+    """Return the one request signature member bound by matching signature-input/signature keys."""
+    keys: dict[str, list[str]] = {"signature-input": [], "signature": []}
+    for component in components:
+        name, parameters = _parse_component_identifier(component)
+        values = dict(parameters)
+        if name in keys and values.get("req") is True and isinstance(values.get("key"), str):
+            keys[name].append(values["key"])
+    if (
+        len(keys["signature-input"]) != 1 or len(keys["signature"]) != 1
+        or keys["signature-input"] != keys["signature"]
+    ):
+        raise _response_error("response negotiation must bind one request signature member")
+    return keys["signature"][0]
 
 
 def _check_message_limits(message: HttpRequest) -> None:
@@ -1048,15 +1099,18 @@ def _check_message_limits(message: HttpRequest) -> None:
         raise VerificationError(VerificationCode.RECORD_INVALID, "HTTP signature input too large")
 
 
-def _response_content(request: HttpRequest, response: HttpRequest) -> bytes:
+def _response_content(
+    request: HttpRequest, response: HttpRequest, *, signing: bool = False,
+) -> bytes:
     _check_message_limits(response)
     if (
         type(response.status) is not int or not 200 <= response.status <= 599
         or (request.method.upper() == "CONNECT" and 200 <= response.status < 300)
     ):
         raise _response_error("negotiated authentication requires an ordinary final response")
-    if request.method.upper() == "HEAD" or response.status in {204, 304}:
-        if response.body:
+    if request.method.upper() == "HEAD" or response.status in _NO_CONTENT_STATUSES:
+        # A signer ignores supplied content; a verifier rejects delivered content.
+        if response.body and not signing:
             raise _response_error("no-content response contains content")
         return b""
     if response.body is None:
@@ -1226,6 +1280,9 @@ def _sf_dictionary_member(field_value: str, member: str) -> str | None:
             VerificationCode.RECORD_INVALID,
             f"dictionary member {member!r} is not an Item",
         )
+    if isinstance(selected[0], list):
+        # http_sf.ser treats every 2-tuple as an Item; serialize Inner Lists in a Dictionary.
+        return http_sf.ser({member: selected})[len(member) + 1:]
     return http_sf.ser(selected)
 
 

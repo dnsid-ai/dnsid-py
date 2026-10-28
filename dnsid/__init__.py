@@ -63,6 +63,7 @@ Enumerations:
     RegistryRevocationReason, EventType
 """
 
+from ._response_middleware import ResponseSigningMiddleware
 from ._verification_budget import remaining_seconds, verification_budget
 from .agent_status import active_status_document
 from .aws_kms_key_provider import (
@@ -307,6 +308,7 @@ __all__ = [
     "HttpRequest",
     "HttpSigningOptions",
     "ResponseSignatureOptions",
+    "ResponseSigningMiddleware",
     "HttpVerificationOptions",
     "SignatureParams",
     # JOSE / HTTP signatures profiles

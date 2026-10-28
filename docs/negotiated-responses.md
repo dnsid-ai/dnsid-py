@@ -74,10 +74,27 @@ A response uses the existing buffered HTTP message type:
 `HttpRequest("", "", headers=..., body=..., status=200)`. Its method/URL do not
 supply originating-request components. Those come only from the retained request.
 Pass exact content bytes after transfer framing, before content decoding. `None`
-is unavailable content except for HEAD, 204, and 304, whose digest is over empty
-bytes. A supplied empty ordinary body is `b""`, not `None`.
+is unavailable content except for HEAD, 204, 205, and 304, whose digest is over
+empty bytes. A verifier rejects content delivered with those; the server helper
+ignores content supplied with them. A supplied empty ordinary body is `b""`, not
+`None`.
+
+The negotiation binds the response to the client's own request signature member
+with `signature-input;req;key="<label>"` and `signature;req;key="<label>"`, so an
+intermediary that adds its own request signature does not break verification.
+Responses use a fixed 60-second lifetime, independent of either peer's `max_age`.
+If preparation fails, for example in the key provider, the caller's request is
+left unchanged.
 
 ## Server integration
+
+For ASGI applications, wrap the app with
+`ResponseSigningMiddleware(app, server_profile)`. Requests without
+`Accept-Signature` pass through unbuffered. Negotiated responses are buffered up
+to 8 MiB and signed before any header is sent; on failure it sends a 500 without
+the application's headers or content. The request URL uses the ASGI scope scheme
+and Host header, so apply trusted proxy-header handling first behind a
+TLS-terminating proxy.
 
 Verify and authorize the caller before dispatch. Finalize the response status,
 content coding, and covered headers before calling
@@ -116,10 +133,13 @@ Both signed clients accept `HttpSigningOptions.response_signature`. In this mode
 - No response cache is provided. A reused response from another challenge rejects.
   The current connection's server certificate is extracted for each response;
   DNSid verification, including cache-hit status/acceptance/mTLS, still runs.
-- Raw response content is bounded and verified before decoding. Identity, gzip,
-  and deflate are supported with bounded decoding; other codecs reject. Already
-  decoded ordinary coded content rejects. Empty HEAD/204/304 content remains
-  empty even when representation-coding headers are present.
+- Raw response content is bounded and verified before decoding. Clients send
+  `Accept-Encoding: identity` and reject a non-identity `Content-Encoding` unless
+  `content-encoding` is in `additional_components`, because decoding must not
+  rely on uncovered metadata. With that coverage, identity, gzip, and deflate are
+  supported with bounded decoding; other codecs reject. Already decoded ordinary
+  coded content rejects. Empty HEAD/204/205/304 content remains empty even when
+  representation-coding headers are present.
 - The default invocation budget is 30 seconds, shared across send, reads, DNSid
   verification, hashing, and decoding. Use `dnsid.verification_budget(timeout=...)`
   or its cancellation event to lower it. Async task cancellation is supported.
@@ -166,7 +186,12 @@ Malformed/tampered messages are intentionally rejected, not test-supplied verdic
 | Alternate label / reordered components / true flags | `nondefault_reordered_and_equivalent_flags`, `equivalent_parameter_order_and_dictionary_selection` |
 | Additional metadata | `additional_metadata_and_standalone_policy` |
 | Malformed / duplicate / wrong types / nonce / unsupported / multi-member | `strict_negotiation_rejects_atomically`, `self_referential_additions_are_rejected` |
-| Ordinary / empty / HEAD / 204 / 304 content | `content_semantics`, `client_no_content_with_representation_coding`, `raw_coded_content_verified_before_decoding` |
+| Ordinary / empty / HEAD / 204 / 205 / 304 content | `content_semantics`, `client_no_content_with_representation_coding`, `raw_coded_content_verified_before_decoding`, `signer_ignores_no_content_body` |
+| Different signer/verifier `max_age` / lifetime above 60 seconds | `fixed_lifetime_independent_of_max_age` |
+| Intermediary adds a request signature label | `intermediary_request_signature_does_not_break_response` |
+| Uncovered non-identity Content-Encoding | `uncovered_content_encoding_is_not_decoded` |
+| Key provider fails during preparation | `failed_preparation_leaves_request_unchanged` |
+| Server middleware | `asgi_response_signing_middleware` |
 | Unavailable content / incompatible decoder | `unavailable_content`, `sync_rejection_closes_resources[decoded]` |
 | Label collision / other labels preserved | `colliding_labels_and_preservation` |
 | Key change / provider failure / body bound | `signing_failure_is_atomic` |

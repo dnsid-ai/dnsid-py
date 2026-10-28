@@ -279,6 +279,23 @@ Local policy for opt-in negotiated HTTP response authentication.
 - `expected_domain` (`str`): Expected DNSid agent FQDN, independent of the endpoint host.
 - `additional_components` (`list[str]`): Extra response components in caller order, using the same component strings as SignatureParams (for example ``content-type``).
 
+## `ResponseSigningMiddleware`
+
+```python
+from dnsid import ResponseSigningMiddleware
+```
+
+Sign responses for requests that carry Accept-Signature.
+
+Requests without negotiation pass through unbuffered. Negotiated responses
+are buffered up to 8 MiB and signed before any header is sent. On a signing
+failure or an exceeded bound, the middleware sends a 500 without the
+application's headers or content; it never sends the unsigned response.
+Place it after request verification and authorization, and outside any
+middleware that changes the status, covered headers, or content coding.
+The request URL uses the ASGI scope scheme and Host header: behind a
+TLS-terminating proxy, apply trusted proxy-header handling first.
+
 ## `HttpVerificationOptions`
 
 ```python

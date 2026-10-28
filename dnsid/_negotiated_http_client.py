@@ -24,8 +24,10 @@ from .exceptions import ArgumentError
 from .http_signatures import (
     _CONTENT_SUPPLIED_EXTENSION,
     _MAX_BODY,
+    _NO_CONTENT_STATUSES,
     HttpSignatureProfile,
     _check_message_limits,
+    _component_identity,
     _require_https,
     _response_error,
     _response_policy,
@@ -106,10 +108,28 @@ def _response_message(response: httpx.Response, content: bytes) -> HttpRequest:
     return HttpRequest("", "", dict(response.headers), content, status=response.status_code)
 
 
-def _restore(response: httpx.Response, content: bytes, *, no_content: bool) -> None:
+def _covers_content_encoding(opts: HttpSigningOptions) -> bool:
+    policy = opts.response_signature
+    return policy is not None and any(
+        _component_identity(c) == ("content-encoding", frozenset())
+        for c in policy.additional_components
+    )
+
+
+def _accept_encoding(opts: HttpSigningOptions) -> str:
+    # Advertise codings only when Content-Encoding is authenticated.
+    return ACCEPT_ENCODING if _covers_content_encoding(opts) else "identity"
+
+
+def _restore(
+    response: httpx.Response, content: bytes, *, no_content: bool, decode: bool,
+) -> None:
     if no_content:
         response._content = b""
     elif not hasattr(response, "_content"):
+        coding = response.headers.get("content-encoding", "identity").strip().lower()
+        if not decode and coding != "identity":
+            raise _response_error("response Content-Encoding is not covered by the signature")
         # Decode only authenticated raw bytes, with the existing bounded decoder.
         undecoded = httpx.Response(200, headers=response.headers, stream=httpx.ByteStream(content))
         reader = BoundedBody(
@@ -148,7 +168,7 @@ def signed_client(
                 response = inner.handle_request(outgoing)
                 peer = _extract_tls_cert(response)
                 _check_message_limits(_response_message(response, b""))
-                no_content = saved.method == "HEAD" or response.status_code in {204, 304}
+                no_content = saved.method == "HEAD" or response.status_code in _NO_CONTENT_STATUSES
                 content = _buffered_content(response, no_content=no_content)
                 if content is None:
                     body = bytearray()
@@ -161,7 +181,10 @@ def signed_client(
                     saved, _response_message(response, content), invocation.response_signature,
                     peer_cert=peer,
                 )
-                _restore(response, content, no_content=no_content)
+                _restore(
+                    response, content, no_content=no_content,
+                    decode=_covers_content_encoding(invocation),
+                )
                 remaining_seconds()
                 return response
             except BaseException:
@@ -184,7 +207,7 @@ def signed_client(
             kwargs.update(auth=None, follow_redirects=False)
             return super().send(request, **kwargs)
 
-    return Client(transport=Transport(), headers={"accept-encoding": ACCEPT_ENCODING})
+    return Client(transport=Transport(), headers={"accept-encoding": _accept_encoding(policy)})
 
 
 def signed_async_client(
@@ -218,7 +241,7 @@ def signed_async_client(
                 response = await inner.handle_async_request(outgoing)
                 peer = _extract_tls_cert(response)
                 _check_message_limits(_response_message(response, b""))
-                no_content = saved.method == "HEAD" or response.status_code in {204, 304}
+                no_content = saved.method == "HEAD" or response.status_code in _NO_CONTENT_STATUSES
                 content = _buffered_content(response, no_content=no_content)
                 if content is None:
                     body = bytearray()
@@ -231,7 +254,10 @@ def signed_async_client(
                     saved, _response_message(response, content), invocation.response_signature,
                     peer_cert=peer,
                 )
-                _restore(response, content, no_content=no_content)
+                _restore(
+                    response, content, no_content=no_content,
+                    decode=_covers_content_encoding(invocation),
+                )
                 remaining_seconds()
                 return response
             except BaseException:
@@ -257,5 +283,6 @@ def signed_async_client(
             return await super().send(request, **kwargs)
 
     return Client(
-        headers={"accept-encoding": ACCEPT_ENCODING, **(headers or {})}, transport=Transport(),
+        headers={"accept-encoding": _accept_encoding(policy), **(headers or {})},
+        transport=Transport(),
     )

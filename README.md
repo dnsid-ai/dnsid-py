@@ -256,7 +256,8 @@ with httpx.Client(transport=httpx.HTTPTransport(retries=0)) as base:
 ```
 
 The client verifies every response before return, including HTTP errors.
-Servers call `server_profile.sign_requested_http_response(request, response)`.
+Servers wrap ASGI apps with `ResponseSigningMiddleware(app, server_profile)` or
+call `server_profile.sign_requested_http_response(request, response)`.
 Only covered fields are authenticated. See
 [`docs/negotiated-responses.md`](docs/negotiated-responses.md) for standalone
 helpers, the snapshot contract, transport restrictions, and limits.
