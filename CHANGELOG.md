@@ -1,4 +1,19 @@
 
+## [0.32.0] - 2026-10-28
+
+### Chores
+
+- ci(security): bump shared workflow to v1.3.0; consolidate CodeQL ([#107](https://github.com/dnsid-ai/dnsid-py/pull/107))
+
+### Documentation
+
+- docs: describe negotiated response signatures in release notes ([#110](https://github.com/dnsid-ai/dnsid-py/pull/110))
+
+### Features
+
+- feat: negotiated RFC 9421 response signatures and ASGI ResponseSigningMiddleware; signature bases now derive @target-uri with "/" for an empty path and serialize Inner List members selected by ;key ([#108](https://github.com/dnsid-ai/dnsid-py/pull/108))
+
+
 ## [0.31.0] - 2026-10-27
 
 ### Bug Fixes
