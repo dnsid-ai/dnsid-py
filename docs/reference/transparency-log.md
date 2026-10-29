@@ -607,6 +607,24 @@ Supplying independently trusted ``bundle_keys`` and the exact
 hash tiles establish checkpoint continuity, while the scanner remains
 the bundle-availability fallback.
 
+## `C2spTlogResourceLimitError`
+
+```python
+from dnsid.c2sp_tlog import C2spTlogResourceLimitError
+```
+
+*Bases:* `C2spTlogVerificationError`
+
+Verification cannot complete within a finite resource limit; never noise.
+
+### `C2spTlogResourceLimitError` constructor
+
+```python
+C2spTlogResourceLimitError(message: str) -> None
+```
+
+Classify exhausted verification resources as invalid evidence.
+
 ## `C2spTlogSource`
 
 ```python
@@ -1282,7 +1300,7 @@ from dnsid.c2sp_tlog import canonical_json
 canonical_json(value: object) -> str
 ```
 
-Serialize *value* to canonical JSON text.
+Serialize *value* to canonical JSON text, enforcing the nesting limit.
 
 ## `canonical_log_prefix`
 
@@ -1643,7 +1661,7 @@ from dnsid.c2sp_tlog import parse_json_no_duplicate_members
 parse_json_no_duplicate_members(data: bytes) -> Any
 ```
 
-Parse JSON, rejecting duplicate object member names.
+Parse bounded-depth JSON, rejecting duplicate object member names.
 
 ## `parse_note_signature`
 
