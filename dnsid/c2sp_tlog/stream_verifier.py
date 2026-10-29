@@ -25,7 +25,11 @@ from ..models import (
     RevocationEvent,
 )
 from .canonical import canonical_bytes, parse_json_no_duplicate_members
-from .errors import C2spLifecycleErrorCategory, C2spTlogVerificationError
+from .errors import (
+    C2spLifecycleErrorCategory,
+    C2spTlogResourceLimitError,
+    C2spTlogVerificationError,
+)
 from .event_codec import (
     C2spEventContext,
     _validate_public_fields,
@@ -140,6 +144,8 @@ def _verify_stream_lifecycle_steps(
             _validate_public_fields(obj, opts.context or C2spEventContext())
             signed = signed_c2sp_entry_bytes(entry.data)
             identifier = c2sp_event_id(entry.data)
+        except C2spTlogResourceLimitError:
+            raise
         except Exception:
             continue
         if obj.get("fqdn") != domain:
@@ -151,6 +157,8 @@ def _verify_stream_lifecycle_steps(
             continue
         try:
             event = parse_c2sp_event_entry(entry.data, opts.context, candidate=True)
+        except C2spTlogResourceLimitError:
+            raise
         except Exception as exc:
             if _malformed_authenticated(entry.data, domain, selected, opts):
                 raise C2spTlogVerificationError(
@@ -164,6 +172,8 @@ def _verify_stream_lifecycle_steps(
         chain_error: Exception | None = None
         try:
             chain = parse_chain_fields(parse_json_no_duplicate_members(entry.data))
+        except C2spTlogResourceLimitError:
+            raise
         except Exception as exc:
             chain = {}
             chain_error = exc
@@ -192,6 +202,8 @@ def _verify_stream_lifecycle_steps(
                 if opts.signer_key is None or _migration_signed_by(candidate, opts.signer_key):
                     migration_results[id(event)] = yield event
             authenticated = _candidate_is_authenticated(candidate, authority, opts)
+        except C2spTlogResourceLimitError:
+            raise
         except Exception as exc:
             if not selected and isinstance(event, MigrationEvent):
                 raise C2spTlogVerificationError(
@@ -217,6 +229,8 @@ def _verify_stream_lifecycle_steps(
         try:
             # ponytail: O(n²) prefix verification; incremental reducer if throughput matters.
             verify_lifecycle([*selected, candidate], opts)
+        except C2spTlogResourceLimitError:
+            raise
         except Exception as exc:
             raise C2spTlogVerificationError(
                 "authenticated lifecycle candidate is invalid",
@@ -296,6 +310,8 @@ def _malformed_authenticated(
             keys["new_op"] = jwk_from_dict(obj["new_ku"])
         return all(sig.kid == keys[role].kid and keys[role].verify(signed, b64url_decode(sig.sig))
                    for role, sig in signatures.items())
+    except C2spTlogResourceLimitError:
+        raise
     except Exception:
         return False
 
@@ -307,6 +323,8 @@ def _migration_signed_by(candidate: VerifiedLifecycleEvent, key: JWK) -> bool:
         _verify_event_signature(
             candidate, candidate.event.sig, key, "invalid MIGRATION entity signature",
         )
+    except C2spTlogResourceLimitError:
+        raise
     except (C2spTlogVerificationError, VerificationError):
         return False
     return True
@@ -381,6 +399,8 @@ def _candidate_is_authenticated(
             candidate, event.sig, entity_key, "invalid lifecycle entity signature"
         )
         return True
+    except C2spTlogResourceLimitError:
+        raise
     except C2spTlogVerificationError:
         return False
     except VerificationError:
@@ -624,6 +644,8 @@ def _verify_event_signature(
     try:
         sig_bytes = b64url_decode(signature)
         ok = key.verify(signed_c2sp_entry_bytes(item.data), sig_bytes)
+    except C2spTlogResourceLimitError:
+        raise
     except Exception:
         ok = False
     if not ok:

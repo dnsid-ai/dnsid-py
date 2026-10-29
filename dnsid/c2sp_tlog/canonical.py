@@ -2,6 +2,10 @@
 
 Object members are sorted by UTF-16 code units (RFC 8785 §3.2.3) and strings
 use minimal escaping so entry bytes are identical across SDKs.
+
+Like Go, JSON values have a maximum depth of 64: the root is at depth 0,
+and each object member value or array element adds one. Empty containers
+at depth 64 are allowed. Exhaustion is a fatal verification resource limit.
 """
 
 from __future__ import annotations
@@ -10,14 +14,28 @@ import json
 import math
 from typing import Any
 
-from .errors import C2spTlogParseError
+from .errors import C2spTlogParseError, C2spTlogResourceLimitError
 
 #: Largest integer representable exactly across SDKs (JS Number.MAX_SAFE_INTEGER).
 _MAX_SAFE_INT = 9007199254740991
+_MAX_JSON_DEPTH = 64
 
 
 def canonical_json(value: object) -> str:
-    """Serialize *value* to canonical JSON text."""
+    """Serialize *value* to canonical JSON text, enforcing the nesting limit."""
+    pending = [(value, 0)]
+    while pending:
+        item, depth = pending.pop()
+        if depth > _MAX_JSON_DEPTH:
+            raise C2spTlogResourceLimitError("JSON nesting limit exceeded")
+        if isinstance(item, dict):
+            pending.extend((v, depth + 1) for v in item.values())
+        elif isinstance(item, (list, tuple)):
+            pending.extend((v, depth + 1) for v in item)
+    return _canonical_json(value)
+
+
+def _canonical_json(value: object) -> str:
     if value is None or isinstance(value, bool):
         return json.dumps(value)
     if isinstance(value, int):
@@ -45,7 +63,7 @@ def canonical_json(value: object) -> str:
         _assert_valid_unicode(value)
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, (list, tuple)):
-        return "[" + ",".join(canonical_json(v) for v in value) + "]"
+        return "[" + ",".join(_canonical_json(v) for v in value) + "]"
     if isinstance(value, dict):
         parts: list[str] = []
         for k in sorted(value.keys(), key=_utf16_sort_key):
@@ -53,7 +71,7 @@ def canonical_json(value: object) -> str:
                 raise C2spTlogParseError("JSON object keys must be strings")
             _assert_valid_unicode(k)
             v = value[k]
-            parts.append(f"{json.dumps(k, ensure_ascii=False)}:{canonical_json(v)}")
+            parts.append(f"{json.dumps(k, ensure_ascii=False)}:{_canonical_json(v)}")
         return "{" + ",".join(parts) + "}"
     raise C2spTlogParseError(f"unsupported JSON value: {type(value).__name__}")
 
@@ -107,8 +125,36 @@ def canonical_bytes(value: object) -> bytes:
     return canonical_json(value).encode("utf-8")
 
 
+def _check_json_nesting(data: bytes) -> None:
+    """Scan value depth without recursion; brackets in strings do not count."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for byte in data:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:
+                escaped = True
+            elif byte == 0x22:
+                in_string = False
+            continue
+        if byte in b" \t\r\n:,":
+            continue
+        if byte in b"]}":
+            depth -= 1
+            continue
+        if depth > _MAX_JSON_DEPTH:
+            raise C2spTlogResourceLimitError("JSON nesting limit exceeded")
+        if byte == 0x22:
+            in_string = True
+        elif byte in b"[{":
+            depth += 1
+
+
 def parse_json_no_duplicate_members(data: bytes) -> Any:
-    """Parse JSON, rejecting duplicate object member names."""
+    """Parse bounded-depth JSON, rejecting duplicate object member names."""
+    _check_json_nesting(data)
     try:
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:

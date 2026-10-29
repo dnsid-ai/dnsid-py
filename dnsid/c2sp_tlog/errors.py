@@ -60,6 +60,14 @@ class C2spTlogVerificationError(C2spTlogError):
         self.failing_candidate_index = failing_candidate_index
 
 
+class C2spTlogResourceLimitError(C2spTlogVerificationError):
+    """Verification cannot complete within a finite resource limit; never noise."""
+
+    def __init__(self, message: str) -> None:
+        """Classify exhausted verification resources as invalid evidence."""
+        super().__init__(message, category=C2spLifecycleErrorCategory.INVALID_EVIDENCE)
+
+
 class C2spCheckpointConsistencyError(C2spTlogVerificationError):
     """A checkpoint violates previously accepted trust; never automatically retry.
 
