@@ -127,6 +127,9 @@ def canonical_bytes(value: object) -> bytes:
 
 def _check_json_nesting(data: bytes) -> None:
     """Scan value depth without recursion; brackets in strings do not count."""
+    # Depth cannot exceed the number of openers; skip the byte loop for ordinary entries.
+    if data.count(b"[") + data.count(b"{") <= _MAX_JSON_DEPTH:
+        return
     depth = 0
     in_string = False
     escaped = False
