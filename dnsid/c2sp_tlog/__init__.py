@@ -44,6 +44,7 @@ from .errors import (
     C2spLifecycleErrorCategory,
     C2spTlogError,
     C2spTlogParseError,
+    C2spTlogResourceLimitError,
     C2spTlogTransportError,
     C2spTlogVerificationError,
 )
@@ -203,6 +204,7 @@ __all__ = [
     "C2spMigrationVerificationLimits",
     "C2spTlogOriginPolicy",
     "C2spTlogParseError",
+    "C2spTlogResourceLimitError",
     "C2spTlogTransportError",
     "C2spTlogPolicy",
     "C2spTlogQuorumRule",
