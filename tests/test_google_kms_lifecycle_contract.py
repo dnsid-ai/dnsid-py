@@ -65,11 +65,26 @@ class VersionKms:
         )
 
 
+def successful_lifecycle_operation(signer, name, *args):
+    """Assert the public operator call succeeds before checking its state effects."""
+    error = None
+    result = None
+    try:
+        result = getattr(signer, name)(*args)
+    except Exception as caught:
+        error = caught
+    assert error is None, (
+        f"KeyProvider.{name} must complete the explicit lifecycle operation; "
+        f"received {type(error).__name__}: {error}"
+    )
+    return result
+
+
 def generated_signer():
     client = VersionKms()
     signer = provider(client)
     previous = signer.signing_key().to_dict()
-    pending = signer.generate_key()
+    pending = successful_lifecycle_operation(signer, "generate_key")
     assert isinstance(pending, str) and pending and "#" not in pending
     assert pending != previous["kid"]
     return client, signer, previous, pending
@@ -126,7 +141,7 @@ def test_given_pending_key_when_explicitly_signed_then_independent_proof_verifie
 def test_given_pending_key_when_activated_then_previous_signing_is_locally_superseded():
     """**Mode**: fake-only (KMS). Given/When/Then: only explicit activation promotes."""
     client, signer, previous, pending = generated_signer()
-    signer.activate(pending)
+    successful_lifecycle_operation(signer, "activate", pending)
     assert signer.list_key_ids() == [pending]
     assert signer.signing_key().to_dict() == signer.jwk(pending).to_dict()
     client.keys[SUCCESSOR].public_key().verify(signer.sign(b"new active"), b"new active")
@@ -134,7 +149,7 @@ def test_given_pending_key_when_activated_then_previous_signing_is_locally_super
         client, lambda: signer.sign_key(previous["kid"], b"retired authorization"),
     )
     # Retiring a retained previous version must not clear its active successor.
-    signer.supersede(previous["kid"])
+    successful_lifecycle_operation(signer, "supersede", previous["kid"])
     assert signer.list_key_ids() == [pending]
     client.keys[SUCCESSOR].public_key().verify(signer.sign(b"successor"), b"successor")
     assert set(client.keys) == {VERSION, SUCCESSOR}
@@ -146,7 +161,7 @@ def test_given_active_key_when_superseded_then_no_active_signing_or_live_key_rem
     signer = provider(client)
     kid = signer.signing_key().kid
     before = len(client.calls)
-    signer.supersede(kid)
+    successful_lifecycle_operation(signer, "supersede", kid)
     assert len(client.calls) == before, "supersession must not mutate cloud versions"
     assert signer.list_key_ids() == []
     assert_signing_rejected_without_kms(client, lambda: signer.sign(b"retired"))
