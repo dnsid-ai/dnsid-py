@@ -2,12 +2,14 @@ name: Compliance
 on: pull_request
 permissions:
   contents: read
-  issues: write
 jobs:
   compliance:
+    permissions:
+      contents: read
+      issues: write # Post compliance results.
     # The private compliance harness is not available to fork pull requests.
     if: github.event.pull_request.head.repo.full_name == github.repository
-    uses: dnsid-ai/dnsid-sdk-compliance/.github/workflows/sdk-compliance.yaml@main
+    uses: dnsid-ai/dnsid-sdk-compliance/.github/workflows/sdk-compliance.yaml@939d24133ea020497957f0f550e895fe8d90f4e2 # main
     with:
       sdk: py
       ref: ${{ github.event.pull_request.head.sha }}

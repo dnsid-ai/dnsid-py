@@ -1249,7 +1249,8 @@ class IdentityManager:
             raise ValidationError("published identity does not bind the accepted rotation")
         if not isinstance(observed.log_reader, C2spTlogReader):
             raise ValidationError("managed rotation requires a c2sp-tlog reader")
-        assert rotation.submission is not None
+        if rotation.submission is None:
+            raise ValidationError("accepted rotation requires a submission")
         history = observed.log_reader._load_complete_history(rotation.domain)
         if not any(
             entry.index == rotation.submission.index and entry.data == rotation.entry_bytes
@@ -1683,9 +1684,8 @@ class IdentityManager:
                 self._refresh_futures.get(domain) or self._verification_futures.get(domain)
             )
             status_future = self._status_futures.get(domain)
-        if full_future is not None or status_future is not None:
-            future = full_future if full_future is not None else status_future
-            assert future is not None
+        future = full_future if full_future is not None else status_future
+        if future is not None:
             result = wait_for_verification(future)
             return self._uncached_after_shared(domain, result)
 

@@ -1,3 +1,8 @@
+# false positive: deterministic idempotency digest in a historical test, not an API key
+e726c7d6f8d718e8fafefe7e6c97901816c44a07:tests/test_managed_registration.py:generic-api-key:773
+5ff4856e31a1902cc1335c4e324b2b3fd2dcadfa:tests/test_managed_registration.py:generic-api-key:763
+7c98e56c2157292b1f7c97212f7d6f14afe4cce5:tests/test_managed_registration.py:generic-api-key:764
+
 # false positives: AWS KMS key_spec enum, not a secret
 tests/test_aws_kms_key_provider.py:generic-api-key:75
 tests/test_aws_kms_key_provider.py:generic-api-key:95

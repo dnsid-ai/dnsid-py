@@ -32,18 +32,20 @@ def main() -> None:
                 registry, idempotency_key=str(uuid.uuid4()), **hooks
             )
 
-        assert rotation.activated and not rotation.application_signing_paused, (
-            "rotation pending; rerun the same command to resume"
-        )
+        if not rotation.activated or rotation.application_signing_paused:
+            raise RuntimeError("rotation pending; rerun the same command to resume")
         if restoring:
             print("saved rotation restored; no network checks")
             return
 
         # Fetch current evidence: the new key must work and the old key must fail.
         after = manager.verify_local_publication()
-        assert len(after.jwks.keys) == 1
-        assert after.jwks.current_operational_signing_key(after.record.v).kid == rotation.new_kid
-        assert rotation.previous_kid not in demo.provider.list_key_ids()
+        if len(after.jwks.keys) != 1:
+            raise RuntimeError("expected only the new operational key in live JWKS")
+        if after.jwks.current_operational_signing_key(after.record.v).kid != rotation.new_kid:
+            raise RuntimeError("published operational key does not match rotation")
+        if rotation.previous_kid in demo.provider.list_key_ids():
+            raise RuntimeError("previous key is still in the provider")
         demo.sign_and_verify(after)
         demo.reject_old_message()
 

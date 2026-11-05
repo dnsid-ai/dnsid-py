@@ -146,7 +146,7 @@ def _verify_stream_lifecycle_steps(
             identifier = c2sp_event_id(entry.data)
         except C2spTlogResourceLimitError:
             raise
-        except Exception:
+        except Exception:  # noqa: S112 — unauthenticated log noise is not lifecycle evidence.
             continue
         if obj.get("fqdn") != domain:
             continue
@@ -337,7 +337,8 @@ def _candidate_is_authenticated(
 ) -> bool:
     event = candidate.event
     if not selected and isinstance(event, MigrationEvent):
-        assert options.verify_migration is not None
+        if options.verify_migration is None:
+            raise C2spTlogVerificationError("MIGRATION requires verified prior-log history")
         # A standard reader already has the entity key authenticated by the
         # DNS record. Reject unauthenticated noise before fetching prior logs.
         key = options.signer_key
@@ -414,17 +415,20 @@ def _applied_keys(
         return selected[-1].post_keys
     first = selected[0].event
     if isinstance(first, IssuanceEvent):
-        assert first.entity_key is not None and first.operational_key is not None
+        if first.entity_key is None or first.operational_key is None:
+            raise C2spTlogVerificationError("ISSUANCE is missing c2sp-tlog key metadata")
         entity_key = first.entity_key
         operational_key = first.operational_key
     else:
-        assert isinstance(first, MigrationEvent) and options.verify_migration is not None
+        if not isinstance(first, MigrationEvent) or options.verify_migration is None:
+            raise C2spTlogVerificationError("lifecycle keys require ISSUANCE or verified MIGRATION")
         migrated = options.verify_migration(first)
         entity_key = migrated.entity_key
         operational_key = migrated.operational_key
     for item in selected[1:]:
         if isinstance(item.event, KeyRotationEvent):
-            assert item.event.new_public_key is not None
+            if item.event.new_public_key is None:
+                raise C2spTlogVerificationError("KEY_ROTATION is missing c2sp-tlog key metadata")
             operational_key = item.event.new_public_key
     return entity_key, operational_key
 
@@ -496,7 +500,8 @@ def verify_lifecycle(
             raise C2spTlogVerificationError(f"missing signature for {event.event_type}")
         if isinstance(event, IssuanceEvent):
             _assert_issuance_key_metadata(event)
-            assert event.entity_key is not None and event.operational_key is not None
+            if event.entity_key is None or event.operational_key is None:
+                raise C2spTlogVerificationError("ISSUANCE is missing c2sp-tlog key metadata")
             entity_key = event.entity_key
             operational_key = event.operational_key
             if (
@@ -570,7 +575,10 @@ def verify_lifecycle(
                         "KEY_ROTATION previous operational key does not match active key"
                     )
                 _assert_rotation_key_metadata(event)
-                assert event.new_public_key is not None
+                if event.new_public_key is None:
+                    raise C2spTlogVerificationError(
+                        "KEY_ROTATION is missing c2sp-tlog key metadata"
+                    )
                 if event.new_public_key.thumbprint() == operational_key.thumbprint():
                     raise C2spTlogVerificationError(
                         "KEY_ROTATION new operational key must differ from active key"

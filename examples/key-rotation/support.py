@@ -48,8 +48,9 @@ class Demo:
                 or not identity.log_ref.startswith("c2sp-tlog:testnet:")):
             raise RuntimeError("this example only rotates testnet identities")
         if self.rotation is not None:
-            assert self.rotation.domain == identity.domain
-            assert self.rotation.log_reference == identity.log_ref
+            if (self.rotation.domain != identity.domain
+                    or self.rotation.log_reference != identity.log_ref):
+                raise RuntimeError("saved rotation does not match configured identity")
         # Terminal recovery must not run network-backed configuration discovery.
         self.manager = (
             IdentityManager(loaded.dnsid, self.provider)
@@ -63,7 +64,8 @@ class Demo:
     def persist_rotation(self, state: KeyRotationResult) -> None:
         data = vars(state).copy()
         data["entry_bytes"] = base64.b64encode(state.entry_bytes).decode("ascii")
-        assert state.previous_public_key is not None
+        if state.previous_public_key is None:
+            raise RuntimeError("rotation is missing its previous public key")
         data["previous_public_key"] = state.previous_public_key.to_dict()
         data["submission"] = asdict(state.submission) if state.submission is not None else None
         save(self.journal_path, data)
@@ -77,15 +79,15 @@ class Demo:
         self.paused = value
 
     def verify_domain(self, requested, peer_cert=None):
-        assert requested == self.manager.local_domain
+        if requested != self.manager.local_domain:
+            raise RuntimeError("local verifier cannot verify another domain")
         return self.publication  # Local self-checks do not apply counterparty policy.
 
     def sign_and_verify(self, evidence) -> str:
         if self.paused:
             raise RuntimeError("application signing is paused")
-        assert evidence.record.lr == self.manager.config.identity.log_ref, (
-            "CLI log reference does not match publication"
-        )
+        if evidence.record.lr != self.manager.config.identity.log_ref:
+            raise RuntimeError("CLI log reference does not match publication")
         self.publication = evidence
         message = self.profile.create_jws(b"rotation example")
         self.profile.verify_jws(message)
@@ -99,7 +101,8 @@ class Demo:
         try:
             self.profile.verify_jws(message)
         except VerificationError as error:
-            assert error.code == VerificationCode.KEY_NOT_FOUND
+            if error.code != VerificationCode.KEY_NOT_FOUND:
+                raise
         else:
             raise AssertionError("old-key application signature was accepted after refresh")
 

@@ -272,7 +272,8 @@ def async_verification_operation(
         with verification_budget() if _budget.get() is None else nullcontext():
             remaining_seconds()
             current = _budget.get()
-            assert current is not None
+            if current is None:
+                raise BudgetExhausted()
             try:
                 async with asyncio.timeout(current[0] - time.monotonic()):
                     result = await function(*args, **kwargs)

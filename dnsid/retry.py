@@ -45,7 +45,7 @@ def retry_transient(
                 raise
             last_exc = exc
             if attempt < max_attempts - 1:
-                delay = min(base_delay * (2**attempt), max_delay) + random.uniform(0, 1)
+                delay = min(base_delay * (2**attempt), max_delay) + random.uniform(0, 1)  # noqa: S311 — retry jitter, not a secret.
                 time.sleep(delay)
 
     raise last_exc  # type: ignore[misc]
@@ -80,7 +80,7 @@ async def async_retry_transient(
                 raise
             last_exc = exc
             if attempt < max_attempts - 1:
-                delay = min(base_delay * (2**attempt), max_delay) + random.uniform(0, 1)
+                delay = min(base_delay * (2**attempt), max_delay) + random.uniform(0, 1)  # noqa: S311 — retry jitter, not a secret.
                 await asyncio.sleep(delay)
 
     raise last_exc  # type: ignore[misc]

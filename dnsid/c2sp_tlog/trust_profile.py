@@ -112,7 +112,8 @@ def validate_c2sp_bundle_verifier_keys(
     checkpoint_public_keys = {key.key_bytes for key in checkpoint_keys or []}
     for key in keys:
         _validate_bundle_key(key, required_name)
-        assert key.key_id is not None
+        if key.key_id is None:
+            raise C2spTlogParseError("c2sp-tlog bundle verifier key requires a key ID")
         identity = (key.name, key.key_id)
         if identity in key_ids or key.key_bytes in public_keys:
             raise C2spTlogParseError(
