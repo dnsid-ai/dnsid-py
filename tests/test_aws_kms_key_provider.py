@@ -16,7 +16,12 @@ from dnsid import (
     AwsKmsKeyProvider,
     AwsKmsKeyState,
 )
-from dnsid._crypto import verify_signature
+from dnsid._crypto import (
+    ec_public_jwk_dict,
+    ed25519_public_jwk_dict,
+    jwk_from_dict,
+    verify_signature,
+)
 from dnsid.aws_kms_key_provider import AwsKmsKeySpec, AwsKmsSigningAlgorithm
 from dnsid.exceptions import ArgumentError
 
@@ -102,6 +107,15 @@ class FakeKmsFacade(AwsKmsFacade):
             "signing_algorithms": [alg],
         }
 
+    def public_kid(self, key_id: str) -> str:
+        private = self._key(key_id)
+        raw = (
+            ec_public_jwk_dict(private, "", "ES256")
+            if isinstance(private, ec.EllipticCurvePrivateKey)
+            else ed25519_public_jwk_dict(private, "")
+        )
+        return jwk_from_dict(raw).thumbprint()
+
     def sign(
         self,
         key_id: str,
@@ -166,7 +180,8 @@ class TestLoad:
             ),
         )
         jwk = provider.signing_key()
-        assert jwk.kid == kid
+        assert jwk.kid == jwk.thumbprint() == facade.public_kid(kid)
+        assert jwk.kid != kid
         assert jwk._raw["kty"] == "EC"
         assert jwk._raw["crv"] == "P-256"
         assert jwk._raw["alg"] == "ES256"
@@ -185,6 +200,8 @@ class TestLoad:
         assert jwk._raw["kty"] == "OKP"
         assert jwk._raw["crv"] == "Ed25519"
         assert jwk._raw["alg"] == "EdDSA"
+        assert jwk.kid == jwk.thumbprint() == facade.public_kid(kid)
+        assert jwk.kid != kid
 
     def test_loads_retained_keys(self) -> None:
         facade = FakeKmsFacade()
@@ -199,9 +216,11 @@ class TestLoad:
                 algorithm="ECDSA_SHA_256",
             ),
         )
-        assert provider.list_key_ids() == ["active-key", "retained-key"]
-        retained_jwk = provider.jwk("retained-key")
-        assert retained_jwk.kid == "retained-key"
+        assert provider.list_key_ids() == [
+            facade.public_kid("active-key"), facade.public_kid("retained-key"),
+        ]
+        retained_jwk = provider.jwk(facade.public_kid("retained-key"))
+        assert retained_jwk.kid == facade.public_kid("retained-key")
 
     def test_active_key_is_first_in_list(self) -> None:
         facade = FakeKmsFacade()
@@ -217,8 +236,8 @@ class TestLoad:
             ),
         )
         ids = provider.list_key_ids()
-        assert ids[0] == "active"
-        assert ids[1] == "retained"
+        assert ids[0] == facade.public_kid("active")
+        assert ids[1] == facade.public_kid("retained")
 
     def test_resolves_aliases_to_canonical_ids_on_load(self) -> None:
         facade = FakeKmsFacade()
@@ -241,7 +260,11 @@ class TestLoad:
         # state object is mutated in place with canonical IDs
         assert state.active_key_id == "canonical-key"
         assert state.pending_key_ids == ["pending-key"]
-        assert provider.list_key_ids() == ["canonical-key"]
+        assert provider.list_key_ids() == [facade.public_kid("canonical-key")]
+        facade.add_p256_key("replacement-key")
+        facade.add_alias("alias/current", "replacement-key")
+        payload = b"alias retargeted"
+        assert verify_signature(provider.signing_key()._raw, payload, provider.sign(payload))
 
     def test_state_object_takes_precedence_over_top_level_fields(self) -> None:
         facade = FakeKmsFacade()
@@ -257,7 +280,7 @@ class TestLoad:
                 algorithm="ECDSA_SHA_256",
             ),
         )
-        assert provider.signing_key().kid == "state-key"
+        assert provider.signing_key().kid == facade.public_kid("state-key")
 
     def test_raises_when_no_active_key_id(self) -> None:
         with pytest.raises(ArgumentError, match="requires an active key ID"):
@@ -349,7 +372,8 @@ class TestJwkLookup:
         provider = AwsKmsKeyProvider.load(
             facade, AwsKmsConfig(active_key_id=kid, algorithm="ECDSA_SHA_256")
         )
-        assert provider.jwk(kid).kid == kid
+        public_kid = facade.public_kid(kid)
+        assert provider.jwk(public_kid).kid == public_kid
 
     def test_jwk_returns_retained_key(self) -> None:
         facade = FakeKmsFacade()
@@ -363,7 +387,8 @@ class TestJwkLookup:
                 algorithm="ECDSA_SHA_256",
             ),
         )
-        assert provider.jwk("retained").kid == "retained"
+        kid = facade.public_kid("retained")
+        assert provider.jwk(kid).kid == kid
 
     def test_jwk_raises_for_unknown_kid(self) -> None:
         facade, kid = _make_facade_with_p256()
@@ -385,8 +410,9 @@ class TestJwkLookup:
                 algorithm="ECDSA_SHA_256",
             ),
         )
-        assert provider.jwk("pending").kid == "pending"
-        assert provider.list_key_ids() == ["active"]
+        kid = facade.public_kid("pending")
+        assert provider.jwk(kid).kid == kid
+        assert provider.list_key_ids() == [facade.public_kid("active")]
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +482,8 @@ class TestKeyLifecycle:
         )
         new_kid = provider.generate_key()
         snapshot = provider.state_snapshot()
-        assert new_kid in snapshot.pending_key_ids
+        assert snapshot.pending_key_ids == ["arn:aws:kms:us-east-1:111122223333:key/generated-1"]
+        assert new_kid == facade.public_kid(snapshot.pending_key_ids[0])
         assert new_kid not in provider.list_key_ids()
 
     def test_activate_promotes_pending_to_active(self) -> None:
@@ -468,9 +495,9 @@ class TestKeyLifecycle:
         provider.activate(new_kid)
 
         snapshot = provider.state_snapshot()
-        assert snapshot.active_key_id == new_kid
+        assert facade.public_kid(snapshot.active_key_id) == new_kid
         assert kid in snapshot.retained_key_ids
-        assert new_kid not in snapshot.pending_key_ids
+        assert snapshot.pending_key_ids == []
 
     def test_activate_raises_for_non_pending_key(self) -> None:
         facade, kid = _make_facade_with_p256()
@@ -492,8 +519,11 @@ class TestKeyLifecycle:
                 algorithm="ECDSA_SHA_256",
             ),
         )
-        provider.supersede("retained")
-        assert "retained" not in provider.list_key_ids()
+        kid = facade.public_kid("retained")
+        provider.supersede(kid)
+        assert kid not in provider.list_key_ids()
+        with pytest.raises(ArgumentError, match="key not found"):
+            provider.jwk(kid)
 
     def test_supersede_raises_for_active_key(self) -> None:
         facade, kid = _make_facade_with_p256()
@@ -501,7 +531,7 @@ class TestKeyLifecycle:
             facade, AwsKmsConfig(active_key_id=kid, algorithm="ECDSA_SHA_256")
         )
         with pytest.raises(ArgumentError, match="cannot supersede the active key"):
-            provider.supersede(kid)
+            provider.supersede(provider.signing_key().kid)
 
     def test_supersede_raises_for_unknown_key(self) -> None:
         facade, kid = _make_facade_with_p256()
@@ -525,8 +555,8 @@ class TestKeyLifecycle:
                 deletion_window_in_days=7,
             ),
         )
-        provider.supersede("retained")
-        assert "retained" in facade._deleted
+        provider.supersede(facade.public_kid("retained"))
+        assert facade._deleted == ["retained"]
 
     def test_supersede_raises_when_facade_lacks_schedule_deletion(self) -> None:
         """Raise ArgumentError when configured deletion is unsupported."""
@@ -548,7 +578,7 @@ class TestKeyLifecycle:
             ),
         )
         with pytest.raises(ArgumentError, match="schedule_key_deletion"):
-            provider.supersede("retained")
+            provider.supersede(facade.public_kid("retained"))
 
     def test_supersede_does_not_schedule_deletion_by_default(self) -> None:
         facade = FakeKmsFacade()
@@ -562,7 +592,7 @@ class TestKeyLifecycle:
                 algorithm="ECDSA_SHA_256",
             ),
         )
-        provider.supersede("retained")
+        provider.supersede(facade.public_kid("retained"))
         assert facade._deleted == []
 
     def test_full_rotation_roundtrip(self) -> None:
@@ -574,10 +604,10 @@ class TestKeyLifecycle:
         # Generate → activate → supersede old
         new_kid = provider.generate_key()
         provider.activate(new_kid)
-        provider.supersede(original_kid)
+        provider.supersede(facade.public_kid(original_kid))
 
         snapshot = provider.state_snapshot()
-        assert snapshot.active_key_id == new_kid
+        assert facade.public_kid(snapshot.active_key_id) == new_kid
         assert original_kid not in snapshot.retained_key_ids
         assert snapshot.pending_key_ids == []
 

@@ -242,7 +242,9 @@ AWS KMS-backed DNSid KeyProvider.
 
 AWS KMS owns all private key material and performs signing. This provider
 manages DNSid's active/pending/retained key lifecycle, fetches public keys
-as JWKs, and routes sign() calls through KMS.
+as JWKs, and routes sign() calls through KMS. Public JWK ``kid`` values
+and KeyProvider method key IDs are RFC 7638 thumbprints; KMS references
+stay internal and in `AwsKmsKeyState`.
 
 Construct with `load` — it resolves any aliases to canonical key IDs
 before the provider is used::
@@ -320,7 +322,7 @@ Return the public JWK for *kid*.
 AwsKmsKeyProvider.list_key_ids() -> list[str]
 ```
 
-Return the active key ID followed by all retained key IDs.
+Return active then retained public-key thumbprints; exclude pending keys.
 
 ### `sign`
 
@@ -371,7 +373,7 @@ Generate a new KMS key in the pending state.
 
 **Returns:**
 
-- `str` — The canonical KMS key ID of the new key.
+- `str` — The RFC 7638 thumbprint of the new public key.
 
 **Raises:**
 
@@ -436,7 +438,8 @@ Mutable lifecycle state for AwsKmsKeyProvider.
 
 Persist the return value of ``state_snapshot()`` after ``generate_key()``,
 ``activate()``, or ``supersede()``; pass it back in as ``config.state`` on
-the next process start.
+the next process start. These fields hold canonical KMS key IDs, not
+the RFC 7638 thumbprints used by the KeyProvider methods and public JWKs.
 
 ## `BotoKmsFacade`
 

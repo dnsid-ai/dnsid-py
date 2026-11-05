@@ -208,7 +208,11 @@ def test_empty_kms_target_generates_pending_key_and_recovers(algorithm):
             registry, idempotency_key="rotation", target_algorithm=algorithm,
             **hooks, **_providers(target),
         )
-        assert not target.list_key_ids() and target.state_snapshot().pending_key_ids == [rotation.new_kid]
+        assert not target.list_key_ids()
+        assert target.state_snapshot().pending_key_ids == [
+            "arn:aws:kms:us-east-1:111122223333:key/generated-1",
+        ]
+        assert target.jwk(rotation.new_kid).kid == rotation.new_kid
         target = AwsKmsKeyProvider.load(facade, replace(config, state=target.state_snapshot()))
         pending = manager.resume_key_rotation(registry, rotation, **hooks, **_providers(target))
         assert not pending.activated and not target.list_key_ids()

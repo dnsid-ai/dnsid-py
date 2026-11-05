@@ -175,6 +175,7 @@ def test_cross_provider_crash_restores_signer(tmp_path, previous_type, activatio
 def test_aws_pending_key_can_sign_rotation_without_becoming_application_signer(factory, algorithm):
     facade, kid = factory()
     provider = AwsKmsKeyProvider.load(facade, AwsKmsConfig(active_key_id=kid, algorithm=algorithm))
+    kid = provider.signing_key().kid
     new_kid = provider.generate_key()
     reopened = AwsKmsKeyProvider.load(facade, AwsKmsConfig(state=provider.state_snapshot(), algorithm=algorithm))
     payload = b"rotation proof"
@@ -225,7 +226,7 @@ def test_retired_aws_provider_can_activate_pending_key_without_empty_retained_id
     facade, kid = _make_facade_with_ed25519()
     provider = AwsKmsKeyProvider.load(facade, AwsKmsConfig(active_key_id=kid, algorithm="ED25519_SHA_512"))
     new_kid = provider.generate_key()
-    provider.supersede(kid, allow_active=True)
+    provider.supersede(provider.signing_key().kid, allow_active=True)
     reopened = AwsKmsKeyProvider.load(facade, AwsKmsConfig(state=provider.state_snapshot(), algorithm="ED25519_SHA_512"))
     reopened.activate(new_kid)
     assert reopened.signing_key().kid == new_kid

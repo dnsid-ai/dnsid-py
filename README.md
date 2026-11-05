@@ -491,6 +491,15 @@ provider = AwsKmsKeyProvider.load(
 ```
 
 `load()` resolves aliases to canonical KMS key IDs and warms the JWK cache.
+Public JWK `kid` values and the IDs used by `jwk()`, `list_key_ids()`,
+`sign_key()`, `generate_key()`, `activate()`, and `supersede()` are RFC 7638
+public-key thumbprints. The provider maps them to KMS references internally;
+configuration and saved `AwsKmsKeyState` still contain KMS key IDs, not thumbprints.
+
+**Upgrade note:** older versions published KMS references as JWK `kid` values.
+The same KMS key now publishes a different `kid`. For an existing identity that
+published the old value, arrange approved key-binding continuity before upgrading
+its signer; do not silently replace the published identifier.
 
 **Persisting state** — `AwsKmsKeyProvider` owns the active/pending/retained
 lifecycle but does not persist state itself. Save the snapshot after any
