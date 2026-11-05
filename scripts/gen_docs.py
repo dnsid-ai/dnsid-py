@@ -73,7 +73,7 @@ these pages are the generated API reference.
 
 ## Import surface
 
-Everything documented here is importable from the package root
+Core SDK exports documented here are importable from the package root
 (`from dnsid import IdentityManager, JoseProfile`), mirroring the
 TypeScript SDK's umbrella package. The application-profile classes are
 also importable from their home submodules — both paths are supported
@@ -84,8 +84,9 @@ from dnsid.jose import JoseProfile
 from dnsid.http_signatures import HttpSignatureProfile
 ```
 
-The transparency-log integration is the exception: import it from
-`dnsid.c2sp_tlog`.
+Import transparency-log integration from `dnsid.c2sp_tlog`. Install
+`dnsid-google-kms` separately and import its provider from `dnsid_google_kms`;
+the base SDK does not install Google dependencies.
 
 ## Async verification
 
@@ -315,8 +316,17 @@ PAGES: list[dict] = [
         "label": "Key providers",
         "title": "Python: Key providers",
         "description": "Key management backends: file-backed local keys and "
-        "AWS KMS.",
-        "intro": None,
+        "AWS KMS and optional Google Cloud KMS.",
+        "intro": (
+            "Install `dnsid-google-kms` separately and import "
+            "`GoogleKmsKeyProvider` from `dnsid_google_kms`. It uses ambient "
+            "Google credentials and an existing numeric CryptoKeyVersion with "
+            "software EC_SIGN_ED25519. Configuration selects `google-kms`, "
+            "`key_ref` (JSON `keyRef`), and optionally algorithm `EdDSA`; "
+            "never include raw credentials in settings. Generation stays pending "
+            "until explicit activation; supersession is local, not cloud retirement. "
+            "Provider state is process-local, not persistence/recovery orchestration."
+        ),
         "names": [
             "LocalKeyProvider",
             "AwsKmsKeyProvider",
@@ -324,6 +334,9 @@ PAGES: list[dict] = [
             "AwsKmsKeyState",
             "BotoKmsFacade",
             "AwsKmsFacade",
+            "dnsid_google_kms.GoogleKmsKeyProvider",
+            "dnsid_google_kms.validate_config",
+            "dnsid_google_kms.key_provider_from_config",
         ],
     },
     {
@@ -655,8 +668,10 @@ def _is_enum(cls: griffe.Class) -> bool:
     return any("Enum" in str(b) for b in cls.bases)
 
 
-def _resolve(pkg: griffe.Module, tlog: griffe.Module, name: str):
+def _resolve(pkg: griffe.Module, tlog: griffe.Module, google: griffe.Module, name: str):
     """Resolve a public name to (griffe object, import path)."""
+    if name.startswith("dnsid_google_kms."):
+        return google.members[name.split(".", 1)[1]], "dnsid_google_kms"
     if name in SUBMODULE_IMPORTS:
         module_path = SUBMODULE_IMPORTS[name]
         module = pkg
@@ -675,7 +690,9 @@ def _resolve(pkg: griffe.Module, tlog: griffe.Module, name: str):
     return obj, "dnsid"
 
 
-def _render_page(page: dict, pkg: griffe.Module, tlog: griffe.Module) -> str:
+def _render_page(
+    page: dict, pkg: griffe.Module, tlog: griffe.Module, google: griffe.Module,
+) -> str:
     lines = [
         "---",
         f"title: \"{page['title']}\"",
@@ -689,7 +706,7 @@ def _render_page(page: dict, pkg: griffe.Module, tlog: griffe.Module) -> str:
     if page["intro"]:
         lines += [page["intro"], ""]
     for name in page["names"]:
-        obj, import_path = _resolve(pkg, tlog, name)
+        obj, import_path = _resolve(pkg, tlog, google, name)
         if obj.is_class:
             if _is_enum(obj):
                 lines += _render_enum(obj, import_path)
@@ -714,6 +731,11 @@ def main() -> None:
         docstring_parser=griffe.Parser.google,
     )
     tlog = pkg.members["c2sp_tlog"]
+    google = griffe.load(
+        "dnsid_google_kms",
+        search_paths=[str(REPO_ROOT / "packages" / "google-kms")],
+        docstring_parser=griffe.Parser.google,
+    )
 
     tlog_all = sorted(tlog.exports or [])
     for page in PAGES:
@@ -734,6 +756,7 @@ def main() -> None:
         | {f"c2sp_tlog.{n}" for n in tlog_all}
         | set(SUBMODULE_IMPORTS)
         | TOPLEVEL_NOT_IN_ALL
+        | {f"dnsid_google_kms.{n}" for n in google.exports or []}
     )
     missing = sorted(public - set(assigned))
     extra = sorted(set(assigned) - public)
@@ -752,7 +775,7 @@ def main() -> None:
     nav = []
     for page in PAGES:
         (OUT_DIR / f"{page['slug']}.md").write_text(
-            _render_page(page, pkg, tlog), encoding="utf-8"
+            _render_page(page, pkg, tlog, google), encoding="utf-8"
         )
         nav.append({"label": page["label"], "slug": f"{SLUG_PREFIX}/{page['slug']}"})
     (OUT_DIR / "nav.json").write_text(

@@ -24,6 +24,8 @@ from dnsid.exceptions import NoActiveSigningKeyError
 from dnsid.interfaces import KeyProvider
 from dnsid.models import JWK
 
+__all__ = ["GoogleKmsKeyProvider", "validate_config", "key_provider_from_config"]
+
 _VERSION = re.compile(
     r"projects/[^/\s#]+/locations/[^/\s#]+/keyRings/[^/\s#]+/"
     r"cryptoKeys/[^/\s#]+/cryptoKeyVersions/[1-9][0-9]*"

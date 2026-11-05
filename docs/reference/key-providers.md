@@ -1,9 +1,11 @@
 ---
 title: "Python: Key providers"
-description: "Key management backends: file-backed local keys and AWS KMS."
+description: "Key management backends: file-backed local keys and AWS KMS and optional Google Cloud KMS."
 ---
 
 <!-- GENERATED FILE — do not edit. Regenerate with `python scripts/gen_docs.py` in dnsid-ai/dnsid-py. -->
+
+Install `dnsid-google-kms` separately and import `GoogleKmsKeyProvider` from `dnsid_google_kms`. It uses ambient Google credentials and an existing numeric CryptoKeyVersion with software EC_SIGN_ED25519. Configuration selects `google-kms`, `key_ref` (JSON `keyRef`), and optionally algorithm `EdDSA`; never include raw credentials in settings. Generation stays pending until explicit activation; supersession is local, not cloud retirement. Provider state is process-local, not persistence/recovery orchestration.
 
 ## `LocalKeyProvider`
 
@@ -581,3 +583,131 @@ Schedule deletion of *key_id* after a waiting period.
 Optional; only required when ``schedule_key_deletion_on_supersede`` is
 ``True``.  Raises NotImplementedError when the facade does not support
 key deletion.
+
+## `GoogleKmsKeyProvider`
+
+```python
+from dnsid_google_kms import GoogleKmsKeyProvider
+```
+
+*Bases:* `KeyProvider`
+
+Sign raw data using an immutable software EC_SIGN_ED25519 version.
+
+Public key IDs are RFC 7638 thumbprints, never cloud resource names.
+Generation leaves keys pending until explicit activation. Supersession is
+local only and never retires a cloud version. State is process-local;
+application-owned rotation persistence and recovery remain outside this
+provider. Reopening a version explicitly selects it as the initial signer.
+
+### `GoogleKmsKeyProvider` constructor
+
+```python
+GoogleKmsKeyProvider(client: Any, key_version_name: str) -> None
+```
+
+Read and validate an existing version through a synchronous KMS client.
+
+### `signing_key`
+
+```python
+GoogleKmsKeyProvider.signing_key() -> JWK
+```
+
+Return the active public JWK, or fail locally when none is active.
+
+### `jwk`
+
+```python
+GoogleKmsKeyProvider.jwk(kid: str) -> JWK
+```
+
+Return a public JWK by thumbprint, including pending and archived keys.
+
+### `list_key_ids`
+
+```python
+GoogleKmsKeyProvider.list_key_ids() -> list[str]
+```
+
+Return only the current signing key ID, excluding pending and old keys.
+
+### `generation_algorithm`
+
+```python
+GoogleKmsKeyProvider.generation_algorithm() -> str
+```
+
+Return the fixed JOSE generation algorithm without cloud access.
+
+### `generate_key`
+
+```python
+GoogleKmsKeyProvider.generate_key() -> str
+```
+
+Create a pending Ed25519 version under the originally configured parent.
+
+Creation uses the parent's version template. Both the creation response
+and public key must confirm software Ed25519 before local registration.
+Failure after creation never promotes a key or retries by creating another.
+
+### `activate`
+
+```python
+GoogleKmsKeyProvider.activate(kid: str) -> None
+```
+
+Promote only a pending key; previous keys immediately lose signing eligibility.
+
+### `supersede`
+
+```python
+GoogleKmsKeyProvider.supersede(kid: str, *, allow_active: bool = False) -> None
+```
+
+Locally retire an active or retained key without any cloud mutation.
+
+Explicit active supersession leaves no signer. The shared interface's
+allow_active keyword is accepted, but Google permits this explicit local
+retirement regardless; it never activates a replacement implicitly.
+
+### `sign`
+
+```python
+GoogleKmsKeyProvider.sign(payload: bytes) -> bytes
+```
+
+Sign with the active version; no active signer fails before cloud access.
+
+### `sign_key`
+
+```python
+GoogleKmsKeyProvider.sign_key(kid: str, payload: bytes) -> bytes
+```
+
+Sign only with an active or pending key, checking version and CRC32C binding.
+
+## `validate_config`
+
+```python
+from dnsid_google_kms import validate_config
+```
+
+```python
+validate_config(source: KeySource) -> None
+```
+
+Validate existing-version selection without credentials or service calls.
+
+## `key_provider_from_config`
+
+```python
+from dnsid_google_kms import key_provider_from_config
+```
+
+```python
+key_provider_from_config(source: KeySource) -> GoogleKmsKeyProvider
+```
+
+Open the selected existing version with the official synchronous client.

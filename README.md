@@ -16,6 +16,15 @@ For AWS KMS-backed signing keys, install the `aws` extra:
 pip install "dnsid[aws]"
 ```
 
+Google Cloud KMS support is a separate optional distribution:
+
+```bash
+pip install dnsid-google-kms
+```
+
+Import it with `from dnsid_google_kms import GoogleKmsKeyProvider`, not from
+`dnsid`. Installing the base SDK alone does not install Google dependencies.
+
 If the release is not yet available on PyPI, install directly from GitHub.
 Replace `main` with a [release tag](https://github.com/dnsid-ai/dnsid-py/releases)
 to pin a version; the `[aws]` extra works the same way:
@@ -73,11 +82,11 @@ method or trust root; configure a matching reader (see the
 
 - **Core protocol** — `IdentityManager` drives every protocol operation: domain verification, TXT-record creation and publication, key rotation, and lifecycle-event signing.
 - **Application profiles** (not part of the core protocol): JWT/JWS ([JOSE](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-jose.md)), [RFC 9421 HTTP Message Signatures](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-http-signatures.md), [Web Bot Auth](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-web-bot-auth.md), and [OIDC](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-oidc.md).
-- **Key management** — private keys stay behind the `KeyProvider` interface: file-backed with `LocalKeyProvider`, or externalized entirely with `AwsKmsKeyProvider` or your own KMS/HSM-backed implementation.
+- **Key management** — private keys stay behind the `KeyProvider` interface: file-backed with `LocalKeyProvider`, or externalized entirely with `AwsKmsKeyProvider`, the optional `dnsid_google_kms.GoogleKmsKeyProvider`, or your own KMS/HSM-backed implementation.
 - **Transparency log** — a ready-made C2SP tile-log `LogReader` (`dnsid.c2sp_tlog`).
 - **Registry client** — operator-side registration and publication workflows.
 
-**Import surface.** Everything is importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. The transparency-log integration is the exception: import it from `dnsid.c2sp_tlog`.
+**Import surface.** Core SDK exports are importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. Import transparency-log integration from `dnsid.c2sp_tlog`. The separately installed Google provider is imported from `dnsid_google_kms`.
 
 **Async verification.** Use `await manager.async_verify_domain(domain)` and
 `await http_signer.async_verify_signed_http_request(request)` in middleware.
@@ -461,6 +470,58 @@ dnsid/
 ├── _default_resolver.py # Default DNS resolver (DoH or system via dnspython)
 └── _utils.py            # FQDN normalisation, base64 helpers, algorithm maps
 ```
+
+## Google Cloud KMS key provider
+
+Install `dnsid-google-kms` separately. It uses the official synchronous Google
+client and its ambient Application Default Credentials chain; grant the caller
+permission to read the public key and sign with the selected version. Do not put
+credentials, private keys, or access tokens into deployment settings.
+
+```python
+from google.cloud import kms_v1
+from dnsid_google_kms import GoogleKmsKeyProvider
+
+provider = GoogleKmsKeyProvider(
+    kms_v1.KeyManagementServiceClient(),
+    "projects/my-project/locations/global/keyRings/agents/cryptoKeys/agent/cryptoKeyVersions/7",
+)
+public_jwk = provider.signing_key()
+signature = provider.sign(b"application payload")
+```
+
+The existing version must use software `EC_SIGN_ED25519`. The reference must end
+in a numeric `cryptoKeyVersions/<version>`; a parent key or mutable selector is
+rejected. The provider signs raw data, not a digest, and checks version binding
+and CRC32C integrity. Public JWK IDs are stable RFC 7638 thumbprints.
+
+For configuration composition, select `google-kms` and the same immutable version:
+
+```python
+from dnsid.config_loading import KeySource
+
+source = KeySource(
+    provider="google-kms",
+    key_ref="projects/my-project/locations/global/keyRings/agents/cryptoKeys/agent/cryptoKeyVersions/7",
+    settings={"algorithm": "EdDSA"},  # Optional; EdDSA is the only supported value.
+)
+```
+
+Use this source in a `LoadedConfig` with the existing identity configuration.
+Construction opens the existing key and verifies its binding against published
+identity evidence; it never generates or substitutes a signer. Deployment JSON
+uses `keySource.keyRef` for the Python `key_ref` field.
+
+Explicit `generate_key()` creates a version under the configured parent and keeps
+it pending; it does not change the application signer or current-key listing.
+`jwk(kid)` and `sign_key(kid, payload)` support pending rotation proof. Only
+`activate(kid)` promotes it. `supersede(kid)` removes local signing eligibility,
+never disables or destroys a remote version. `list_key_ids()` exposes only the
+current active key. State is process-local: provider generation alone is not a
+published/authorized rotation, and application-owned persistence and managed
+rotation recovery are not implemented by this package. Reopening a version
+explicitly selects that version as the initial signer; it does not restore
+previous pending or superseded state.
 
 ## AWS KMS key provider
 

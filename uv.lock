@@ -562,7 +562,7 @@ provides-extras = ["aws", "dev", "a2a"]
 
 [[package]]
 name = "dnsid-google-kms"
-version = "0.1.0"
+version = "0.32.1"
 source = { editable = "packages/google-kms" }
 dependencies = [
     { name = "dnsid" },
