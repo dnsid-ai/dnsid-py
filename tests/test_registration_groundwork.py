@@ -261,6 +261,7 @@ def test_aws_active_retirement_requires_explicit_verified_rotation_permission():
 
     facade, kid = _make_facade_with_ed25519()
     provider = AwsKmsKeyProvider.load(facade, AwsKmsConfig(active_key_id=kid, algorithm="ED25519_SHA_512"))
+    kid = provider.signing_key().kid
     with pytest.raises(ArgumentError):
         provider.supersede(kid)
     provider.supersede(kid, allow_active=True)

@@ -33,7 +33,8 @@ class AwsKmsKeyState:
 
     Persist the return value of ``state_snapshot()`` after ``generate_key()``,
     ``activate()``, or ``supersede()``; pass it back in as ``config.state`` on
-    the next process start.
+    the next process start. These fields hold canonical KMS key IDs, not
+    the RFC 7638 thumbprints used by the KeyProvider methods and public JWKs.
     """
 
     active_key_id: str
@@ -261,7 +262,9 @@ class AwsKmsKeyProvider(KeyProvider):
 
     AWS KMS owns all private key material and performs signing. This provider
     manages DNSid's active/pending/retained key lifecycle, fetches public keys
-    as JWKs, and routes sign() calls through KMS.
+    as JWKs, and routes sign() calls through KMS. Public JWK ``kid`` values
+    and KeyProvider method key IDs are RFC 7638 thumbprints; KMS references
+    stay internal and in :class:`AwsKmsKeyState`.
 
     Construct with :meth:`load` — it resolves any aliases to canonical key IDs
     before the provider is used::
@@ -302,6 +305,7 @@ class AwsKmsKeyProvider(KeyProvider):
         self._schedule_deletion = config.schedule_key_deletion_on_supersede
         self._deletion_window = config.deletion_window_in_days
         self._jwk_cache: dict[str, JWK] = {}
+        self._kms_key_ids: dict[str, str] = {}
 
         if self._state.active_key_id:
             _validate_kid(self._state.active_key_id)
@@ -317,12 +321,12 @@ class AwsKmsKeyProvider(KeyProvider):
         """
         provider = cls(client, config)
         if provider._state.active_key_id:
-            provider._state.active_key_id = provider._public_jwk(provider._state.active_key_id).kid
+            provider._state.active_key_id = provider._kms_key_id(provider._state.active_key_id)
         provider._state.retained_key_ids = [
-            provider._public_jwk(kid).kid for kid in provider._state.retained_key_ids
+            provider._kms_key_id(kid) for kid in provider._state.retained_key_ids
         ]
         provider._state.pending_key_ids = [
-            provider._public_jwk(kid).kid for kid in provider._state.pending_key_ids
+            provider._kms_key_id(kid) for kid in provider._state.pending_key_ids
         ]
         return provider
 
@@ -350,19 +354,18 @@ class AwsKmsKeyProvider(KeyProvider):
         Raises:
             ArgumentError: If *kid* is not an active, retained, or pending key.
         """
-        if (
-            kid != self._state.active_key_id
-            and kid not in self._state.retained_key_ids
-            and kid not in self._state.pending_key_ids
-        ):
+        if kid not in self.list_key_ids() + [
+            self._public_jwk(key_id).kid for key_id in self._state.pending_key_ids
+        ]:
             raise ArgumentError(f"key not found: {kid!r}")
         return self._public_jwk(kid)
 
     def list_key_ids(self) -> list[str]:
-        """Return the active key ID followed by all retained key IDs."""
-        return ([self._state.active_key_id] if self._state.active_key_id else []) + list(
+        """Return active then retained public-key thumbprints; exclude pending keys."""
+        key_ids = ([self._state.active_key_id] if self._state.active_key_id else []) + list(
             self._state.retained_key_ids
         )
+        return [self._public_jwk(key_id).kid for key_id in key_ids]
 
     def sign(self, payload: bytes) -> bytes:
         """Sign *payload* with the active KMS key.
@@ -381,7 +384,7 @@ class AwsKmsKeyProvider(KeyProvider):
         """
         if not self._state.active_key_id:
             raise ArgumentError("provider has no active signing key")
-        return self.sign_key(self._state.active_key_id, payload)
+        return self.sign_key(self.signing_key().kid, payload)
 
     def sign_key(self, kid: str, payload: bytes) -> bytes:
         """Sign with an active or pending KMS key for rotation authorization.
@@ -389,9 +392,10 @@ class AwsKmsKeyProvider(KeyProvider):
         Applies the same payload limits and response validation as ``sign``.
         Retained keys cannot sign.
         """
-        if (
-            kid != self._state.active_key_id or not kid
-        ) and kid not in self._state.pending_key_ids:
+        active_kid = self.signing_key().kid if self._state.active_key_id else ""
+        if (kid != active_kid or not kid) and kid not in [
+            self._public_jwk(key_id).kid for key_id in self._state.pending_key_ids
+        ]:
             raise ArgumentError(f"no active or pending key with kid {kid!r}")
         use_digest = (
             len(payload) > _AWS_KMS_RAW_SIGN_LIMIT_BYTES and self._algorithm == "ECDSA_SHA_256"
@@ -404,7 +408,8 @@ class AwsKmsKeyProvider(KeyProvider):
         message = hashlib.sha256(payload).digest() if use_digest else payload
         message_type: Literal["RAW", "DIGEST"] = "DIGEST" if use_digest else "RAW"
 
-        result = self._client.sign(kid, message, self._algorithm, message_type)
+        key_id = self._kms_key_ids[kid]
+        result = self._client.sign(key_id, message, self._algorithm, message_type)
         if not result["signature"]:
             raise ArgumentError("AWS KMS sign response did not include a signature")
 
@@ -416,11 +421,11 @@ class AwsKmsKeyProvider(KeyProvider):
             )
 
         returned_key_id = result.get("key_id")
-        if returned_key_id and returned_key_id != kid:
-            signed_kid = self._public_jwk(returned_key_id).kid
-            if signed_kid != kid:
+        if returned_key_id and returned_key_id != key_id:
+            signed_key_id = self._kms_key_id(returned_key_id)
+            if signed_key_id != key_id:
                 raise ArgumentError(
-                    f"AWS KMS signed with unexpected key: expected {kid}, "
+                    f"AWS KMS signed with unexpected key: expected {key_id}, "
                     f"got {returned_key_id}"
                 )
 
@@ -438,7 +443,7 @@ class AwsKmsKeyProvider(KeyProvider):
         """Generate a new KMS key in the pending state.
 
         Returns:
-            The canonical KMS key ID of the new key.
+            The RFC 7638 thumbprint of the new public key.
 
         Raises:
             ArgumentError: If key creation succeeds but the public key cannot
@@ -453,7 +458,7 @@ class AwsKmsKeyProvider(KeyProvider):
             raise ArgumentError(
                 f"created AWS KMS key {key_id} but failed to load its public key: {e}"
             ) from e
-        self._state.pending_key_ids.append(kid)
+        self._state.pending_key_ids.append(self._kms_key_ids[kid])
         return kid
 
     def activate(self, kid: str) -> None:
@@ -462,13 +467,16 @@ class AwsKmsKeyProvider(KeyProvider):
         Raises:
             ArgumentError: If no pending key matches *kid*.
         """
-        canonical_kid = self._public_jwk(kid).kid
-        if canonical_kid not in self._state.pending_key_ids:
+        key_id = next(
+            (ref for ref in self._state.pending_key_ids if self._public_jwk(ref).kid == kid),
+            None,
+        )
+        if key_id is None:
             raise ArgumentError(f"no pending key with kid {kid!r}")
-        self._state.pending_key_ids.remove(canonical_kid)
+        self._state.pending_key_ids.remove(key_id)
         if self._state.active_key_id:
             self._state.retained_key_ids.append(self._state.active_key_id)
-        self._state.active_key_id = canonical_kid
+        self._state.active_key_id = self._kms_key_ids[kid]
 
     def supersede(self, kid: str, *, allow_active: bool = False) -> None:
         """Remove a retained key, or the active key after verified cross-provider rotation.
@@ -481,29 +489,38 @@ class AwsKmsKeyProvider(KeyProvider):
             ArgumentError: If *kid* is the active key, is not a retained key,
                 or deletion scheduling is enabled but unsupported by the facade.
         """
-        active = self._state.active_key_id == kid
+        active = bool(self._state.active_key_id) and self.signing_key().kid == kid
         if active and not allow_active:
             raise ArgumentError("cannot supersede the active key; activate a replacement first")
-        if not active and kid not in self._state.retained_key_ids:
+        key_id = self._state.active_key_id if active else next(
+            (ref for ref in self._state.retained_key_ids if self._public_jwk(ref).kid == kid),
+            None,
+        )
+        if key_id is None:
             raise ArgumentError(f"no retained key with kid {kid!r}")
 
         if self._schedule_deletion:
             try:
-                self._client.schedule_key_deletion(kid, self._deletion_window)
+                self._client.schedule_key_deletion(self._kms_key_ids[kid], self._deletion_window)
             except NotImplementedError as e:
                 raise ArgumentError(str(e)) from e
 
         if active:
             self._state.active_key_id = ""
         else:
-            self._state.retained_key_ids.remove(kid)
-        self._jwk_cache.pop(kid, None)
+            self._state.retained_key_ids.remove(key_id)
+        self._jwk_cache.pop(key_id, None)
+        self._jwk_cache.pop(self._kms_key_ids.pop(kid), None)
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
+    def _kms_key_id(self, reference: str) -> str:
+        return self._kms_key_ids[self._public_jwk(reference).kid]
+
     def _public_jwk(self, kid: str) -> JWK:
+        kid = self._kms_key_ids.get(kid, kid)
         if kid in self._jwk_cache:
             return self._jwk_cache[kid]
 
@@ -525,8 +542,12 @@ class AwsKmsKeyProvider(KeyProvider):
         canonical_kid = result.get("key_id") or kid
         _validate_kid(canonical_kid)
         jwk = _spki_to_jwk(pub_bytes, self._algorithm, canonical_kid)
+        existing_key_id = self._kms_key_ids.get(jwk.kid)
+        if existing_key_id is not None and existing_key_id != canonical_kid:
+            raise ArgumentError("AWS KMS public key is already bound to a different KMS key ID")
         self._jwk_cache[kid] = jwk
         self._jwk_cache[canonical_kid] = jwk
+        self._kms_key_ids[jwk.kid] = canonical_kid
         return jwk
 
 
@@ -604,6 +625,7 @@ def _spki_to_jwk(spki: bytes, algorithm: AwsKmsSigningAlgorithm, kid: str) -> JW
             f"unsupported AWS KMS public key type for {kid}: {type(pub_key).__name__}"
         )
 
+    raw["kid"] = jwk_from_dict(raw).thumbprint()
     return jwk_from_dict(raw)
 
 
