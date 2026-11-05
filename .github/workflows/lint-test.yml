@@ -37,7 +37,8 @@ jobs:
       # Exercise the built optional distribution, not a source-path import.
       - name: Install Google KMS wheel
         run: |
-          uv build --package dnsid-google-kms --wheel --out-dir dist/google-kms
+          uv build --package dnsid-google-kms --out-dir dist/google-kms
+          uv run --no-sync python scripts/check_distribution_attribution.py dist/google-kms
           uv pip install --no-deps --reinstall dist/google-kms/*.whl
           uv run --no-sync python -c "from importlib.metadata import version; import dnsid_google_kms; print(version('dnsid-google-kms'), dnsid_google_kms.__file__)"
 

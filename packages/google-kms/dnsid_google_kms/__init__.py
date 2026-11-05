@@ -8,6 +8,7 @@ through unchanged, without logging payloads or credential material.
 from __future__ import annotations
 
 import re
+import threading
 from typing import Any
 
 import google_crc32c
@@ -19,6 +20,8 @@ from dnsid import ArgumentError
 from dnsid._crypto import jwk_from_dict
 from dnsid._utils import b64url_encode
 from dnsid.config_loading import KeySource
+from dnsid.exceptions import NoActiveSigningKeyError
+from dnsid.interfaces import KeyProvider
 from dnsid.models import JWK
 
 _VERSION = re.compile(
@@ -48,19 +51,31 @@ def key_provider_from_config(source: KeySource) -> GoogleKmsKeyProvider:
     return GoogleKmsKeyProvider(kms_v1.KeyManagementServiceClient(), source.key_ref or "")
 
 
-class GoogleKmsKeyProvider:
+class GoogleKmsKeyProvider(KeyProvider):
     """Sign raw data using an immutable software EC_SIGN_ED25519 version.
 
-    This runtime slice does not yet implement the KeyProvider lifecycle interface.
     Public key IDs are RFC 7638 thumbprints, never cloud resource names.
+    Generation leaves keys pending until explicit activation. Supersession is
+    local only and never retires a cloud version. State is process-local;
+    application-owned rotation persistence and recovery remain outside this
+    provider. Reopening a version explicitly selects it as the initial signer.
     """
 
     def __init__(self, client: Any, key_version_name: str) -> None:
         """Read and validate an existing version through a synchronous KMS client."""
         _validate_version(key_version_name)
         self._client = client
-        self._version = key_version_name
-        response = client.get_public_key(request={"name": key_version_name})
+        self._parent = key_version_name.rsplit("/cryptoKeyVersions/", 1)[0]
+        self._lock = threading.RLock()
+        key = self._read_public_key(key_version_name)
+        self._keys = {key["kid"]: key}
+        self._versions = {key["kid"]: key_version_name}
+        self._pending: set[str] = set()
+        self._retained: set[str] = set()
+        self._active: str | None = key["kid"]
+
+    def _read_public_key(self, key_version_name: str) -> dict[str, str]:
+        response = self._client.get_public_key(request={"name": key_version_name})
         if response.name != key_version_name:
             raise ArgumentError("google-kms public response version mismatch")
         if response.algorithm != kms_v1.CryptoKeyVersion.CryptoKeyVersionAlgorithm.EC_SIGN_ED25519:
@@ -76,7 +91,6 @@ class GoogleKmsKeyProvider:
             raise ArgumentError("google-kms returned invalid public SPKI") from None
         if not isinstance(public, Ed25519PublicKey):
             raise ArgumentError("google-kms public key is not Ed25519")
-        self._public = public
         raw = {
             "kty": "OKP", "crv": "Ed25519", "alg": "EdDSA", "use": "sig",
             "x": b64url_encode(public.public_bytes(
@@ -84,33 +98,109 @@ class GoogleKmsKeyProvider:
             )),
         }
         raw["kid"] = jwk_from_dict(raw).thumbprint()
-        self._key = raw
+        return raw
 
     def signing_key(self) -> JWK:
-        """Return a fresh public JWK for the configured signer."""
-        return jwk_from_dict(dict(self._key))
+        """Return the active public JWK, or fail locally when none is active."""
+        with self._lock:
+            if self._active is None:
+                raise NoActiveSigningKeyError("google-kms has no active signing key")
+            return self.jwk(self._active)
 
     def jwk(self, kid: str) -> JWK:
-        """Return the known public key by thumbprint."""
-        if kid != self._key["kid"]:
-            raise ArgumentError("google-kms unknown key ID")
-        return self.signing_key()
+        """Return a public JWK by thumbprint, including pending and archived keys."""
+        with self._lock:
+            if kid not in self._keys:
+                raise ArgumentError("google-kms unknown key ID")
+            return jwk_from_dict(dict(self._keys[kid]))
 
     def list_key_ids(self) -> list[str]:
-        """Return only the current signing key ID."""
-        return [self._key["kid"]]
+        """Return only the current signing key ID, excluding pending and old keys."""
+        with self._lock:
+            return [self._active] if self._active is not None else []
+
+    def generation_algorithm(self) -> str:
+        """Return the fixed JOSE generation algorithm without cloud access."""
+        return "EdDSA"
+
+    def generate_key(self) -> str:
+        """Create a pending Ed25519 version under the originally configured parent.
+
+        Creation uses the parent's version template. Both the creation response
+        and public key must confirm software Ed25519 before local registration.
+        Failure after creation never promotes a key or retries by creating another.
+        """
+        with self._lock:
+            response = self._client.create_crypto_key_version(request={"parent": self._parent})
+            name = response.name
+            _validate_version(name)
+            if name.rsplit("/cryptoKeyVersions/", 1)[0] != self._parent:
+                raise ArgumentError("google-kms created version parent mismatch")
+            if name in self._versions.values():
+                raise ArgumentError("google-kms created version is already known")
+            if (
+                response.algorithm
+                != kms_v1.CryptoKeyVersion.CryptoKeyVersionAlgorithm.EC_SIGN_ED25519
+                or response.protection_level != kms_v1.ProtectionLevel.SOFTWARE
+                or response.state != kms_v1.CryptoKeyVersion.CryptoKeyVersionState.ENABLED
+            ):
+                raise ArgumentError("google-kms created version must be enabled software Ed25519")
+            key = self._read_public_key(name)
+            kid = key["kid"]
+            if kid in self._keys:
+                raise ArgumentError("google-kms public key is already bound to another version")
+            self._keys[kid] = key
+            self._versions[kid] = name
+            self._pending.add(kid)
+            return kid
+
+    def activate(self, kid: str) -> None:
+        """Promote only a pending key; previous keys immediately lose signing eligibility."""
+        with self._lock:
+            if kid not in self._pending:
+                raise ArgumentError("google-kms activation requires a pending key")
+            if self._active is not None:
+                self._retained.add(self._active)
+            self._pending.remove(kid)
+            self._active = kid
+
+    def supersede(self, kid: str, *, allow_active: bool = False) -> None:
+        """Locally retire an active or retained key without any cloud mutation.
+
+        Explicit active supersession leaves no signer. The shared interface's
+        allow_active keyword is accepted, but Google permits this explicit local
+        retirement regardless; it never activates a replacement implicitly.
+        """
+        with self._lock:
+            if kid == self._active:
+                self._active = None
+            elif kid in self._retained:
+                self._retained.remove(kid)
+            else:
+                raise ArgumentError("google-kms supersession requires an active or retained key")
 
     def sign(self, payload: bytes) -> bytes:
-        """Sign raw data and reject unbound or corrupted KMS responses."""
-        response = self._client.asymmetric_sign(request={
-            "name": self._version, "data": payload,
-            "data_crc32c": google_crc32c.value(payload),
-        })
-        signature = bytes(response.signature)
-        if response.name != self._version:
-            raise ArgumentError("google-kms signing response version mismatch")
-        if response.verified_data_crc32c is not True:
-            raise ArgumentError("google-kms did not verify data CRC32C")
-        if len(signature) != 64 or response.signature_crc32c != google_crc32c.value(signature):
-            raise ArgumentError("google-kms signature integrity failure")
-        return signature
+        """Sign with the active version; no active signer fails before cloud access."""
+        with self._lock:
+            if self._active is None:
+                raise NoActiveSigningKeyError("google-kms has no active signing key")
+            return self.sign_key(self._active, payload)
+
+    def sign_key(self, kid: str, payload: bytes) -> bytes:
+        """Sign only with an active or pending key, checking version and CRC32C binding."""
+        with self._lock:
+            if kid != self._active and kid not in self._pending:
+                raise ArgumentError("google-kms signing requires an active or pending key")
+            version = self._versions[kid]
+            response = self._client.asymmetric_sign(request={
+                "name": version, "data": payload,
+                "data_crc32c": google_crc32c.value(payload),
+            })
+            signature = bytes(response.signature)
+            if response.name != version:
+                raise ArgumentError("google-kms signing response version mismatch")
+            if response.verified_data_crc32c is not True:
+                raise ArgumentError("google-kms did not verify data CRC32C")
+            if len(signature) != 64 or response.signature_crc32c != google_crc32c.value(signature):
+                raise ArgumentError("google-kms signature integrity failure")
+            return signature

@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "dnsid-google-kms"
 version = "0.1.0"
 description = "Optional Google Cloud KMS Ed25519 key provider for DNSid"
+authors = [{ name = "Known Systems AI, Inc." }]
+license-files = ["LICENSE.txt", "NOTICE.txt"]
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = ["dnsid>=0.32.1", "google-cloud-kms>=3.0", "google-crc32c>=1.5"]
