@@ -1,4 +1,16 @@
 
+## [0.32.1] - 2026-11-05
+
+### Bug Fixes
+
+- fix(c2sp): fail closed on JSON nesting resource limits (DEV-035) ([#113](https://github.com/dnsid-ai/dnsid-py/pull/113))
+- fix: use public-key thumbprints for AWS KMS JWK identifiers ([#118](https://github.com/dnsid-ai/dnsid-py/pull/118))
+
+### Other
+
+- Pin shared security workflow to v1.4.0 and enable codeql-actions ([#111](https://github.com/dnsid-ai/dnsid-py/pull/111))
+
+
 ## [0.32.0] - 2026-10-28
 
 ### Chores
