@@ -339,7 +339,7 @@ class JWKS:
             try:
                 k.signature_alg()
                 result.append(k)
-            except Exception:
+            except VerificationError:  # noqa: S110 — unsupported keys are ineligible, not fatal.
                 pass
         if not result:
             raise VerificationError(
@@ -460,7 +460,7 @@ class JWKS:
             try:
                 k.signature_alg()
                 signing.append(k)
-            except Exception:
+            except VerificationError:  # noqa: S110 — unsupported keys are ineligible, not fatal.
                 pass
 
         if not signing:

@@ -324,7 +324,8 @@ def _collect_witness_keys(rule: C2spTlogQuorumRule) -> list[SignedNoteKey]:
     if rule.kind == "none":
         return []
     if rule.kind == "witness":
-        assert isinstance(rule.key, SignedNoteKey)  # normalized upstream
+        if not isinstance(rule.key, SignedNoteKey):
+            raise C2spTlogVerificationError("checkpoint witness rule requires a key")
         return [rule.key]
     out: list[SignedNoteKey] = []
     for m in rule.members:
@@ -341,7 +342,8 @@ def _evaluate_quorum(
     if rule.kind == "none":
         return []
     if rule.kind == "witness":
-        assert isinstance(rule.key, SignedNoteKey)  # normalized upstream
+        if not isinstance(rule.key, SignedNoteKey):
+            raise C2spTlogVerificationError("checkpoint witness rule requires a key")
         timestamp = verified_cosignature_timestamp(checkpoint, rule.key)
         if timestamp is not None and timestamp * 1000 <= now_ms + max_clock_skew_ms:
             return [timestamp]

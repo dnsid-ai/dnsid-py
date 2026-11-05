@@ -398,7 +398,8 @@ class C2spTlogReader(LogReader):
         if options.source is not None:
             self._source: C2spTlogSource = options.source
         else:
-            assert options.transport is not None
+            if options.transport is None:
+                raise C2spTlogVerificationError("C2spTlogReader requires a transport")
             scan_source = ScanStreamSource(
                 options.transport,
                 self._authenticate_checkpoint,
@@ -410,7 +411,8 @@ class C2spTlogReader(LogReader):
                     raise C2spTlogVerificationError(
                         "stream bundles require a bounded resource fetcher"
                     )
-                assert options.bundle_policy_document is not None
+                if options.bundle_policy_document is None:
+                    raise C2spTlogVerificationError("stream bundles require a policy document")
                 self._source = _FetchedStreamBundleSource(
                     cast(C2spBoundedResourceFetcher, options.transport),
                     scan_source,

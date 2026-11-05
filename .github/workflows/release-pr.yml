@@ -5,20 +5,23 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   update-release-pr:
+    permissions:
+      contents: write # Push the release branch.
+      pull-requests: write # Open or update the release PR.
     if: "!startsWith(github.event.head_commit.message, 'chore: update changelog and version') && !startsWith(github.event.head_commit.message, 'Release v')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install git-cliff
-        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: git-cliff
 
@@ -80,8 +83,9 @@ jobs:
 
       - name: Bump version and refresh lockfile
         if: steps.prep.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.prep.outputs.version }}
         run: |
-          VERSION="${{ steps.prep.outputs.version }}"
           VERSION_BARE="${VERSION#v}"
           sed -i "s/^version = \".*\"/version = \"${VERSION_BARE}\"/" pyproject.toml
           uv lock

@@ -312,7 +312,8 @@ class HttpSignatureProfile:
 
             def handle_request(self, request: httpx.Request) -> httpx.Response:
                 original_stream = request.stream
-                assert isinstance(original_stream, httpx.SyncByteStream)
+                if not isinstance(original_stream, httpx.SyncByteStream):
+                    raise ArgumentError("HTTP signing requires a synchronous request stream")
                 original_close = (
                     original_stream.original_close
                     if isinstance(original_stream, _SyncReplayStream) else original_stream.close
@@ -415,7 +416,8 @@ class HttpSignatureProfile:
 
             async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
                 original_stream = request.stream
-                assert isinstance(original_stream, httpx.AsyncByteStream)
+                if not isinstance(original_stream, httpx.AsyncByteStream):
+                    raise ArgumentError("HTTP signing requires an asynchronous request stream")
                 original_close = (
                     original_stream.original_close
                     if isinstance(original_stream, _AsyncReplayStream) else original_stream.aclose

@@ -501,8 +501,9 @@ def construct_identity_manager(
         raise
     manager._owned_log_registry = owned_registry
     if configured_operational or configured_entity:
-        assert identity is not None
         try:
+            if identity is None:
+                raise ArgumentError("configured signers require an identity")
             observed = manager._verify_publication_evidence(manager.local_domain)
             from .exceptions import ValidationError
 
@@ -519,7 +520,8 @@ def construct_identity_manager(
             if configured_entity:
                 selected.append((deps.entity_key_provider, observed.signing_key))
             for provider, published in selected:
-                assert provider is not None
+                if provider is None:
+                    raise ArgumentError("configured signer requires a key provider")
                 key = provider.signing_key()
                 if (key.kid, key.alg, key.thumbprint()) != (
                     published.kid,

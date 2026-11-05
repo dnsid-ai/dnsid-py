@@ -154,9 +154,9 @@ def _directory_freshness(
     headers: httpx.Headers, started: float, received: float,
 ) -> float | None:
     control = headers.get("cache-control", "").strip()
-    token = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+    tchar_pattern = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
     directive = re.compile(
-        rf'\s*({token})(?:\s*=\s*("(?:[^"\\\r\n]|\\[^\r\n])*"|{token}))?\s*(?:,|$)'
+        rf'\s*({tchar_pattern})(?:\s*=\s*("(?:[^"\\\r\n]|\\[^\r\n])*"|{tchar_pattern}))?\s*(?:,|$)'
     )
     max_age = None
     position = 0
@@ -436,7 +436,8 @@ class WBAHttpVerifier:
         if opts.replay_policy is not None:
             if not params.nonce:
                 _reject("replay policy requires a non-empty nonce")
-            assert params.expires is not None
+            if params.expires is None:
+                _reject("replay policy requires an expiry")
             try:
                 accepted = opts.replay_policy(
                     domain, params.key_id, params.nonce,

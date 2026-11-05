@@ -370,7 +370,10 @@ class EchoAgent:
 
     async def start(self) -> None:
         app = self._build_app()
-        config = uvicorn.Config(app, host="0.0.0.0", port=self._port, log_level="warning")
+        # The CLI reverse proxy must reach the example's listener.
+        config = uvicorn.Config(
+            app, host="0.0.0.0", port=self._port, log_level="warning"  # noqa: S104
+        )
         self._server = uvicorn.Server(config)
         self._serve_task = asyncio.create_task(self._server.serve())
         while not self._server.started:

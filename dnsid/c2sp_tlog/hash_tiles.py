@@ -18,7 +18,8 @@ from .tiles import tile_path
 def _hash_root(hashes: list[bytes], tail: bytes | None = None) -> bytes:
     # A lower-level right edge is smaller than each hash here, not another leaf.
     if not hashes:
-        assert tail is not None
+        if tail is None:
+            raise ValueError("cannot hash an empty tree")
         return tail
     if len(hashes) == 1 and tail is None:
         return hashes[0]
@@ -53,7 +54,8 @@ def consistency_tiles(
         if key not in tiles:
             remaining_seconds()
             width = min(256, (n >> (8 * level)) - index * 256)
-            assert 1 <= width <= 256
+            if not 1 <= width <= 256:
+                raise invalid("hash tile width is outside the candidate tree")
             partial = width if width < 256 else None
             try:
                 data = yield tile_path(prefix, level, index, partial), 32 * width
@@ -84,7 +86,8 @@ def consistency_tiles(
                     authenticated.add(key)
             size //= 256
             level += 1
-        assert tail is not None
+        if tail is None:
+            raise invalid("cannot hash an empty checkpoint tree")
         return tail
 
     if (yield from root(n, edge=True)) != candidate.root_hash:
@@ -96,7 +99,8 @@ def consistency_tiles(
             return
         level, index = key
         own = tiles[key]
-        assert len(own) == 256
+        if len(own) != 256:
+            raise invalid("non-edge hash tile must be full")
         parent_key = level + 1, index // 256
         parent = yield from read(*parent_key)
         yield from authenticate(parent_key)

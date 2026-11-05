@@ -32,7 +32,10 @@ def run_verification(
     try:
         event = next(steps)
         while True:
-            assert resolve is not None
+            if resolve is None:
+                raise VerificationError(
+                    VerificationCode.RECORD_INVALID, "verification requires a resource resolver"
+                )
             try:
                 result = resolve(event)
             except Exception as exc:
@@ -69,7 +72,10 @@ async def async_run_verification(
             finished, value = await async_wait_for_verification(future)
             if finished:
                 return cast(T, value)
-            assert resolve is not None
+            if resolve is None:
+                raise VerificationError(
+                    VerificationCode.RECORD_INVALID, "verification requires a resource resolver"
+                )
             try:
                 result = await resolve(value)
             except Exception as exc:

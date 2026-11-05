@@ -162,7 +162,8 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, Callable[[], A
             construct_identity_manager(merge_loaded_config(loaded, overlay))
         )
         key_provider = idm.key_provider
-        assert key_provider is not None
+        if key_provider is None:
+            raise RuntimeError("A2A startup requires a key provider")
 
         executor = echo_executor(idm.local_domain)
         agent = await EchoAgent.create(

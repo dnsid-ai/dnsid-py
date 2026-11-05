@@ -105,8 +105,7 @@ def create_c2sp_tlog_verification_registry(
         raise ArgumentError(
             "exactly one c2sp-tlog trust_profile, policy_document, or policy_url is required"
         )
-    if has_profile:
-        assert options.trust_profile is not None
+    if options.trust_profile is not None:
         validate_c2sp_tlog_trust_profile(options.trust_profile)
         if options.bundle_verifier_keys is not None:
             raise ArgumentError(
@@ -161,18 +160,15 @@ def create_c2sp_tlog_verification_registry(
     # supplied as bytes, so reject an insufficient custom fetcher at creation.
     validate_resource_fetcher_capabilities(fetcher)
 
-    if has_profile:
-        assert options.trust_profile is not None
+    if options.trust_profile is not None:
         document = options.trust_profile.policy_document
-    elif has_url:
-        assert options.policy_url is not None
+    elif options.policy_url is not None:
         _validate_policy_url(options.policy_url)
         document = fetch_bounded_bytes(fetcher, options.policy_url, options.max_policy_bytes)
     else:
-        assert options.policy_document is not None
-        document = options.policy_document
-        if not isinstance(document, bytes):
+        if not isinstance(options.policy_document, bytes):
             raise ArgumentError("c2sp-tlog policy_document must be bytes")
+        document = options.policy_document
 
     try:
         policy_text = document.decode("utf-8")
@@ -215,8 +211,7 @@ def create_c2sp_tlog_verification_registry(
         require_stream_bundle=options.require_stream_bundle,
     )
     registry = LogRegistry()
-    if options.resource_fetcher is None:
-        assert isinstance(fetcher, SafeC2spResourceFetcher)
+    if options.resource_fetcher is None and isinstance(fetcher, SafeC2spResourceFetcher):
         registry._owned_resources.append(fetcher)
     trusted_scope = options.trust_profile.scope if options.trust_profile else None
     trusted_log_prefix = options.trust_profile.log_prefix if options.trust_profile else None
