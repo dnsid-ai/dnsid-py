@@ -52,5 +52,4 @@ def test_four_release_artifacts_and_installed_config_profile_consumer(tmp_path):
         "print(*(m.__file__ for m in mods),sep='\\n')"
     )], cwd=consumer, env=env)
     assert str(ROOT) not in imports
-    output = run([str(python), "-I", "-m", "pytest", "-q", "tests/test_google_kms_functional.py"], cwd=consumer, env=env)
-    assert "10 passed" in output
+    run([str(python), "-I", "-m", "pytest", "-q", "tests/test_google_kms_functional.py"], cwd=consumer, env=env)

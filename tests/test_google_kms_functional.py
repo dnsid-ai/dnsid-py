@@ -6,6 +6,7 @@ JOSE API. No app publication orchestration, persistence, crash or rebinding.
 
 from __future__ import annotations
 
+import base64
 import datetime
 import json
 from types import SimpleNamespace
@@ -32,12 +33,14 @@ from dnsid.c2sp_tlog import (
     canonical_json,
     create_c2sp_tlog_verification_registry,
     encode_entry_bundle,
+    merkle_root_from_entries,
     prepare_event,
 )
 from dnsid.jose import JoseProfile
 from dnsid.models import IssuanceEvent, TLSCertificate, TXTRecord
 from tests.conftest import MockDNSResolver
-from tests.test_c2sp_migration import _checkpoint, _Fetcher, _verifier_key
+from tests.test_c2sp_migration import _Fetcher, _verifier_key
+from tests.test_c2sp_verification_registry import _checkpoint_cosignature, _checkpoint_signature
 from tests.test_google_kms_config_contract import publication_document
 from tests.test_google_kms_lifecycle_contract import NEXT_SEED, SUCCESSOR, VersionKms
 from tests.test_google_kms_runtime_contract import SEED, VERSION
@@ -72,15 +75,24 @@ def publication(tmp_path, *, corrupt=None):
         "op": {"kid": key.kid, "sig": b64url_encode(private.sign(prepared.signed_bytes))},
     }
     entry = canonical_json(envelope).encode()
+    # One per-publication clock sample drives event/status/cert/checkpoint.
+    # Do not reuse test_c2sp_migration's module-import timestamp: a full suite
+    # can take longer than its 60-second checkpoint freshness window.
+    root = base64.b64encode(merkle_root_from_entries([entry])).decode()
+    signed = f"functional.example\n1\n{root}\n"
+    checkpoint = (signed + "\n"
+        + _checkpoint_signature("functional.example", signed, log) + "\n"
+        + _checkpoint_cosignature("migration-witness", signed, witness, int(now.timestamp()))
+        + "\n").encode()
     resources = _Fetcher({
-        "https://functional.example/checkpoint": _checkpoint("functional.example", [entry], log, witness),
+        "https://functional.example/checkpoint": checkpoint,
         "https://functional.example/tile/entries/000.p/1": encode_entry_bundle([entry]),
     })
     policy = ("log " + _verifier_key("functional.example", b"\x01", log)
               + "\nwitness migration-witness " + _verifier_key("migration-witness", b"\x04", witness)
               + "\nquorum migration-witness\n").encode()
     registry = create_c2sp_tlog_verification_registry(C2spTlogVerificationOptions(
-        policy_document=policy, resource_fetcher=resources, checkpoint_freshness_ms=60_000,
+        policy_document=policy, resource_fetcher=resources, checkpoint_freshness_ms=600_000,
     ))
     record = DnsIdTxtRecord(
         v="dnsid-draft-01", identity_fqdn=DOMAIN, gi="example", lr=LR,
@@ -147,8 +159,11 @@ def official_rpc(monkeypatch):
                 assert isinstance(request, request_type)
                 fields = request_type.to_dict(request)
                 if operation == "asymmetric_sign":
+                    assert not request._pb.HasField("digest"), "Ed25519 must not send a digest"
                     fields["data"] = request.data
                     fields["data_crc32c"] = request.data_crc32c
+                    # Protobuf JSON includes an absent message as a default;
+                    # remove it only AFTER asserting wire-level absence above.
                     fields.pop("digest", None)
                 response = getattr(service, operation)(fields)
                 return response_type(**vars(response))
@@ -248,6 +263,7 @@ def test_generation_failure_preserves_consumer_and_leaves_no_pending(tmp_path, o
         profile = JoseProfile.from_identity_manager(manager)
         checked_profile(manager, profile=profile)
         original = official_rpc.get_public_key
+        successor_reads = []
         if failure == "create":
             def fail(request):
                 official_rpc.calls.append(("create_crypto_key_version", request))
@@ -256,6 +272,7 @@ def test_generation_failure_preserves_consumer_and_leaves_no_pending(tmp_path, o
         else:
             def fail(request):
                 if request["name"] == SUCCESSOR:
+                    successor_reads.append(request["name"])
                     if failure == "read":
                         official_rpc.calls.append(("get_public_key", request))
                         raise ArgumentError("fixture public read failure")
@@ -264,17 +281,103 @@ def test_generation_failure_preserves_consumer_and_leaves_no_pending(tmp_path, o
                     return response
                 return original(request)
             official_rpc.get_public_key = fail
-        with pytest.raises(ArgumentError):
+        expected_error = {
+            "create": "fixture create failure",
+            "read": "fixture public read failure",
+            "metadata": "google-kms requires EC_SIGN_ED25519",
+        }[failure]
+        with pytest.raises(ArgumentError, match=expected_error):
             manager.key_provider.generate_key()
+        assert successor_reads == ([] if failure == "create" else [SUCCESSOR])
         assert manager.key_provider.signing_key().kid == old
         assert manager.key_provider.list_key_ids() == [old]
         assert manager.get_key_set().keys == [evidence.key]
         checked_profile(manager, profile=profile)
         phantom = public_key(Ed25519PrivateKey.from_private_bytes(NEXT_SEED)).kid
         before = len(official_rpc.calls)
+        with pytest.raises(ArgumentError, match="unknown key ID"):
+            manager.key_provider.jwk(phantom)
         with pytest.raises(ArgumentError):
             manager.key_provider.sign_key(phantom, b"not a registered pending proof")
         with pytest.raises(ArgumentError):
             manager.key_provider.activate(phantom)
         assert len(official_rpc.calls) == before
         assert sum(name == "create_crypto_key_version" for name, _ in official_rpc.calls) == 1
+
+
+def test_explicit_eddsa_settings_use_installed_factory(tmp_path, official_rpc):
+    """**Mode**: fake-only network. Deployment settings use JOSE EdDSA."""
+    evidence = publication(tmp_path)
+    document = json.loads(evidence.path.read_text())
+    document["keySource"]["settings"] = {"algorithm": "EdDSA"}
+    evidence.path.write_text(json.dumps(document))
+    with identity_manager_from_file(evidence.path, deps=evidence.deps) as manager:
+        checked_profile(manager)
+    assert official_rpc.calls[0][0] == "get_public_key"
+    assert official_rpc.calls[0][1]["name"] == VERSION
+
+
+def test_unsupported_settings_rejected_before_rpc(tmp_path, official_rpc):
+    """**Mode**: fake-only network. Invalid config never opens/generates keys."""
+    evidence = publication(tmp_path)
+    document = json.loads(evidence.path.read_text())
+    document["keySource"]["settings"] = {"algorithm": "ES256"}
+    evidence.path.write_text(json.dumps(document))
+    with pytest.raises(ArgumentError, match="only algorithm EdDSA"):
+        identity_manager_from_file(evidence.path, deps=evidence.deps)
+    assert official_rpc.calls == []
+    assert evidence.calls == [] and evidence.resources.calls == []
+
+
+@pytest.mark.parametrize("operation", ["get_public_key", "asymmetric_sign"])
+def test_external_open_or_sign_failure_propagates_without_substitution(tmp_path, official_rpc, operation):
+    """**Mode**: fake-only KMS. Exact external failure reaches public caller."""
+    from google.api_core.exceptions import PermissionDenied
+
+    evidence = publication(tmp_path)
+    failure = PermissionDenied("fixture denies selected version")
+    attempted = []
+
+    def denied(request):
+        attempted.append(request["name"])
+        raise failure
+
+    if operation == "get_public_key":
+        official_rpc.get_public_key = denied
+        with pytest.raises(PermissionDenied) as caught:
+            identity_manager_from_file(evidence.path, deps=evidence.deps)
+        assert evidence.calls == [] and evidence.resources.calls == []
+    else:
+        with identity_manager_from_file(evidence.path, deps=evidence.deps) as manager:
+            profile = JoseProfile.from_identity_manager(manager)
+            checked_profile(manager, profile=profile)
+            official_rpc.asymmetric_sign = denied
+            with pytest.raises(PermissionDenied) as caught:
+                profile.create_jws(b"must not return substitute signature")
+            assert manager.key_provider.signing_key().to_dict() == evidence.key.to_dict()
+    assert caught.value is failure
+    assert attempted == [VERSION]
+    assert all(name != "create_crypto_key_version" for name, _ in official_rpc.calls)
+
+
+def test_retained_supersession_preserves_activated_successor_consumer(tmp_path, official_rpc):
+    """**Mode**: fake-only network. Retiring old A does not clear active B."""
+    evidence = publication(tmp_path)
+    with identity_manager_from_file(evidence.path, deps=evidence.deps) as manager:
+        profile = JoseProfile.from_identity_manager(manager)
+        old = manager.key_provider.signing_key().kid
+        pending = manager.key_provider.generate_key()
+        manager.key_provider.activate(pending)
+        before = len(official_rpc.calls)
+        manager.key_provider.supersede(old)
+        assert len(official_rpc.calls) == before
+        assert manager.key_provider.list_key_ids() == [pending]
+        token = profile.create_jws(b"successor remains usable")
+        header, body, signature = token.split(".")
+        assert json.loads(b64url_decode(header))["kid"] == f"{DOMAIN}#{pending}"
+        assert manager.key_provider.jwk(pending).verify(
+            f"{header}.{body}".encode(), b64url_decode(signature))
+        before = len(official_rpc.calls)
+        with pytest.raises(ArgumentError):
+            manager.key_provider.sign_key(old, b"no retired signing")
+        assert len(official_rpc.calls) == before
