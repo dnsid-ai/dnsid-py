@@ -940,6 +940,110 @@ from dnsid.c2sp_tlog import IndexedEntry
 
 One raw log entry paired with its zero-based leaf index.
 
+## `ManagedIssuanceInProgressError`
+
+```python
+from dnsid.c2sp_tlog import ManagedIssuanceInProgressError
+```
+
+*Bases:* `DNSidError`
+
+A durable operation already owns this identity, including completion.
+
+### `ManagedIssuanceInProgressError` constructor
+
+```python
+ManagedIssuanceInProgressError(issuance: ManagedIssuanceState) -> None
+```
+
+Retain the existing operation for explicit resume.
+
+## `ManagedIssuanceOperationError`
+
+```python
+from dnsid.c2sp_tlog import ManagedIssuanceOperationError
+```
+
+*Bases:* `DNSidError`
+
+Preparation, submission, or persistence failed with retained progress.
+
+### `ManagedIssuanceOperationError` constructor
+
+```python
+ManagedIssuanceOperationError(message: str, issuance: ManagedIssuanceState, *, state: str, transient: bool = False, retry_same_bytes: bool = False, cause: BaseException | None = None) -> None
+```
+
+Retain state and structured retry semantics.
+
+## `ManagedIssuanceRegistry`
+
+```python
+from dnsid.c2sp_tlog import ManagedIssuanceRegistry
+```
+
+*Bases:* `Protocol`
+
+The existing registry preparation and exact-byte submission surface.
+
+### `prepare_issuance`
+
+```python
+ManagedIssuanceRegistry.prepare_issuance(domain: str, idempotency_key: str) -> PreparedRegistryEvent
+```
+
+Return untrusted, partially signed bytes.
+
+### `submit_prepared_event`
+
+```python
+ManagedIssuanceRegistry.submit_prepared_event(domain: str, entry_bytes: bytes, idempotency_key: str) -> SubmissionResult
+```
+
+Submit exactly the persisted bytes.
+
+## `ManagedIssuanceState`
+
+```python
+from dnsid.c2sp_tlog import ManagedIssuanceState
+```
+
+Recovery record; completed bytes and the idempotency key never change.
+
+## `ManagedIssuanceStore`
+
+```python
+from dnsid.c2sp_tlog import ManagedIssuanceStore
+```
+
+*Bases:* `Protocol`
+
+Exclusive durable storage for one operation per identity instance.
+
+### `create_managed_issuance`
+
+```python
+ManagedIssuanceStore.create_managed_issuance(initial: ManagedIssuanceState) -> ManagedIssuanceState | None
+```
+
+Persist initial atomically, or return the existing operation.
+
+### `load_managed_issuance`
+
+```python
+ManagedIssuanceStore.load_managed_issuance(domain: str) -> ManagedIssuanceState | None
+```
+
+Load the authoritative operation.
+
+### `persist_managed_issuance`
+
+```python
+ManagedIssuanceStore.persist_managed_issuance(state: ManagedIssuanceState) -> None
+```
+
+Durably save a transition while holding exclusive ownership.
+
 ## `MigrationVerificationResult`
 
 ```python
@@ -1250,6 +1354,21 @@ assert_canonical_json_bytes(data: bytes, value: object | None = None) -> None
 
 Raise unless *data* is exactly the canonical serialization of its content.
 
+## `begin_managed_issuance`
+
+```python
+from dnsid.c2sp_tlog import begin_managed_issuance
+```
+
+```python
+begin_managed_issuance(*, domain: str, governance_id: str, log_reference: str, entity_public_key: JWK, key_provider: KeyProvider, registry_client: ManagedIssuanceRegistry, idempotency_key: str, store: ManagedIssuanceStore, set_activation_blocked: Callable[[bool], None]) -> ManagedIssuanceState
+```
+
+Persist intent, validate preparation, countersign, persist, and submit.
+
+The caller holds exclusive storage ownership across the entire invocation.
+An existing operation must be resumed, never prepared under a new key.
+
 ## `c2sp_envelope_to_event`
 
 ```python
@@ -1356,6 +1475,18 @@ checkpoint_path(prefix: str) -> str
 ```
 
 Return the fetch path of the log's checkpoint under *prefix*.
+
+## `complete_managed_issuance`
+
+```python
+from dnsid.c2sp_tlog import complete_managed_issuance
+```
+
+```python
+complete_managed_issuance(domain: str, store: ManagedIssuanceStore, set_activation_blocked: Callable[[bool], None]) -> ManagedIssuanceState
+```
+
+Release activation only after the caller verifies public convergence.
 
 ## `create_c2sp_tlog_verification_registry`
 
@@ -1795,6 +1926,21 @@ required_signer_roles(event_type: str) -> list[C2spSignerRole]
 ```
 
 Return the signer roles a complete entry of *event_type* must carry.
+
+## `resume_managed_issuance`
+
+```python
+from dnsid.c2sp_tlog import resume_managed_issuance
+```
+
+```python
+resume_managed_issuance(*, domain: str, log_reference: str, entity_public_key: JWK, key_provider: KeyProvider, registry_client: ManagedIssuanceRegistry, store: ManagedIssuanceStore, set_activation_blocked: Callable[[bool], None]) -> ManagedIssuanceState
+```
+
+Resume authoritative state, without re-signing fixed bytes.
+
+Completed historical bytes can be recovered without the initial private key.
+The caller separately validates the current application signing binding.
 
 ## `sign_prepared_event`
 

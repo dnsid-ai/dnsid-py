@@ -131,6 +131,18 @@ Partial configuration from one source, or the merge of several.
 
 Sections are always present as values; a field equal to its default is absent.
 
+## `FoundryConfig`
+
+```python
+from dnsid import FoundryConfig
+```
+
+Optional Known Foundry account expectations; not identity selectors or trust.
+
+The Foundry workflow is excluded from published packages until server
+acceptance passes. These expectations have no effect in released versions
+until that gate clears.
+
 ## `LogTrust`
 
 ```python

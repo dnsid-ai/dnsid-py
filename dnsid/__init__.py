@@ -83,6 +83,7 @@ from .aws_kms_key_provider import (
     BotoKmsFacade as BotoKmsFacade,
 )
 from .config_loading import (
+    FoundryConfig,
     KeySource,
     LoadedConfig,
     LogTrust,
@@ -332,6 +333,7 @@ __all__ = [
     "GoogleKmsKeyProvider",
     # Configuration loading
     "LoadedConfig",
+    "FoundryConfig",
     "LogTrust",
     "KeySource",
     "load_environment",

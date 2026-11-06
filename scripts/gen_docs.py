@@ -183,6 +183,7 @@ PAGES: list[dict] = [
             "RegistryConfig",
             "PublicationConfig",
             "LoadedConfig",
+            "FoundryConfig",
             "LogTrust",
             "KeySource",
             "load_environment",
