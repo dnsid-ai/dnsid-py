@@ -884,13 +884,16 @@ combines them field-wise (later wins, lists replace; `log_trust` and operational
 from dnsid import (
     identity_manager_from_environment,  # DNSID_* variables
     identity_manager_from_dnsid,        # ~/.dnsid or a DNSid CLI identity directory
-    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry", "keySource"}
+    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry", "keySource", "foundry"}
     load_environment, load_file, load_cli_directory, merge_loaded_config, construct_identity_manager, LoadedConfig,
 )
 
 idm = identity_manager_from_environment()          # under `dnsid local run`: keys, transport, log trust
 idm = construct_identity_manager(merge_loaded_config(load_file("dnsid.json"), load_environment()))
 ```
+
+Only the Foundry workflow reads the `foundry` deployment member. Core identity
+construction ignores it.
 
 | Variable | Maps to |
 |---|---|

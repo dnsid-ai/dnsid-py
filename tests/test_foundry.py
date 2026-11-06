@@ -495,6 +495,10 @@ def test_empty_provider_only_calls_ensure_if_supported(setup):
 
 
 def test_wrong_key_saved_and_stateless_replica(setup):
+    guidance = (
+        "use the provider key this identity was created with; "
+        "run one identity per cloud provider"
+    )
     server, store, arguments = setup
     with create("billing-agent", **arguments):
         pass
@@ -502,10 +506,12 @@ def test_wrong_key_saved_and_stateless_replica(setup):
     with pytest.raises(KeyMismatch) as caught:
         create("billing-agent", **arguments)
     assert caught.value.identity_id == "id-1" and len(server.created) == 1
+    assert str(caught.value) == guidance
     arguments["store"] = FileFoundryStore(store.directory.parent / "replica")
     with pytest.raises(KeyMismatch) as caught:
         create("billing-agent", **arguments)
     assert caught.value.error_code == "KEY_MISMATCH"
+    assert str(caught.value) == guidance
 
 
 @pytest.mark.parametrize(

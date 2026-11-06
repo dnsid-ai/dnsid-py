@@ -717,8 +717,8 @@ class _Foundry:
                 expected.thumbprint(),
             ):
                 raise KeyMismatch(
-                    "provider key differs from this identity; use the one-identity-per-cloud "
-                    "guidance: https://github.com/Identity-Digital/known-foundry/issues/63",
+                    "use the provider key this identity was created with; "
+                    "run one identity per cloud provider",
                     operation=operation,
                 )
         else:
@@ -1027,8 +1027,8 @@ def _error(cause: Exception, operation: dict[str, Any]) -> FoundryError:
         "KEY_REVOKED": KeyRevoked,
     }.get(code, FoundryError)
     message = (
-        "provider key differs from this identity; see one-identity-per-cloud guidance: "
-        "https://github.com/Identity-Digital/known-foundry/issues/63"
+        "use the provider key this identity was created with; "
+        "run one identity per cloud provider"
         if error_type is KeyMismatch
         else "Foundry operation failed; inspect the structured cause and resume facts"
     )
