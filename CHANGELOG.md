@@ -1,4 +1,11 @@
 
+## [0.34.0] - 2026-11-06
+
+### Features
+
+- feat: ship Google KMS support through the gcp extra ([#123](https://github.com/dnsid-ai/dnsid-py/pull/123))
+
+
 ## [0.33.0] - 2026-11-06
 
 ### Bug Fixes
