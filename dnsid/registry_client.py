@@ -524,7 +524,9 @@ class RegistryClient(AbstractRegistryClient):
         self, input: LiveAgentRegistrationInput, idempotency_key: str
     ) -> Generator[_RegistryCall, Any, LiveProvisioningResponse]:
         self._require_auth("register_live_agent")
-        from .exceptions import ArgumentError
+        from copy import deepcopy
+
+        from .exceptions import ArgumentError, DNSidError
 
         if input.environment not in {"", "production"}:
             raise ArgumentError('live registration environment must be "production" or omitted')
@@ -540,14 +542,21 @@ class RegistryClient(AbstractRegistryClient):
             body["capabilities_url"] = input.capabilities_url
         if input.name:
             body["name"] = input.name
-        data = yield _RegistryCall(
-            "_post",
-            "/api/v1/agent",
-            body,
-            extra_headers={"Idempotency-Key": idempotency_key},
-            expected_status=202,
-        )
-        return _live_provisioning_from_response(data, input.public_key_jwk)
+        data: dict[str, Any] | None = None
+        try:
+            data = yield _RegistryCall(
+                "_post",
+                "/api/v1/agent",
+                body,
+                extra_headers={"Idempotency-Key": idempotency_key},
+                expected_status=202,
+            )
+            return _live_provisioning_from_response(data, input.public_key_jwk)
+        except DNSidError as exc:
+            exc.registration_request = deepcopy(body)
+            exc.registration_idempotency_key = idempotency_key
+            exc.registration_response = deepcopy(data or exc.registration_response)
+            raise
 
     def verify_agent(self, domain: str) -> AgentRegistration:
         """Request registry verification for a registered self-managed agent.
@@ -1368,11 +1377,9 @@ class RegistryClient(AbstractRegistryClient):
                 transient=True,
             ) from None
         if not response.is_success:
-            raise VerificationError(
-                VerificationCode.LOG_ERROR,
-                f"Registry request to {path!r} returned HTTP {response.status_code}",
-                transient=response.status_code >= 500,
-            )
+            from .exceptions import RegistryRequestError
+
+            raise RegistryRequestError(path, response.status_code, _registry_error_code(response))
         return PreparedRegistryEvent(entry_bytes=bytes(response.content))
 
     def prepare_key_rotation(
@@ -1554,6 +1561,7 @@ class RegistryClient(AbstractRegistryClient):
                     "pending" if response.is_success or response.status_code >= 500 else "rejected"
                 ),
                 error_code=f"TLOG_SUBMISSION_HTTP_{response.status_code}",
+                status_code=response.status_code,
             )
 
         if response.is_success:
@@ -1563,7 +1571,7 @@ class RegistryClient(AbstractRegistryClient):
                 return SubmissionResult(
                     state="pending",
                     error_code="TLOG_SUBMISSION_INVALID_RESPONSE",
-                    raw=data,
+                    raw=data, status_code=response.status_code,
                 )
         else:
             error_code = str(data.get("error") or "")
@@ -1581,6 +1589,7 @@ class RegistryClient(AbstractRegistryClient):
                     raw=data,
                 )
 
+        result.status_code = response.status_code
         if result.accepted:
             import hashlib
 
@@ -1698,7 +1707,10 @@ def _creation_facts(resp: Any) -> dict[str, Any] | None:
         return None
     return {
         name: data[name]
-        for name in ("id", "domain", "publication_config", "oidc_issuer_url")
+        for name in (
+            "id", "agent_id", "request_id", "domain", "status",
+            "publication_config", "oidc_issuer_url",
+        )
         if name in data
     }
 
@@ -1933,6 +1945,17 @@ def _live_provisioning_from_response(
             challenge_message=challenge_message,
             expected_key_id=public_key.thumbprint(),
         )
+    if "domain" in data:
+        from ._utils import normalize_fqdn
+        from .exceptions import ValidationError
+
+        wire_domain = data["domain"]
+        if not isinstance(wire_domain, str):
+            raise ValidationError("Live provisioning domain must be a valid agent domain")
+        wire_domain = normalize_fqdn(wire_domain, agent_fqdn=True)
+        if domain and domain != wire_domain:
+            raise ValidationError("Live provisioning domain differs from the proof transcript")
+        domain = wire_domain
     return LiveProvisioningResponse(
         request_id=request_id,
         agent_id=agent_id,

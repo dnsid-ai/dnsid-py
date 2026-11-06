@@ -95,6 +95,14 @@ class KeySource:
 
 
 @dataclass
+class FoundryConfig:
+    """Optional Known Foundry account expectations; not identity selectors or trust."""
+
+    organization_id: str | None = None
+    governance_id: str | None = None
+
+
+@dataclass
 class LoadedConfig:
     """Partial configuration from one source, or the merge of several.
 
@@ -105,6 +113,7 @@ class LoadedConfig:
     log_trust: LogTrust = field(default_factory=LogTrust)
     registry: RegistryConfig = field(default_factory=RegistryConfig)
     key_source: KeySource = field(default_factory=KeySource)
+    foundry: FoundryConfig = field(default_factory=FoundryConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +208,7 @@ def load_file(path: Path | str) -> LoadedConfig:
     """
     source = str(path)
     root = _json_object(Path(path).read_bytes(), source)
-    _reject_unknown(root, source, ("dnsid", "logTrust", "registry", "keySource"))
+    _reject_unknown(root, source, ("dnsid", "logTrust", "registry", "keySource", "foundry"))
     loaded = LoadedConfig()
 
     if "dnsid" in root:
@@ -227,6 +236,13 @@ def load_file(path: Path | str) -> LoadedConfig:
         _reject_unknown(registry, f"{source}: registry", ("registryUrl",))
         loaded.registry = RegistryConfig(
             registry_url=_typed(registry, "registryUrl", str, f"{source}: registry") or ""
+        )
+    if "foundry" in root:
+        raw = _object(root["foundry"], f"{source}: foundry")
+        _reject_unknown(raw, f"{source}: foundry", ("organizationId", "governanceId"))
+        loaded.foundry = FoundryConfig(
+            organization_id=_present_string(raw, "organizationId", source),
+            governance_id=_present_string(raw, "governanceId", source),
         )
     if "keySource" in root:
         raw = _object(root["keySource"], f"{source}: keySource")
@@ -423,6 +439,7 @@ def merge_loaded_config(base: LoadedConfig, overlay: LoadedConfig) -> LoadedConf
         dnsid=_merge_fields(base.dnsid, overlay.dnsid),
         log_trust=replace(overlay.log_trust if _has_trust(overlay.log_trust) else base.log_trust),
         registry=_merge_fields(base.registry, overlay.registry),
+        foundry=_merge_fields(base.foundry, overlay.foundry),
         key_source=replace(
             operational_source,
             entity_key_path=source.entity_key_path
@@ -551,7 +568,18 @@ def _log_registry_from_trust(trust: LogTrust, transport: TransportConfig) -> Log
     if trust.managed is not None:
         if trust.managed is not True:
             raise ArgumentError("log_trust.managed must be true when present")
-        return create_dnsid_managed_verification_registry()
+        from .c2sp_tlog import DnsidManagedVerificationOptions, SafeC2spResourceFetcher
+
+        fetcher = SafeC2spResourceFetcher(transport_config=transport)
+        try:
+            registry = create_dnsid_managed_verification_registry(DnsidManagedVerificationOptions(
+                resource_fetcher=fetcher,
+            ))
+        except BaseException:
+            fetcher.close()
+            raise
+        registry._owned_resources.append(fetcher)
+        return registry
     return create_c2sp_tlog_verification_registry(
         C2spTlogVerificationOptions(
             trust_profile=trust.profile,
@@ -650,7 +678,7 @@ def _operational_key_provider(source: KeySource, domain: str) -> KeyProvider | N
                 f"{source.provider} factory returned no KeyProvider; no file fallback"
             )
         return provider
-    if source.key_ref or source.cli_directory or source.key_store_path:
+    if source.provider in {None, "file"}:
         import warnings
 
         warnings.warn(
@@ -766,6 +794,11 @@ def _reject_unknown(raw: Mapping[str, Any], source: str, allowed: tuple[str, ...
     for key in raw:
         if key not in allowed:
             raise ArgumentError(f"{source} has unknown member {key!r}")
+
+
+def _present_string(raw: Mapping[str, Any], key: str, source: str) -> str | None:
+    value = _typed(raw, key, str, source)
+    return value if value is not None and value.strip() else None
 
 
 def _typed(raw: Mapping[str, Any], key: str, kind: type[_T], source: str) -> _T | None:
