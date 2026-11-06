@@ -21,6 +21,7 @@ from ..c2sp_tlog.managed_issuance import (
     ManagedIssuanceState,
     begin_managed_issuance,
     complete_managed_issuance,
+    issuance_rejected,
     resume_managed_issuance,
 )
 from ..config_loading import (
@@ -59,7 +60,7 @@ from ..registry_client import (
     _live_public_jwk_dict,
     _validate_publication_config,
 )
-from ._issuance import IssuanceRegistry, IssuanceStore, issuance_rejected
+from ._issuance import IssuanceRegistry, IssuanceStore
 from ._signing import ApplicationSigner, WorkflowKeyProvider, provider_call
 from .errors import (
     FoundryDeadline,

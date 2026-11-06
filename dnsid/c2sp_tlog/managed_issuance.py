@@ -109,6 +109,15 @@ class ManagedIssuanceInProgressError(DNSidError):
         self.issuance = copy.deepcopy(issuance)
 
 
+def issuance_rejected(error_code: str, status_code: int | None) -> bool:
+    """Distinguish explicit issuance-byte rejection from other request failures."""
+    return status_code not in {401, 403, 404} and error_code in {
+        "IDEMPOTENCY_MISMATCH",
+        "TLOG_PREPARATION_MISMATCH",
+        "TLOG_INVALID_ENTRY",
+    }
+
+
 def begin_managed_issuance(
     *, domain: str, governance_id: str, log_reference: str, entity_public_key: JWK,
     key_provider: KeyProvider, registry_client: ManagedIssuanceRegistry,
@@ -267,9 +276,8 @@ def _prepare(
         )
         remaining_seconds()
     except Exception as cause:
-        transient = (
-            not isinstance(cause, VerificationError) or cause.transient
-            or getattr(cause, "status_code", None) in {401, 403, 404}
+        transient = not issuance_rejected(
+            getattr(cause, "error_code", ""), getattr(cause, "status_code", None),
         )
         state = _persist(store, replace(
             state, last_error_code=getattr(cause, "error_code", ""),
@@ -327,9 +335,8 @@ def _submit(
         )
         remaining_seconds()
     except Exception as cause:
-        retry = (
-            getattr(cause, "status_code", None) in {401, 403, 404}
-            or getattr(cause, "retry_same_bytes", True)
+        retry = not issuance_rejected(
+            getattr(cause, "error_code", ""), getattr(cause, "status_code", None),
         )
         state = _persist(store, replace(
             state, submission=SubmissionResult(
@@ -350,18 +357,20 @@ def _submit(
             "managed issuance receipt failed validation", state,
             state="indeterminate", retry_same_bytes=True, cause=cause,
         ) from cause
-    control_plane_failure = result.state == "rejected" and result.status_code in {401, 403, 404}
-    if control_plane_failure:
+    resumable_failure = result.state == "rejected" and not issuance_rejected(
+        result.error_code, result.status_code,
+    )
+    if resumable_failure:
         result = replace(result, state="pending")
     state = _persist(store, replace(
         state, submission=copy.deepcopy(result), last_error_code=result.error_code,
         terminal_failure=result.state == "rejected",
     ))
-    if result.state == "rejected" or control_plane_failure:
+    if result.state == "rejected" or resumable_failure:
         raise ManagedIssuanceOperationError(
             "registry did not accept managed issuance bytes", state,
-            state="indeterminate" if control_plane_failure else "rejected",
-            transient=control_plane_failure, retry_same_bytes=control_plane_failure,
+            state="indeterminate" if resumable_failure else "rejected",
+            transient=resumable_failure, retry_same_bytes=resumable_failure,
         )
     return state
 

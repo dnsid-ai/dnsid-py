@@ -6,7 +6,11 @@ from dataclasses import fields, replace
 from typing import Any
 
 from .._utils import b64url_decode_strict, b64url_encode
-from ..c2sp_tlog.managed_issuance import ManagedIssuanceRegistry, ManagedIssuanceState
+from ..c2sp_tlog.managed_issuance import (
+    ManagedIssuanceRegistry,
+    ManagedIssuanceState,
+    issuance_rejected,
+)
 from ..exceptions import RegistryRequestError
 from ..models import JWK, LogRef, PreparedRegistryEvent, SubmissionResult
 from .errors import FoundryStateError
@@ -27,15 +31,6 @@ _FIELDS = {
     "complete": "complete",
     "activation_blocked": "activationBlocked",
 }
-
-
-def issuance_rejected(error_code: str, status_code: int | None) -> bool:
-    """Distinguish rejected issuance bytes from authorization or discovery failures."""
-    return status_code not in {401, 403, 404} and error_code in {
-        "IDEMPOTENCY_MISMATCH",
-        "TLOG_PREPARATION_MISMATCH",
-        "TLOG_INVALID_ENTRY",
-    }
 
 
 class IssuanceRegistry:

@@ -145,8 +145,8 @@ def test_preparation_retry_keeps_durable_intent(setup):
     assert resume_managed_issuance(**shared).submission.accepted
 
 
-@pytest.mark.parametrize("status", [401, 403, 404])
-def test_prepare_auth_or_discovery_failure_can_resume(setup, status):
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 409, 422, 429])
+def test_prepare_request_failure_can_resume(setup, status):
     shared, store, registry, _ = setup
     prepare = registry.prepare_issuance
     registry.prepare_issuance = Mock(
@@ -157,14 +157,15 @@ def test_prepare_auth_or_discovery_failure_can_resume(setup, status):
     assert caught.value.transient and caught.value.status_code == status
     assert not store.state.terminal_failure and not store.state.entry_bytes
     assert not registry.submits
+    registry.prepare_issuance.assert_called_once_with(DOMAIN, "issuance-1")
     registry.prepare_issuance = prepare
     assert resume_managed_issuance(**shared).submission.accepted
     assert registry.submits[0][2] == "issuance-1"
 
 
-@pytest.mark.parametrize("status", [401, 403, 404])
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 409, 422, 429])
 @pytest.mark.parametrize("response", [False, True])
-def test_submit_auth_or_discovery_failure_retries_same_bytes(setup, status, response):
+def test_submit_request_failure_retries_same_bytes(setup, status, response):
     shared, store, registry, _ = setup
     if response:
         registry.result = SubmissionResult("rejected", error_code="UNAVAILABLE", status_code=status)
@@ -222,14 +223,27 @@ def test_wrong_receipt_does_not_activate(setup):
         complete_managed_issuance(DOMAIN, store, block)
 
 
-def test_rejection_is_not_resubmitted(setup):
+@pytest.mark.parametrize("error_code", [
+    "IDEMPOTENCY_MISMATCH", "TLOG_PREPARATION_MISMATCH", "TLOG_INVALID_ENTRY",
+])
+@pytest.mark.parametrize("stage", ["prepare", "submit-error", "submit-result"])
+def test_rejection_is_not_resubmitted(setup, error_code, stage):
     shared, store, registry, _ = setup
-    registry.result = SubmissionResult("rejected", error_code="TLOG_INVALID_ENTRY")
-    with pytest.raises(ManagedIssuanceOperationError):
+    if stage == "prepare":
+        registry.prepare_issuance = Mock(
+            side_effect=RegistryRequestError("/prepare", 422, error_code),
+        )
+    elif stage == "submit-error":
+        registry.error = RegistryRequestError("/submit", 422, error_code)
+    else:
+        registry.result = SubmissionResult("rejected", error_code=error_code, status_code=422)
+    with pytest.raises(ManagedIssuanceOperationError) as caught:
         begin(shared)
+    assert caught.value.state == "rejected" and not caught.value.transient
+    assert store.state.terminal_failure
     with pytest.raises(ManagedIssuanceOperationError):
         resume_managed_issuance(**shared)
-    assert len(registry.submits) == 1
+    assert len(registry.submits) == (0 if stage == "prepare" else 1)
 
 
 def test_countersigning_provider_fails_once_then_resume_succeeds(setup):
