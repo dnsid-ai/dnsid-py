@@ -44,6 +44,10 @@ Changelog = "https://github.com/dnsid-ai/dnsid-py/blob/main/CHANGELOG.md"
 aws = [
     "boto3>=1.34",
 ]
+gcp = [
+    "google-cloud-kms>=3.0",
+    "google-crc32c>=1.5",
+]
 dev = [
     "build>=1.2",
     "pytest>=8.0",
@@ -64,12 +68,6 @@ a2a = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["dnsid"]
-
-[tool.uv.workspace]
-members = ["packages/google-kms"]
-
-[tool.uv.sources]
-dnsid = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"

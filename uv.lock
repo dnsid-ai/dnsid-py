@@ -7,12 +7,6 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
-[manifest]
-members = [
-    "dnsid",
-    "dnsid-google-kms",
-]
-
 [[package]]
 name = "a2a-sdk"
 version = "1.2.3"
@@ -554,6 +548,10 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
+gcp = [
+    { name = "google-cloud-kms" },
+    { name = "google-crc32c" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -563,6 +561,8 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42.0" },
     { name = "dnspython", specifier = ">=2.9.0" },
     { name = "fastapi", marker = "extra == 'a2a'" },
+    { name = "google-cloud-kms", marker = "extra == 'gcp'", specifier = ">=3.0" },
+    { name = "google-crc32c", marker = "extra == 'gcp'", specifier = ">=1.5" },
     { name = "griffe", marker = "extra == 'dev'", specifier = ">=1.5" },
     { name = "http-sf", specifier = ">=1.3.0,<2" },
     { name = "httpx", specifier = ">=0.27" },
@@ -574,24 +574,7 @@ requires-dist = [
     { name = "sse-starlette", marker = "extra == 'a2a'" },
     { name = "uvicorn", marker = "extra == 'a2a'" },
 ]
-provides-extras = ["aws", "dev", "a2a"]
-
-[[package]]
-name = "dnsid-google-kms"
-version = "0.33.0"
-source = { editable = "packages/google-kms" }
-dependencies = [
-    { name = "dnsid" },
-    { name = "google-cloud-kms" },
-    { name = "google-crc32c" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dnsid", editable = "." },
-    { name = "google-cloud-kms", specifier = ">=3.0" },
-    { name = "google-crc32c", specifier = ">=1.5" },
-]
+provides-extras = ["aws", "gcp", "dev", "a2a"]
 
 [[package]]
 name = "dnspython"

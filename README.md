@@ -16,18 +16,18 @@ For AWS KMS-backed signing keys, install the `aws` extra:
 pip install "dnsid[aws]"
 ```
 
-Google Cloud KMS support is a separate optional distribution:
+For Google Cloud KMS-backed signing keys, install the `gcp` extra:
 
 ```bash
-pip install dnsid-google-kms
+pip install "dnsid[gcp]"
 ```
 
-Import it with `from dnsid_google_kms import GoogleKmsKeyProvider`, not from
-`dnsid`. Installing the base SDK alone does not install Google dependencies.
+Import it with `from dnsid import GoogleKmsKeyProvider`. Installing the base SDK
+alone does not install Google dependencies.
 
 If the release is not yet available on PyPI, install directly from GitHub.
 Replace `main` with a [release tag](https://github.com/dnsid-ai/dnsid-py/releases)
-to pin a version; the `[aws]` extra works the same way:
+to pin a version; the `[aws]` and `[gcp]` extras work the same way:
 
 ```bash
 pip install "dnsid @ git+https://github.com/dnsid-ai/dnsid-py@main"
@@ -82,11 +82,11 @@ method or trust root; configure a matching reader (see the
 
 - **Core protocol** — `IdentityManager` drives every protocol operation: domain verification, TXT-record creation and publication, key rotation, and lifecycle-event signing.
 - **Application profiles** (not part of the core protocol): JWT/JWS ([JOSE](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-jose.md)), [RFC 9421 HTTP Message Signatures](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-http-signatures.md), [Web Bot Auth](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-web-bot-auth.md), and [OIDC](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-oidc.md).
-- **Key management** — private keys stay behind the `KeyProvider` interface: file-backed with `LocalKeyProvider`, or externalized entirely with `AwsKmsKeyProvider`, the optional `dnsid_google_kms.GoogleKmsKeyProvider`, or your own KMS/HSM-backed implementation.
+- **Key management** — private keys stay behind the `KeyProvider` interface: file-backed with `LocalKeyProvider`, or externalized entirely with `AwsKmsKeyProvider`, `GoogleKmsKeyProvider` (with the `gcp` extra), or your own KMS/HSM-backed implementation.
 - **Transparency log** — a ready-made C2SP tile-log `LogReader` (`dnsid.c2sp_tlog`).
 - **Registry client** — operator-side registration and publication workflows.
 
-**Import surface.** Core SDK exports are importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. Import transparency-log integration from `dnsid.c2sp_tlog`. The separately installed Google provider is imported from `dnsid_google_kms`.
+**Import surface.** Core SDK exports are importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. Import transparency-log integration from `dnsid.c2sp_tlog`. The Google provider is available as `from dnsid import GoogleKmsKeyProvider`; its dependencies require the `gcp` extra.
 
 **Async verification.** Use `await manager.async_verify_domain(domain)` and
 `await http_signer.async_verify_signed_http_request(request)` in middleware.
@@ -473,14 +473,14 @@ dnsid/
 
 ## Google Cloud KMS key provider
 
-Install `dnsid-google-kms` separately. It uses the official synchronous Google
+Install the `gcp` extra with `pip install "dnsid[gcp]"`. It uses the official synchronous Google
 client and its ambient Application Default Credentials chain; grant the caller
 permission to read the public key and sign with the selected version. Do not put
 credentials, private keys, or access tokens into deployment settings.
 
 ```python
 from google.cloud import kms_v1
-from dnsid_google_kms import GoogleKmsKeyProvider
+from dnsid import GoogleKmsKeyProvider
 
 provider = GoogleKmsKeyProvider(
     kms_v1.KeyManagementServiceClient(),

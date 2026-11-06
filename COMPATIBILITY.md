@@ -36,6 +36,13 @@ These are installed automatically with `pip install dnsid`:
 |---|---|---|
 | [boto3](https://pypi.org/project/boto3/) | ≥ 1.34 | AWS KMS-backed signing key provider |
 
+### `gcp` extra (`pip install "dnsid[gcp]"`)
+
+| Package | Required Version | Purpose |
+|---|---|---|
+| [google-cloud-kms](https://pypi.org/project/google-cloud-kms/) | ≥ 3.0 | Google Cloud KMS-backed signing key provider |
+| [google-crc32c](https://pypi.org/project/google-crc32c/) | ≥ 1.5 | KMS request and response integrity checks |
+
 ### `dev` extra (`pip install "dnsid[dev]"`)
 
 | Package | Required Version | Purpose |

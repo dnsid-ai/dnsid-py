@@ -567,7 +567,7 @@ def _log_registry_from_trust(trust: LogTrust, transport: TransportConfig) -> Log
 
 _CLOUD_PACKAGES = {
     "aws-kms": ("boto3", "dnsid[aws]"),
-    "google-kms": ("dnsid_google_kms", "dnsid-google-kms"),
+    "google-kms": ("dnsid.google_kms_key_provider", "dnsid[gcp]"),
     "azure-key-vault": ("dnsid_azure_key_vault", "dnsid-azure-key-vault"),
 }
 
@@ -600,6 +600,9 @@ def _validate_key_source(source: KeySource) -> Any:
     module, remedy = _CLOUD_PACKAGES[provider]
     try:
         factory = importlib.import_module(module)
+        if provider == "google-kms":
+            importlib.import_module("google.cloud.kms_v1")
+            importlib.import_module("google_crc32c")
     except ImportError:
         raise ArgumentError(f"{provider} unavailable; install {remedy}") from None
     if provider == "aws-kms":

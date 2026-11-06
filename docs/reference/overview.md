@@ -28,7 +28,7 @@ from dnsid.http_signatures import HttpSignatureProfile
 ```
 
 Import transparency-log integration from `dnsid.c2sp_tlog`. Install
-`dnsid-google-kms` separately and import its provider from `dnsid_google_kms`;
+the `gcp` extra (`pip install "dnsid[gcp]"`) and import `GoogleKmsKeyProvider` from `dnsid`;
 the base SDK does not install Google dependencies.
 
 ## Async verification
