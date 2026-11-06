@@ -5,7 +5,7 @@ description: "Key management backends: file-backed local keys and AWS KMS and op
 
 <!-- GENERATED FILE — do not edit. Regenerate with `python scripts/gen_docs.py` in dnsid-ai/dnsid-py. -->
 
-Install `dnsid-google-kms` separately and import `GoogleKmsKeyProvider` from `dnsid_google_kms`. It uses ambient Google credentials and an existing numeric CryptoKeyVersion with software EC_SIGN_ED25519. Configuration selects `google-kms`, `key_ref` (JSON `keyRef`), and optionally algorithm `EdDSA`; never include raw credentials in settings. Generation stays pending until explicit activation; supersession is local, not cloud retirement. Provider state is process-local, not persistence/recovery orchestration.
+Install the `gcp` extra (`pip install "dnsid[gcp]"`) and import `GoogleKmsKeyProvider` from `dnsid`. It uses ambient Google credentials and an existing numeric CryptoKeyVersion with software EC_SIGN_ED25519. Configuration selects `google-kms`, `key_ref` (JSON `keyRef`), and optionally algorithm `EdDSA`; never include raw credentials in settings. Generation stays pending until explicit activation; supersession is local, not cloud retirement. Provider state is process-local, not persistence/recovery orchestration.
 
 ## `LocalKeyProvider`
 
@@ -587,7 +587,7 @@ key deletion.
 ## `GoogleKmsKeyProvider`
 
 ```python
-from dnsid_google_kms import GoogleKmsKeyProvider
+from dnsid import GoogleKmsKeyProvider
 ```
 
 *Bases:* `KeyProvider`
@@ -695,7 +695,7 @@ Sign only with an active or pending key, checking version and CRC32C binding.
 ## `validate_config`
 
 ```python
-from dnsid_google_kms import validate_config
+from dnsid.google_kms_key_provider import validate_config
 ```
 
 ```python
@@ -707,7 +707,7 @@ Validate existing-version selection without credentials or service calls.
 ## `key_provider_from_config`
 
 ```python
-from dnsid_google_kms import key_provider_from_config
+from dnsid.google_kms_key_provider import key_provider_from_config
 ```
 
 ```python

@@ -11,18 +11,15 @@ import re
 import threading
 from typing import Any
 
-import google_crc32c
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from google.cloud import kms_v1
 
-from dnsid import ArgumentError
-from dnsid._crypto import jwk_from_dict
-from dnsid._utils import b64url_encode
-from dnsid.config_loading import KeySource
-from dnsid.exceptions import NoActiveSigningKeyError
-from dnsid.interfaces import KeyProvider
-from dnsid.models import JWK
+from ._crypto import jwk_from_dict
+from ._utils import b64url_encode
+from .config_loading import KeySource
+from .exceptions import ArgumentError, NoActiveSigningKeyError
+from .interfaces import KeyProvider
+from .models import JWK
 
 __all__ = ["GoogleKmsKeyProvider", "validate_config", "key_provider_from_config"]
 
@@ -49,6 +46,8 @@ def validate_config(source: KeySource) -> None:
 
 def key_provider_from_config(source: KeySource) -> GoogleKmsKeyProvider:
     """Open the selected existing version with the official synchronous client."""
+    from google.cloud import kms_v1
+
     validate_config(source)
     return GoogleKmsKeyProvider(kms_v1.KeyManagementServiceClient(), source.key_ref or "")
 
@@ -77,6 +76,9 @@ class GoogleKmsKeyProvider(KeyProvider):
         self._active: str | None = key["kid"]
 
     def _read_public_key(self, key_version_name: str) -> dict[str, str]:
+        import google_crc32c
+        from google.cloud import kms_v1
+
         response = self._client.get_public_key(request={"name": key_version_name})
         if response.name != key_version_name:
             raise ArgumentError("google-kms public response version mismatch")
@@ -132,6 +134,8 @@ class GoogleKmsKeyProvider(KeyProvider):
         and public key must confirm software Ed25519 before local registration.
         Failure after creation never promotes a key or retries by creating another.
         """
+        from google.cloud import kms_v1
+
         with self._lock:
             response = self._client.create_crypto_key_version(request={"parent": self._parent})
             name = response.name
@@ -198,6 +202,8 @@ class GoogleKmsKeyProvider(KeyProvider):
 
     def sign_key(self, kid: str, payload: bytes) -> bytes:
         """Sign only with an active or pending key, checking version and CRC32C binding."""
+        import google_crc32c
+
         with self._lock:
             if kid != self._active and kid not in self._pending:
                 raise ArgumentError("google-kms signing requires an active or pending key")

@@ -1,6 +1,6 @@
 """Runtime contract for #56, independent of any provider implementation.
 
-Engineering declaration: dnsid_google_kms.GoogleKmsKeyProvider(client,
+Engineering declaration: dnsid.GoogleKmsKeyProvider(client,
 key_version_name). Client uses official synchronous get_public_key(request=...)
 and asymmetric_sign(request=...) calls. Responses below model public KMS fields.
 All dependency interactions are fake-only; cryptography verification is real.
@@ -10,7 +10,6 @@ Lifecycle methods intentionally await the separate lifecycle handoff.
 from __future__ import annotations
 
 import base64
-import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -18,7 +17,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from dnsid import ArgumentError
+from dnsid import ArgumentError, GoogleKmsKeyProvider
 
 VERSION = "projects/fixture/locations/global/keyRings/runtime/cryptoKeys/agent/cryptoKeyVersions/7"
 # RFC 8032 test 1 seed. Never sourced from SDK code or expected SDK output.
@@ -74,9 +73,7 @@ class FakeKms:
 
 
 def provider(client):
-    # Deliberately no skip/stub: this TC is blocked on the distribution until code lands.
-    module = importlib.import_module("dnsid_google_kms")
-    return module.GoogleKmsKeyProvider(client, VERSION)
+    return GoogleKmsKeyProvider(client, VERSION)
 
 
 def test_given_independent_crc_fixture_when_checked_then_castagnoli_vector_matches():

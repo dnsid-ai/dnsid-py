@@ -58,10 +58,15 @@ def selected_imports(monkeypatch, module=None):
     calls = []
 
     def selected(name, package=None):
-        if name.startswith(("dnsid_google", "dnsid_aws", "dnsid_azure", "google.cloud")):
+        if name.startswith((
+            "dnsid.google_kms_key_provider", "dnsid_aws", "dnsid_azure",
+            "google.cloud", "google_crc32c",
+        )):
             calls.append(name)
-            if name == "dnsid_google_kms" and module is not None:
-                return module
+            if name == "dnsid.google_kms_key_provider":
+                return module if module is not None else original(name, package)
+            if module is not None and name in {"google.cloud.kms_v1", "google_crc32c"}:
+                return ModuleType(name)
             raise ModuleNotFoundError(f"test dependency unavailable: {name}", name=name)
         return original(name, package)
 
@@ -99,7 +104,7 @@ def test_given_selected_google_when_constructed_then_only_fixed_factory_is_resol
     tmp_path, monkeypatch,
 ):
     """**Mode**: fake-only (optional package stops before key opening)."""
-    module = ModuleType("dnsid_google_kms")
+    module = ModuleType("dnsid.google_kms_key_provider")
     events = []
 
     def validate_config(source):
@@ -121,14 +126,16 @@ def test_given_selected_google_when_constructed_then_only_fixed_factory_is_resol
         )
     else:
         pytest.fail("construction returned without opening the selected existing-key provider")
-    assert calls and set(calls) == {"dnsid_google_kms"}
+    assert set(calls) == {
+        "dnsid.google_kms_key_provider", "google.cloud.kms_v1", "google_crc32c",
+    }
     assert events == [("validate", "google-kms", VERSION), ("open", "google-kms", VERSION)]
 
 
 def test_given_missing_google_when_constructed_then_error_names_install_remedy(
     tmp_path, monkeypatch,
 ):
-    """**Mode**: fake-only (selected distribution deliberately unavailable)."""
+    """**Mode**: fake-only (Google dependency deliberately unavailable)."""
     calls = selected_imports(monkeypatch)
     loaded = load_document(tmp_path, {"provider": "google-kms", "keyRef": VERSION})
     before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
@@ -136,15 +143,15 @@ def test_given_missing_google_when_constructed_then_error_names_install_remedy(
         construct_identity_manager(loaded)
     message = str(caught.value).lower()
     assert "google-kms" in message
-    assert "dnsid-google-kms" in message, "missing-provider error must name installable distribution"
+    assert "dnsid[gcp]" in message, "missing-provider error must name the installable extra"
     assert "install" in message, "missing-provider error must tell the caller how to remedy it"
-    assert calls and set(calls) == {"dnsid_google_kms"}
+    assert set(calls) == {"dnsid.google_kms_key_provider", "google.cloud.kms_v1"}
     assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
 
 
 def test_given_factory_rejection_when_constructed_then_no_fallback_or_open(tmp_path, monkeypatch):
     """**Mode**: fake-only (validation rejects before any service operation)."""
-    module = ModuleType("dnsid_google_kms")
+    module = ModuleType("dnsid.google_kms_key_provider")
     opened = []
 
     def validate_config(source):
@@ -162,7 +169,9 @@ def test_given_factory_rejection_when_constructed_then_no_fallback_or_open(tmp_p
         construct_identity_manager(loaded)
     assert "fixture rejects unsupported algorithm" in str(caught.value)
     assert opened == []
-    assert calls and set(calls) == {"dnsid_google_kms"}
+    assert set(calls) == {
+        "dnsid.google_kms_key_provider", "google.cloud.kms_v1", "google_crc32c",
+    }
 
 
 def test_given_verifier_when_source_present_then_no_optional_provider_is_loaded(monkeypatch):

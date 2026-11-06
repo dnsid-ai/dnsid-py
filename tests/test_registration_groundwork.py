@@ -40,7 +40,7 @@ _CONFIG = make_config(
     "provider,module,remedy",
     [
         ("aws-kms", "boto3", "dnsid[aws]"),
-        ("google-kms", "dnsid_google_kms", "dnsid-google-kms"),
+        ("google-kms", "dnsid.google_kms_key_provider", "dnsid[gcp]"),
         ("azure-key-vault", "dnsid_azure_key_vault", "dnsid-azure-key-vault"),
     ],
 )

@@ -1,32 +1,32 @@
-"""Release-wiring guards: the optional distribution must actually reach users.
+"""Release-wiring guards for Google KMS support in the main distribution.
 
 Inspect declarative workflows/manifests, never provider implementation bodies.
 These are repository proof guards, not protocol or manager lifecycle contracts.
 """
 
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = "packages/google-kms"
 
 
 def executable_lines(text):
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
-def test_given_release_when_building_then_google_wheel_and_sdist_share_uploaded_dist():
-    """**Mode**: real-capable (repository files). GWT: optional package is built."""
+def test_given_release_when_building_then_main_distribution_includes_google_extra():
+    """**Mode**: real-capable (repository files). GWT: provider ships in dnsid."""
+    manifest = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert manifest["project"]["optional-dependencies"]["gcp"] == [
+        "google-cloud-kms>=3.0", "google-crc32c>=1.5",
+    ]
+    assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["dnsid"]
+    assert (ROOT / "dnsid/google_kms_key_provider.py").is_file()
     workflow = executable_lines((ROOT / ".github/workflows/release.yml").read_text())
-    lines = workflow.splitlines()
-    google_builds = [line for line in lines if PACKAGE in line and "-m build" in line]
-    assert google_builds, "release must build packages/google-kms, not only the root distribution"
-    # An unrestricted build creates both wheel and sdist; require one shared output
-    # so the existing checked/uploaded/published artifact cannot omit the provider.
-    assert any("--wheel" not in line and "--sdist" not in line
-               and ("--outdir dist" in line or "-o dist" in line)
-               for line in google_builds), "build Google wheel AND sdist into the shared dist directory"
+    assert "python -m build\n" in workflow
     assert "python -m twine check dist/*" in workflow
     assert "python scripts/check_distribution_attribution.py dist" in workflow
+    assert 'pip install "${wheel}[gcp]"' in workflow
 
 
 def test_given_shared_distributions_when_released_then_upload_download_publish_cover_all():
@@ -46,10 +46,8 @@ def test_given_shared_distributions_when_released_then_upload_download_publish_c
             assert line.strip().split(":", 1)[1].strip().strip("\"'") in {"dist", "dist/"}
 
 
-def test_given_release_version_bump_when_preparing_then_google_version_is_managed():
-    """**Mode**: real-capable (repository files). GWT: provider cannot stay at 0.1.0 forever."""
+def test_given_release_version_bump_when_preparing_then_main_version_is_managed():
+    """**Mode**: real-capable (repository files). GWT: one distribution version."""
     workflow = executable_lines((ROOT / ".github/workflows/release-pr.yml").read_text())
-    assert f"{PACKAGE}/pyproject.toml" in workflow, (
-        "release preparation must explicitly manage the Google distribution version "
-        "alongside its release artifacts"
-    )
+    assert 'sed -i "s/^version = \\".*\\"/version = \\"${VERSION_BARE}\\"/" pyproject.toml' in workflow
+    assert "uv lock" in workflow

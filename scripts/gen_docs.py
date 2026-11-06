@@ -36,11 +36,10 @@ DOCS_SITE = "https://docs.dnsid.ai"
 SLUG_PREFIX = "reference/py"
 
 # Names documented from a specific submodule rather than the package root.
-# Currently empty: all profile classes are top-level exports (TS-SDK parity)
-# and are documented with their root import, though their home submodules
-# (dnsid.jose, dnsid.http_signatures) remain valid
-# import paths.
-SUBMODULE_IMPORTS: dict[str, str] = {}
+SUBMODULE_IMPORTS: dict[str, str] = {
+    "validate_config": "dnsid.google_kms_key_provider",
+    "key_provider_from_config": "dnsid.google_kms_key_provider",
+}
 
 # Importable from the package root (and listed in the package docstring)
 # but absent from dnsid.__all__. Documented anyway; kept explicit here so
@@ -85,7 +84,7 @@ from dnsid.http_signatures import HttpSignatureProfile
 ```
 
 Import transparency-log integration from `dnsid.c2sp_tlog`. Install
-`dnsid-google-kms` separately and import its provider from `dnsid_google_kms`;
+the `gcp` extra (`pip install "dnsid[gcp]"`) and import `GoogleKmsKeyProvider` from `dnsid`;
 the base SDK does not install Google dependencies.
 
 ## Async verification
@@ -318,8 +317,8 @@ PAGES: list[dict] = [
         "description": "Key management backends: file-backed local keys and "
         "AWS KMS and optional Google Cloud KMS.",
         "intro": (
-            "Install `dnsid-google-kms` separately and import "
-            "`GoogleKmsKeyProvider` from `dnsid_google_kms`. It uses ambient "
+            'Install the `gcp` extra (`pip install "dnsid[gcp]"`) and import '
+            "`GoogleKmsKeyProvider` from `dnsid`. It uses ambient "
             "Google credentials and an existing numeric CryptoKeyVersion with "
             "software EC_SIGN_ED25519. Configuration selects `google-kms`, "
             "`key_ref` (JSON `keyRef`), and optionally algorithm `EdDSA`; "
@@ -334,9 +333,9 @@ PAGES: list[dict] = [
             "AwsKmsKeyState",
             "BotoKmsFacade",
             "AwsKmsFacade",
-            "dnsid_google_kms.GoogleKmsKeyProvider",
-            "dnsid_google_kms.validate_config",
-            "dnsid_google_kms.key_provider_from_config",
+            "GoogleKmsKeyProvider",
+            "validate_config",
+            "key_provider_from_config",
         ],
     },
     {
@@ -668,10 +667,8 @@ def _is_enum(cls: griffe.Class) -> bool:
     return any("Enum" in str(b) for b in cls.bases)
 
 
-def _resolve(pkg: griffe.Module, tlog: griffe.Module, google: griffe.Module, name: str):
+def _resolve(pkg: griffe.Module, tlog: griffe.Module, name: str):
     """Resolve a public name to (griffe object, import path)."""
-    if name.startswith("dnsid_google_kms."):
-        return google.members[name.split(".", 1)[1]], "dnsid_google_kms"
     if name in SUBMODULE_IMPORTS:
         module_path = SUBMODULE_IMPORTS[name]
         module = pkg
@@ -691,7 +688,7 @@ def _resolve(pkg: griffe.Module, tlog: griffe.Module, google: griffe.Module, nam
 
 
 def _render_page(
-    page: dict, pkg: griffe.Module, tlog: griffe.Module, google: griffe.Module,
+    page: dict, pkg: griffe.Module, tlog: griffe.Module,
 ) -> str:
     lines = [
         "---",
@@ -706,7 +703,7 @@ def _render_page(
     if page["intro"]:
         lines += [page["intro"], ""]
     for name in page["names"]:
-        obj, import_path = _resolve(pkg, tlog, google, name)
+        obj, import_path = _resolve(pkg, tlog, name)
         if obj.is_class:
             if _is_enum(obj):
                 lines += _render_enum(obj, import_path)
@@ -731,11 +728,6 @@ def main() -> None:
         docstring_parser=griffe.Parser.google,
     )
     tlog = pkg.members["c2sp_tlog"]
-    google = griffe.load(
-        "dnsid_google_kms",
-        search_paths=[str(REPO_ROOT / "packages" / "google-kms")],
-        docstring_parser=griffe.Parser.google,
-    )
 
     tlog_all = sorted(tlog.exports or [])
     for page in PAGES:
@@ -756,7 +748,6 @@ def main() -> None:
         | {f"c2sp_tlog.{n}" for n in tlog_all}
         | set(SUBMODULE_IMPORTS)
         | TOPLEVEL_NOT_IN_ALL
-        | {f"dnsid_google_kms.{n}" for n in google.exports or []}
     )
     missing = sorted(public - set(assigned))
     extra = sorted(set(assigned) - public)
@@ -775,7 +766,7 @@ def main() -> None:
     nav = []
     for page in PAGES:
         (OUT_DIR / f"{page['slug']}.md").write_text(
-            _render_page(page, pkg, tlog, google), encoding="utf-8"
+            _render_page(page, pkg, tlog), encoding="utf-8"
         )
         nav.append({"label": page["label"], "slug": f"{SLUG_PREFIX}/{page['slug']}"})
     (OUT_DIR / "nav.json").write_text(

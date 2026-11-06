@@ -30,6 +30,7 @@ Application profiles (not part of the DNSid protocol):
 Key management:
     LocalKeyProvider           — file-backed EdDSA/ES256 KeyProvider with key rotation lifecycle
     AwsKmsKeyProvider          — AWS KMS-backed KeyProvider (optional dep: boto3)
+    GoogleKmsKeyProvider       — Google Cloud KMS-backed KeyProvider (optional extra: gcp)
     AwsKmsConfig               — configuration for AwsKmsKeyProvider
     AwsKmsKeyState             — mutable lifecycle state for AwsKmsKeyProvider
     BotoKmsFacade              — boto3 adapter for AwsKmsKeyProvider
@@ -119,6 +120,7 @@ from .exceptions import (
     ValidationError,
     VerificationError,
 )
+from .google_kms_key_provider import GoogleKmsKeyProvider
 from .http_signatures import HttpMessageSignatureConfig, HttpSignatureProfile
 from .interfaces import (
     AbstractRegistryClient,
@@ -327,6 +329,7 @@ __all__ = [
     "VerifiedOIDCSubject",
     # Key management
     "LocalKeyProvider",
+    "GoogleKmsKeyProvider",
     # Configuration loading
     "LoadedConfig",
     "LogTrust",
