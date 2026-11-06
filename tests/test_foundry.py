@@ -410,6 +410,29 @@ def test_replay_without_domain_keeps_facts_and_resumes(setup):
     assert server.created[0][1] == server.created[1][1]
 
 
+@pytest.mark.parametrize("missing", ["identityId", "domain"])
+def test_partial_creation_replays_until_both_id_and_domain_are_saved(setup, missing):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments):
+        pass
+    partial = saved(store)
+    partial["phase"] = "creation-pending"
+    partial.pop(missing)
+    resumed = FileFoundryStore(store.directory.parent / "partial")
+    resumed.import_operation(canonical_bytes(partial))
+    arguments["store"] = resumed
+    server.get_registration = Mock(wraps=server.get_registration)
+    with create("billing-agent", **arguments) as identity:
+        assert identity.domain == DOMAIN
+    assert server.created[0] == server.created[1]
+    assert saved(resumed)["identityId"] == "id-1" and saved(resumed)["domain"] == DOMAIN
+    server.get_registration.assert_not_called()
+    with create("billing-agent", **arguments):
+        pass
+    assert len(server.created) == 2
+    server.get_registration.assert_called_once_with(DOMAIN)
+
+
 def test_lost_create_uses_frozen_request(setup):
     server, store, arguments = setup
     server.lose_create = True
@@ -568,7 +591,7 @@ def test_no_history_read_before_initial_preparation_or_on_indeterminate_submissi
         server.reader._load_complete_history.assert_not_called()
 
 
-@pytest.mark.parametrize("stage", ["preparation", "submission"])
+@pytest.mark.parametrize("stage", ["preparation", "submission", "submission-exception"])
 @pytest.mark.parametrize("empty_result", [False, True])
 def test_rejection_before_log_visibility_resumes_on_next_active(setup, stage, empty_result):
     server, store, arguments = setup
@@ -602,6 +625,14 @@ def test_rejection_before_log_visibility_resumes_on_next_active(setup, stage, em
             server.prepare_issuance = reject_prepare
         else:
             server.competitor = True
+            if stage == "submission-exception":
+                original_submit = server.submit_prepared_event
+
+                def reject_submit(domain, data, key):
+                    rejected = original_submit(domain, data, key)
+                    raise RegistryRequestError("/submit", 422, rejected.error_code)
+
+                server.submit_prepared_event = reject_submit
         original_load = server.load_history
         if empty_result:
             server.reader._load_complete_history.side_effect = lambda *a, **kw: SimpleNamespace(
@@ -627,6 +658,115 @@ def test_rejection_before_log_visibility_resumes_on_next_active(setup, stage, em
         assert (
             b64url_decode_strict(saved(store)["issuance"]["entryBytes"]) == server.history[0].data
         )
+
+
+@pytest.mark.parametrize("stage", ["preparation", "submission", "submission-exception"])
+@pytest.mark.parametrize(
+    "status,code",
+    [
+        (401, "UNAUTHORIZED"),
+        (403, "FORBIDDEN"),
+        (404, "NOT_FOUND"),
+        (401, "TLOG_INVALID_ENTRY"),
+        (403, "TLOG_PREPARATION_MISMATCH"),
+        (404, "IDEMPOTENCY_MISMATCH"),
+        (400, "BAD_REQUEST"),
+        (409, "OTHER_CONFLICT"),
+    ],
+)
+def test_control_plane_errors_do_not_reject_issuance_or_trigger_log_recovery(
+    setup, stage, status, code
+):
+    server, store, arguments = setup
+    method = "prepare_issuance" if stage == "preparation" else "submit_prepared_event"
+    original = getattr(server, method)
+    if stage == "submission":
+        failure = Mock(
+            return_value=SubmissionResult("rejected", error_code=code, status_code=status)
+        )
+    else:
+        failure = Mock(side_effect=RegistryRequestError("/issuance", status, code))
+    setattr(server, method, failure)
+    with create("billing-agent", **arguments) as identity:
+        with pytest.raises(FoundryError) as caught:
+            identity.active()
+        assert caught.value.status_code == status and caught.value.error_code == code
+        assert caught.value.resumable
+        server.reader._load_complete_history.assert_not_called()
+        record = saved(store)["issuance"]
+        assert not record["terminalFailure"] and "serverRejection" not in record
+        assert record.get("submission", {}).get("state") != "rejected"
+        assert record["requestError"] == {"httpStatus": status, "errorCode": code}
+        completed = record.get("entryBytes")
+        setattr(server, method, original)
+        identity.active()
+        assert saved(store)["phase"] == "complete"
+        if completed:
+            assert saved(store)["issuance"]["entryBytes"] == completed
+    assert len(server.created) == 1 and len(server.submitted) == 1
+
+
+@pytest.mark.parametrize("phase", ["registry", "issuance", "public"])
+def test_polling_backoff_doubles_from_one_second_and_caps_at_fifteen(setup, monkeypatch, phase):
+    import dnsid.foundry._workflow as workflow
+
+    server, _, arguments = setup
+    delays = []
+    monkeypatch.setattr(workflow.time, "sleep", delays.append)
+    attempts = 0
+    if phase == "registry":
+        original = server.get_registration
+
+        def registration(domain):
+            nonlocal attempts
+            attempts += 1
+            server.status = "PROVISIONING" if attempts <= 6 else "READY"
+            return original(domain)
+
+        server.get_registration = registration
+    elif phase == "issuance":
+        original = server.submit_prepared_event
+
+        def submit(domain, data, key):
+            nonlocal attempts
+            attempts += 1
+            if attempts <= 6:
+                return SubmissionResult("pending", error_code="TLOG_SUBMISSION_BUSY")
+            return original(domain, data, key)
+
+        server.submit_prepared_event = submit
+    else:
+        original = server.https.fetch_strict_json
+
+        def fetch(url, *args, **kwargs):
+            nonlocal attempts
+            if url.endswith("/status"):
+                attempts += 1
+                server.public_status = "PENDING" if attempts <= 6 else "ACTIVE"
+            return original(url, *args, **kwargs)
+
+        server.https.fetch_strict_json = fetch
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+    assert attempts == 7
+    assert delays == [1.0, 2.0, 4.0, 8.0, 15.0, 15.0]
+
+
+def test_default_deadlines_and_poll_sleep_use_the_remaining_budget(monkeypatch):
+    import inspect
+
+    import dnsid.foundry._workflow as workflow
+
+    assert inspect.signature(create).parameters["timeout"].default == 30.0
+    assert inspect.signature(workflow.FoundryIdentity.active).parameters["timeout"].default == 600.0
+    remaining = Mock(side_effect=[0.25, 0.2])
+    sleep = Mock()
+    monkeypatch.setattr(workflow, "remaining_seconds", remaining)
+    monkeypatch.setattr(workflow.time, "sleep", sleep)
+    assert workflow._sleep(8.0) == 15.0
+    sleep.assert_called_once_with(0.25)
+    assert remaining.call_args_list[0].args == (8.0,)
+    assert remaining.call_args_list[1].args == ()
 
 
 @pytest.mark.parametrize("kind", ["invalid", "unavailable"])
@@ -717,6 +857,78 @@ def test_proof_lost_response_resumes_from_registry_state(setup):
     with create("billing-agent", **arguments) as identity:
         identity.active()
     assert len(server.proofs) == len(server.created) == 1 and not server.reissues
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+def test_proof_outcome_moves_to_identity_known_before_issuance(setup, lost_response):
+    server, store, arguments = setup
+    server.proof_required = True
+    server.status = "VERIFICATION"
+    server.lose_proof = lost_response
+    transitions = []
+    original_save = store.save
+
+    def save_transition(key, document):
+        transitions.append(copy.deepcopy(document))
+        original_save(key, document)
+
+    store.save = save_transition
+    with create("billing-agent", **arguments) as identity:
+        assert saved(store)["phase"] == "proof-pending"
+        if lost_response:
+            with pytest.raises(FoundryError):
+                identity.active()
+            assert saved(store)["phase"] == "proof-pending"
+        identity.active()
+    assert any(item["phase"] == "proof-pending" for item in transitions)
+    pending_issuance = [
+        item
+        for item in transitions
+        if "issuance" in item
+        and (item["issuance"].get("submission", {}).get("state") != "accepted")
+    ]
+    assert pending_issuance
+    for item in pending_issuance:
+        assert item["phase"] == "identity-known"
+        assert "outcome" in item["proof"]
+    for item in transitions:
+        if item.get("proof", {}).get("outcome") is not None:
+            assert item["phase"] != "proof-pending"
+    assert len(server.proofs) == 1
+
+
+def test_stateless_replica_after_rotation_returns_key_mismatch_without_resolution(setup):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+    rotated = LocalKeyProvider.generate()
+    server.public_provider = rotated
+    arguments["key_provider"] = rotated
+    arguments["store"] = FileFoundryStore(store.directory.parent / "rotated-replica")
+    server.get_registration = Mock(wraps=server.get_registration)
+    server.reader._load_complete_history.reset_mock()
+    server.https.urls.clear()
+    with pytest.raises(KeyMismatch) as caught:
+        create("billing-agent", **arguments)
+    assert caught.value.error_code == "KEY_MISMATCH"
+    assert len(server.created) == 2 and server.created[0][1] != server.created[1][1]
+    assert server.created[-1][0].public_key_jwk.thumbprint() == rotated.signing_key().thumbprint()
+    server.get_registration.assert_not_called()
+    server.reader._load_complete_history.assert_not_called()
+    assert not server.https.urls
+    assert len(server.submitted) == 1
+
+
+def test_foundry_config_is_loader_owned_and_validated_by_the_facade(setup):
+    from dnsid.exceptions import ArgumentError
+
+    server, _, arguments = setup
+    assert FoundryConfig.__module__ == "dnsid.config_loading"
+    arguments["config"].foundry = {"organizationId": ORG}
+    with pytest.raises(FoundryError) as caught:
+        create("billing-agent", **arguments)
+    assert isinstance(caught.value.__cause__, ArgumentError)
+    assert not server.created
 
 
 def test_refresh_terminal_public_observation_pauses_existing_profiles(setup):

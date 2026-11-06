@@ -24,6 +24,7 @@ from ..c2sp_tlog.managed_issuance import (
     resume_managed_issuance,
 )
 from ..config_loading import (
+    FoundryConfig,
     LoadedConfig,
     _has_trust,
     _log_registry_from_trust,
@@ -58,7 +59,7 @@ from ..registry_client import (
     _live_public_jwk_dict,
     _validate_publication_config,
 )
-from ._issuance import IssuanceStore
+from ._issuance import IssuanceRegistry, IssuanceStore, issuance_rejected
 from ._signing import ApplicationSigner, WorkflowKeyProvider, provider_call
 from .errors import (
     FoundryDeadline,
@@ -154,7 +155,7 @@ def create(
                     if trust:
                         operation["logTrust"] = trust
                     facade.save(key, operation)
-                if not operation.get("domain"):
+                if not (operation.get("identityId") and operation.get("domain")):
                     frozen = operation["creationInput"]
                     initial = JWK.from_dict(operation["initialPublicKey"])
                     request_id = registration_key(org, name, initial.thumbprint())
@@ -168,8 +169,17 @@ def create(
                         request_id,
                     )
                     remaining_seconds()
-                    if response.request_id != request_id or (
-                        operation.get("identityId") and operation["identityId"] != response.agent_id
+                    if (
+                        response.request_id != request_id
+                        or (
+                            operation.get("identityId")
+                            and operation["identityId"] != response.agent_id
+                        )
+                        or (
+                            operation.get("domain")
+                            and response.domain
+                            and operation["domain"] != response.domain
+                        )
                     ):
                         raise UnsupportedContract("Live replay changed its request or identity ID")
                     operation.update(
@@ -178,7 +188,9 @@ def create(
                         registryStatus=response.status,
                     )
                     if response.domain:
-                        operation.update(domain=response.domain, phase="identity-known")
+                        operation["domain"] = response.domain
+                    if operation.get("domain"):
+                        operation["phase"] = "identity-known"
                     if response.challenge_transcript is not None:
                         if response.challenge_transcript.org_id != org:
                             raise UnsupportedContract(
@@ -192,7 +204,7 @@ def create(
                         operation["phase"] = "proof-pending"
                     facade.save(key, operation)
                     _registry_outcome(operation)
-                    if not response.domain:
+                    if not operation.get("domain"):
                         raise FoundryError(
                             "registry accepted creation without a domain; rerun create",
                             operation=operation,
@@ -259,7 +271,7 @@ class FoundryIdentity:
     def active(
         self,
         *,
-        timeout: float = 120.0,
+        timeout: float = 600.0,
         cancelled: threading.Event | None = None,
     ) -> FoundryIdentity:
         """Resume setup and make a fresh public observation under one deadline."""
@@ -281,8 +293,9 @@ class FoundryIdentity:
                     registration = facade.registration(operation)
                     facade.remember_registration(key, operation, registration, self._signer)
                     self._proof(operation, registration)
+                    delay = 1.0
                     while registration.registry_status not in {"VERIFIED", "READY"}:
-                        _sleep()
+                        delay = _sleep(delay)
                         registration = facade.registration(operation)
                         facade.remember_registration(key, operation, registration, self._signer)
                     facade.publication(key, operation, registration)
@@ -292,6 +305,7 @@ class FoundryIdentity:
                         facade.save(key, operation)
                         issuance_store = IssuanceStore(facade.store, key, operation)
                         self._issuance(operation, entity, issuance_store)
+                        delay = 1.0
                         while True:
                             try:
                                 observed = verifier.verify_local_publication()
@@ -322,7 +336,7 @@ class FoundryIdentity:
                                 }:
                                     self._signer.paused = True
                                     raise
-                                _sleep()
+                                delay = _sleep(delay)
                         state = issuance_store.load_managed_issuance(self.domain)
                         if state is not None and not state.complete:
                             complete_managed_issuance(
@@ -353,13 +367,17 @@ class FoundryIdentity:
 
     def _proof(self, operation: dict[str, Any], registration: AgentRegistration) -> None:
         proof = operation.get("proof")
-        if (
-            not proof
-            or proof.get("submissionState") == "accepted"
-            or (registration.registry_status in {"VERIFIED", "READY"})
-        ):
+        if not proof:
             return
         facade = self._facade
+        if proof.get("submissionState") == "accepted" or (
+            registration.registry_status in {"VERIFIED", "READY"}
+        ):
+            if operation["phase"] == "proof-pending":
+                proof.setdefault("outcome", registration.registry_status)
+                operation["phase"] = "identity-known"
+                facade.save(self._key, operation)
+            return
         initial = JWK.from_dict(operation["initialPublicKey"])
         _, transcript = _live_challenge_from_response(
             label="saved Foundry proof",
@@ -421,6 +439,7 @@ class FoundryIdentity:
         ):
             raise UnsupportedContract("proof receipt changed identity bindings")
         proof.update(submissionState="accepted", outcome=response_proof.status)
+        operation["phase"] = "identity-known"
         operation["registryStatus"] = response_proof.status
         facade.save(self._key, operation)
 
@@ -449,10 +468,11 @@ class FoundryIdentity:
             log_reference=operation["publicationConfig"]["logRef"],
             entity_public_key=entity,
             key_provider=WorkflowKeyProvider(facade.provider),
-            registry_client=facade.registry,
+            registry_client=IssuanceRegistry(facade.registry, store),
             store=store,
             set_activation_blocked=lambda blocked: None,
         )
+        delay = 1.0
         while True:
             try:
                 if store.load_managed_issuance(self.domain) is None:
@@ -466,18 +486,37 @@ class FoundryIdentity:
                 if state.submission is not None and state.submission.accepted:
                     return
             except ManagedIssuanceOperationError as cause:
-                rejected = cause.issuance.submission is not None and (
-                    cause.issuance.submission.state == "rejected"
+                request_error = store.request_error
+                if (
+                    request_error is not None
+                    and not request_error.transient
+                    and not (issuance_rejected(request_error.error_code, request_error.status_code))
+                ):
+                    error = _error(request_error, operation)
+                    error.resumable = True
+                    raise error from request_error
+                submission = cause.issuance.submission
+                rejected = (
+                    submission is not None
+                    and submission.state == "rejected"
+                    and (issuance_rejected(submission.error_code, submission.status_code))
                 )
                 remote = cause.__cause__
-                if isinstance(remote, RegistryRequestError) and cause.state == "rejected":
+                if isinstance(remote, RegistryRequestError) and issuance_rejected(
+                    remote.error_code,
+                    remote.status_code,
+                ):
                     operation["issuance"]["serverRejection"] = {
                         "httpStatus": remote.status_code,
                         "errorCode": remote.error_code,
                     }
                     facade.save(self._key, operation)
                     rejected = True
-                rejected = rejected or "serverRejection" in operation.get("issuance", {})
+                saved_rejection = operation.get("issuance", {}).get("serverRejection", {})
+                rejected = rejected or issuance_rejected(
+                    saved_rejection.get("errorCode", ""),
+                    saved_rejection.get("httpStatus"),
+                )
                 if rejected:
                     # Rejection binds local bytes; a verified competing entry can still win.
                     try:
@@ -502,7 +541,7 @@ class FoundryIdentity:
                     or not cause.transient
                 ):
                     raise
-            _sleep()
+            delay = _sleep(delay)
 
     def close(self) -> None:
         """Release owned clients; never cancel or delete the server identity."""
@@ -570,6 +609,8 @@ class _Foundry:
             resolver_injected=self.deps.dns_resolver is not None,
             fetcher_injected=self.deps.https_fetcher is not None,
         )
+        if not isinstance(self.config.foundry, FoundryConfig):
+            raise ArgumentError("config.foundry must be a FoundryConfig")
         for value in (self.config.foundry.organization_id, self.config.foundry.governance_id):
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ArgumentError("Foundry expectations must be nonempty strings")
@@ -944,8 +985,10 @@ def _registry_outcome(
         raise WorkflowOutcome("registry workflow requires customer action", operation=operation)
 
 
-def _sleep() -> None:
-    time.sleep(remaining_seconds(0.1))
+def _sleep(delay: float) -> float:
+    time.sleep(remaining_seconds(delay))
+    remaining_seconds()
+    return min(delay * 2, 15.0)
 
 
 def _error(cause: Exception, operation: dict[str, Any]) -> FoundryError:

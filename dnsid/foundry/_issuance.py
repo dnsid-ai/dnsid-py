@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import fields, replace
 from typing import Any
 
 from .._utils import b64url_decode_strict, b64url_encode
-from ..c2sp_tlog.managed_issuance import ManagedIssuanceState
-from ..models import JWK, LogRef, SubmissionResult
+from ..c2sp_tlog.managed_issuance import ManagedIssuanceRegistry, ManagedIssuanceState
+from ..exceptions import RegistryRequestError
+from ..models import JWK, LogRef, PreparedRegistryEvent, SubmissionResult
 from .errors import FoundryStateError
 from .store import FoundryStore, OperationKey
 
@@ -28,6 +29,50 @@ _FIELDS = {
 }
 
 
+def issuance_rejected(error_code: str, status_code: int | None) -> bool:
+    """Distinguish rejected issuance bytes from authorization or discovery failures."""
+    return status_code not in {401, 403, 404} and error_code in {
+        "IDEMPOTENCY_MISMATCH",
+        "TLOG_PREPARATION_MISMATCH",
+        "TLOG_INVALID_ENTRY",
+    }
+
+
+class IssuanceRegistry:
+    """Retain control-plane errors before the coordinator persists a transition."""
+
+    def __init__(self, registry: ManagedIssuanceRegistry, store: IssuanceStore) -> None:
+        self.registry, self.store = registry, store
+
+    def prepare_issuance(self, domain: str, idempotency_key: str) -> PreparedRegistryEvent:
+        self.store.request_error = None
+        try:
+            return self.registry.prepare_issuance(domain, idempotency_key)
+        except RegistryRequestError as error:
+            self.store.request_error = error
+            raise
+
+    def submit_prepared_event(
+        self,
+        domain: str,
+        entry_bytes: bytes,
+        idempotency_key: str,
+    ) -> SubmissionResult:
+        self.store.request_error = None
+        try:
+            result = self.registry.submit_prepared_event(domain, entry_bytes, idempotency_key)
+        except RegistryRequestError as error:
+            self.store.request_error = error
+            raise
+        if not result.accepted and result.status_code is not None:
+            self.store.request_error = RegistryRequestError(
+                f"/api/v1/agent/{domain}/tlog/events",
+                result.status_code,
+                result.error_code,
+            )
+        return result
+
+
 class IssuanceStore:
     """Persist coordinator transitions inside the already locked named operation."""
 
@@ -38,6 +83,7 @@ class IssuanceStore:
         operation: dict[str, Any],
     ) -> None:
         self.store, self.key, self.operation = store, key, operation
+        self.request_error: RegistryRequestError | None = None
 
     def create_managed_issuance(self, initial: ManagedIssuanceState) -> ManagedIssuanceState | None:
         existing = self.load_managed_issuance(initial.domain)
@@ -54,6 +100,32 @@ class IssuanceStore:
 
     def persist_managed_issuance(self, state: ManagedIssuanceState) -> None:
         raw = dict(self.operation.get("issuance", {}))
+        error, latest = self.request_error, state.submission
+        if latest is not None and latest.accepted:
+            error = None
+        if error is not None and issuance_rejected(error.error_code, error.status_code):
+            if latest is not None:
+                latest = replace(
+                    latest,
+                    state="rejected",
+                    error_code=error.error_code,
+                    status_code=error.status_code,
+                )
+            state = replace(state, terminal_failure=True, submission=latest)
+        if error is not None and not issuance_rejected(error.error_code, error.status_code):
+            raw["requestError"] = {"httpStatus": error.status_code, "errorCode": error.error_code}
+        elif (
+            latest is not None
+            and latest.state == "rejected"
+            and not (issuance_rejected(latest.error_code, latest.status_code))
+        ):
+            raw["requestError"] = {"errorCode": latest.error_code}
+        else:
+            raw.pop("requestError", None)
+        if "requestError" in raw:
+            if latest is not None and latest.state == "rejected":
+                latest = replace(latest, state="pending")
+            state = replace(state, terminal_failure=False, submission=latest)
         for field in fields(state):
             if field.name == "submission":
                 continue
