@@ -1,4 +1,27 @@
 
+## [0.33.0] - 2026-11-06
+
+### Bug Fixes
+
+- fix: address security review findings from PR #118 ([#119](https://github.com/dnsid-ai/dnsid-py/pull/119))
+- fix: release and document optional Google KMS distribution ([#56](https://github.com/dnsid-ai/dnsid-py/pull/56))
+
+### Features
+
+- feat: add optional Google KMS runtime distribution ([#56](https://github.com/dnsid-ai/dnsid-py/pull/56))
+- feat: implement Google KMS local key lifecycle and distribution checks ([#56](https://github.com/dnsid-ai/dnsid-py/pull/56))
+- feat: add optional Google KMS Ed25519 key provider ([#121](https://github.com/dnsid-ai/dnsid-py/pull/121))
+
+### Testing
+
+- test: specify Google KMS runtime and configuration contracts ([#56](https://github.com/dnsid-ai/dnsid-py/pull/56))
+- test: add provisional GCP provider lifecycle contracts ([#56](https://github.com/dnsid-ai/dnsid-py/pull/56))
+- test: assert successful public GCP lifecycle operations ([#56](https://github.com/dnsid-ai/dnsid-py/pull/56))
+- test: cover GCP integrity failures and actual configured composition ([#56](https://github.com/dnsid-ai/dnsid-py/pull/56))
+- test: guard Google KMS release wiring and failed generation ([#56](https://github.com/dnsid-ai/dnsid-py/pull/56))
+- test: strengthen local provider startup warning proof (#57) ([#122](https://github.com/dnsid-ai/dnsid-py/pull/122))
+
+
 ## [0.32.1] - 2026-11-05
 
 ### Bug Fixes
