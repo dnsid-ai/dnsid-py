@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -526,7 +526,7 @@ wheels = [
 
 [[package]]
 name = "dnsid"
-version = "0.32.1"
+version = "0.33.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -578,7 +578,7 @@ provides-extras = ["aws", "dev", "a2a"]
 
 [[package]]
 name = "dnsid-google-kms"
-version = "0.32.1"
+version = "0.33.0"
 source = { editable = "packages/google-kms" }
 dependencies = [
     { name = "dnsid" },
