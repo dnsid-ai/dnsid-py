@@ -678,7 +678,7 @@ def _operational_key_provider(source: KeySource, domain: str) -> KeyProvider | N
                 f"{source.provider} factory returned no KeyProvider; no file fallback"
             )
         return provider
-    if source.provider in {None, "file"}:
+    if source.key_ref or source.cli_directory or source.key_store_path:
         import warnings
 
         warnings.warn(

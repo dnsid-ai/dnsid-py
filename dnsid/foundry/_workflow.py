@@ -338,7 +338,7 @@ class FoundryIdentity:
                                     raise
                                 delay = _sleep(delay)
                         state = issuance_store.load_managed_issuance(self.domain)
-                        if state is not None and not state.complete:
+                        if state is not None and (not state.complete or state.activation_blocked):
                             complete_managed_issuance(
                                 self.domain, issuance_store, lambda blocked: None
                             )

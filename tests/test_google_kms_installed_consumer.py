@@ -42,6 +42,7 @@ def test_release_artifacts_and_installed_gcp_extra_consumer(tmp_path):
         assert "dnsid/config_loading.py" in archive.namelist()
     with tarfile.open(sdists[0]) as archive:
         assert not any("/dnsid/foundry/" in name for name in archive.getnames())
+        assert not any("/tests/test_foundry" in name and name.endswith(".py") for name in archive.getnames())
     run([sys.executable, str(ROOT / "scripts/check_distribution_attribution.py"), str(dist)], cwd=tmp_path, env=env)
     consumer = tmp_path / "consumer"
     consumer.mkdir()

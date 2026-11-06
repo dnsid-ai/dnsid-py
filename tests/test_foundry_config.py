@@ -172,7 +172,7 @@ def test_injected_dependencies_ignore_displaced_sources(tmp_path):
 
 def test_no_provider_or_trust_never_uses_sandbox(tmp_path):
     server = FoundryServer(LocalKeyProvider.generate())
-    with pytest.warns(UserWarning, match="production"), pytest.raises(KeyMissing):
+    with pytest.raises(KeyMissing):
         create("missing", config=LoadedConfig(), registry_client=server)
     assert not server.created
 

@@ -1945,7 +1945,7 @@ def _live_provisioning_from_response(
             challenge_message=challenge_message,
             expected_key_id=public_key.thumbprint(),
         )
-    if "domain" in data:
+    if data.get("domain") not in (None, ""):
         from ._utils import normalize_fqdn
         from .exceptions import ValidationError
 

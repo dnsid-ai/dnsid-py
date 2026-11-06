@@ -283,21 +283,25 @@ def _prepare(
             C2spSignerRole.ENTITY in prepared.missing_signatures()
         ):
             raise ArgumentError("issuance preparation has wrong log or no entity signature")
-        state = _persist(store, replace(state, prepared_entry_bytes=raw.entry_bytes))
-        remaining_seconds()
-        prepared = sign_prepared_event(
-            prepared, C2spSignerRole.OPERATIONAL_COUNTERSIGNATURE, provider, context,
-        )
-        remaining_seconds()
-        completed = entry_bytes(prepared, context)
-    except ManagedIssuanceOperationError:
-        raise
     except Exception as cause:
         transient = isinstance(cause, VerificationError) and cause.transient
         state = _persist(store, replace(state, terminal_failure=not transient))
         raise ManagedIssuanceOperationError(
             "managed issuance preparation failed validation", state,
             state="prepared" if transient else "rejected", transient=transient, cause=cause,
+        ) from cause
+    state = _persist(store, replace(state, prepared_entry_bytes=raw.entry_bytes))
+    try:
+        remaining_seconds()
+        prepared = sign_prepared_event(
+            prepared, C2spSignerRole.OPERATIONAL_COUNTERSIGNATURE, provider, context,
+        )
+        remaining_seconds()
+        completed = entry_bytes(prepared, context)
+    except Exception as cause:
+        raise ManagedIssuanceOperationError(
+            "managed issuance countersigning failed", state,
+            state="prepared", transient=True, cause=cause,
         ) from cause
     state = _persist(store, replace(
         state, entry_bytes=completed, entry_hash=hashlib.sha256(completed).hexdigest(),
