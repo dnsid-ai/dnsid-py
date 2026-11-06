@@ -893,7 +893,9 @@ idm = construct_identity_manager(merge_loaded_config(load_file("dnsid.json"), lo
 ```
 
 Only the Foundry workflow reads the `foundry` deployment member. Core identity
-construction ignores it.
+construction ignores it. The workflow is source-checkout only and is excluded
+from published packages until server acceptance passes, so `foundry` has no
+effect in released versions until that gate clears.
 
 | Variable | Maps to |
 |---|---|

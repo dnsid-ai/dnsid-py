@@ -139,6 +139,10 @@ from dnsid import FoundryConfig
 
 Optional Known Foundry account expectations; not identity selectors or trust.
 
+The Foundry workflow is excluded from published packages until server
+acceptance passes. These expectations have no effect in released versions
+until that gate clears.
+
 ## `LogTrust`
 
 ```python
