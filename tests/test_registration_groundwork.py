@@ -44,7 +44,10 @@ _CONFIG = make_config(
         ("azure-key-vault", "dnsid_azure_key_vault", "dnsid-azure-key-vault"),
     ],
 )
-def test_only_selected_provider_loads_and_injection_wins(monkeypatch, provider, module, remedy):
+def test_only_selected_provider_loads_and_injection_wins(
+    monkeypatch, provider, module, remedy, no_local_key_warning
+):
+    """Mode: fake-only for missing packages; injection must bypass resolution."""
     seen = []
 
     def unavailable(name):
@@ -228,12 +231,16 @@ def test_rotation_requires_verified_current_publication_before_activation():
     manager.close()
 
 
+@pytest.mark.parametrize("entity_file", [False, True], ids=["operational-only", "local-entity"])
+@pytest.mark.parametrize("open_failure", [False, True], ids=["opens", "open-fails"])
 @pytest.mark.parametrize(
     "algorithm,wire", [("EdDSA", "ED25519_SHA_512"), ("ES256", "ECDSA_SHA_256")]
 )
 def test_aws_factory_uses_stable_existing_reference_and_algorithm(
-    monkeypatch, algorithm, wire, local_publication
+    tmp_path, monkeypatch, algorithm, wire, local_publication,
+    entity_file, open_failure, no_local_key_warning,
 ):
+    """Mode: fake-only; AWS load/publication seams, not cloud integration proof."""
     from dnsid.aws_kms_key_provider import AwsKmsKeyProvider
 
     key = LocalKeyProvider.generate(algorithm)
@@ -247,7 +254,22 @@ def test_aws_factory_uses_stable_existing_reference_and_algorithm(
         key_ref="arn:aws:kms:stable",
         settings={"region": "us-east-1", "algorithm": algorithm},
     )
+    if entity_file:
+        from tests.test_local_key_provider_cli import _make_private_jwk
+
+        entity_path = tmp_path / "entity.jwk"
+        entity_jwk = _make_private_jwk()
+        entity_path.write_text(json.dumps(entity_jwk))
+        source.entity_key_path = str(entity_path)
+    if open_failure:
+        open_key.side_effect = RuntimeError("KMS open denied")
+        with pytest.raises(RuntimeError, match="KMS open denied"):
+            construct_identity_manager(LoadedConfig(dnsid=_CONFIG, key_source=source))
+        open_key.assert_called_once()
+        return
     manager = construct_identity_manager(LoadedConfig(dnsid=_CONFIG, key_source=source))
+    if entity_file:
+        assert manager.get_entity_key_set().keys[0].kid == entity_jwk["kid"]
     assert open_key.call_args.args[1].active_key_id == source.key_ref
     assert open_key.call_args.args[1].algorithm == wire
     assert manager.key_provider is key
