@@ -267,7 +267,10 @@ def _prepare(
         )
         remaining_seconds()
     except Exception as cause:
-        transient = not isinstance(cause, VerificationError) or cause.transient
+        transient = (
+            not isinstance(cause, VerificationError) or cause.transient
+            or getattr(cause, "status_code", None) in {401, 403, 404}
+        )
         state = _persist(store, replace(
             state, last_error_code=getattr(cause, "error_code", ""),
             terminal_failure=not transient,
@@ -324,11 +327,15 @@ def _submit(
         )
         remaining_seconds()
     except Exception as cause:
-        retry = getattr(cause, "retry_same_bytes", True)
+        retry = (
+            getattr(cause, "status_code", None) in {401, 403, 404}
+            or getattr(cause, "retry_same_bytes", True)
+        )
         state = _persist(store, replace(
             state, submission=SubmissionResult(
                 state="pending" if retry else "rejected", entry_hash=state.entry_hash,
                 error_code=getattr(cause, "error_code", ""),
+                status_code=getattr(cause, "status_code", None),
             ), terminal_failure=not retry,
         ))
         raise ManagedIssuanceOperationError(
@@ -343,13 +350,18 @@ def _submit(
             "managed issuance receipt failed validation", state,
             state="indeterminate", retry_same_bytes=True, cause=cause,
         ) from cause
+    control_plane_failure = result.state == "rejected" and result.status_code in {401, 403, 404}
+    if control_plane_failure:
+        result = replace(result, state="pending")
     state = _persist(store, replace(
         state, submission=copy.deepcopy(result), last_error_code=result.error_code,
         terminal_failure=result.state == "rejected",
     ))
-    if result.state == "rejected":
+    if result.state == "rejected" or control_plane_failure:
         raise ManagedIssuanceOperationError(
-            "registry rejected managed issuance bytes", state, state="rejected",
+            "registry did not accept managed issuance bytes", state,
+            state="indeterminate" if control_plane_failure else "rejected",
+            transient=control_plane_failure, retry_same_bytes=control_plane_failure,
         )
     return state
 

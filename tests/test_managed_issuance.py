@@ -145,6 +145,44 @@ def test_preparation_retry_keeps_durable_intent(setup):
     assert resume_managed_issuance(**shared).submission.accepted
 
 
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_prepare_auth_or_discovery_failure_can_resume(setup, status):
+    shared, store, registry, _ = setup
+    prepare = registry.prepare_issuance
+    registry.prepare_issuance = Mock(
+        side_effect=RegistryRequestError("/prepare", status, "UNAVAILABLE"),
+    )
+    with pytest.raises(ManagedIssuanceOperationError) as caught:
+        begin(shared)
+    assert caught.value.transient and caught.value.status_code == status
+    assert not store.state.terminal_failure and not store.state.entry_bytes
+    assert not registry.submits
+    registry.prepare_issuance = prepare
+    assert resume_managed_issuance(**shared).submission.accepted
+    assert registry.submits[0][2] == "issuance-1"
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+@pytest.mark.parametrize("response", [False, True])
+def test_submit_auth_or_discovery_failure_retries_same_bytes(setup, status, response):
+    shared, store, registry, _ = setup
+    if response:
+        registry.result = SubmissionResult("rejected", error_code="UNAVAILABLE", status_code=status)
+    else:
+        registry.error = RegistryRequestError("/submit", status, "UNAVAILABLE")
+        registry.error.retry_same_bytes = False
+    with pytest.raises(ManagedIssuanceOperationError) as caught:
+        begin(shared)
+    assert caught.value.transient and caught.value.retry_same_bytes
+    assert caught.value.status_code == status
+    assert not store.state.terminal_failure and store.state.submission.state == "pending"
+    assert store.state.submission.status_code == status
+    original = registry.submits[0]
+    registry.result = registry.error = None
+    assert resume_managed_issuance(**shared).submission.accepted
+    assert registry.submits == [original, original] and len(registry.prepares) == 1
+
+
 @pytest.mark.parametrize("change", [
     lambda data: data.replace(b'"gi":"example.com"', b'"gi":"evil.example"'),
     lambda data: data + b" ",
