@@ -32,22 +32,30 @@ jobs:
       # re-resolving, so every run tests the committed dependency set (#216).
       # The A2A example-test deps (the `a2a` extra) stay 3.13-only, as before.
       - name: Install dependencies (locked)
-        run: uv sync --locked --python ${{ matrix.python-version }} ${{ matrix.python-version == '3.13' && '--all-extras' || '--extra dev --extra aws' }}
+        run: uv sync --locked --all-packages --python ${{ matrix.python-version }} ${{ matrix.python-version == '3.13' && '--all-extras' || '--extra dev --extra aws' }}
+
+      # Exercise the built optional distribution, not a source-path import.
+      - name: Install Google KMS wheel
+        run: |
+          uv build --package dnsid-google-kms --out-dir dist/google-kms
+          uv run --no-sync python scripts/check_distribution_attribution.py dist/google-kms
+          uv pip install --no-deps --reinstall dist/google-kms/*.whl
+          uv run --no-sync python -c "from importlib.metadata import version; import dnsid_google_kms; print(version('dnsid-google-kms'), dnsid_google_kms.__file__)"
 
       # Scans the locked environment (runtime + extras). Accepted risks: add
       # `--ignore-vuln <ID>` here with a comment linking the advisory.
       - name: Dependency vulnerability audit
         if: matrix.python-version == '3.13'
-        run: uv run --with pip-audit pip-audit
+        run: uv run --no-sync --with pip-audit pip-audit
 
       - name: Ruff lint check
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Mypy type check
-        run: uv run mypy dnsid
+        run: uv run --no-sync mypy dnsid packages/google-kms/dnsid_google_kms
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run --no-sync pytest
 
       # Advisory only: the regen-docs workflow pushes regenerated reference
       # docs to same-repo PR branches automatically. The warning matters for
@@ -55,7 +63,7 @@ jobs:
       - name: Docs freshness (generated reference)
         if: matrix.python-version == '3.13'
         run: |
-          uv run python scripts/gen_docs.py
+          uv run --no-sync python scripts/gen_docs.py
           git diff --exit-code docs/reference/ || {
             echo "::warning::docs/reference/ is stale — the auto-regen workflow pushes the fix to same-repo PRs; fork authors run python scripts/gen_docs.py and commit the result"
             exit 0

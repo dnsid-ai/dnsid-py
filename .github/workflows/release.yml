@@ -6,7 +6,7 @@ name: Release
 # trusted publishing (OIDC; no API token stored here). It is gated on the
 # repository variable PYPI_PUBLISHING == "enabled" so releases keep working
 # while the PyPI project name / trusted publisher are pending. To enable:
-#   1. PyPI project `dnsid` → Publishing → add GitHub publisher
+#   1. PyPI projects `dnsid` and `dnsid-google-kms` → Publishing → add GitHub publisher
 #      (owner dnsid-ai, repo dnsid-py, workflow release.yml, environment pypi)
 #   2. Repo Settings → Environments → create `pypi` (add required reviewers if desired)
 #   3. Repo Settings → Variables → PYPI_PUBLISHING = enabled
@@ -93,6 +93,7 @@ jobs:
       - name: Build and check package
         run: |
           python -m build
+          python -m build packages/google-kms --outdir dist
           python -m twine check dist/*
           python scripts/check_distribution_attribution.py dist
 
@@ -100,7 +101,7 @@ jobs:
         run: |
           python -m venv /tmp/dnsid-smoke
           /tmp/dnsid-smoke/bin/pip install dist/*.whl
-          (cd /tmp && /tmp/dnsid-smoke/bin/python -c "import dnsid")
+          (cd /tmp && /tmp/dnsid-smoke/bin/python -c "import dnsid; import dnsid_google_kms; from dnsid.interfaces import KeyProvider; assert issubclass(dnsid_google_kms.GoogleKmsKeyProvider, KeyProvider)")
 
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

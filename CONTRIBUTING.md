@@ -6,11 +6,20 @@ Thanks for contributing! This is the Python client SDK for the DNSid protocol.
 
 ## Development
 
+From the repository root, use [uv](https://docs.astral.sh/uv/) to install the
+locked workspace, including the separate Google KMS distribution and the existing
+`dev`, `aws`, and `a2a` extras. This matches the Python 3.13 CI dependency setup:
+
 ```bash
-pip install -e ".[dev]"
-pytest
-ruff check .
+uv sync --locked --all-packages --python 3.13 --all-extras
+uv run --no-sync pytest
+uv run --no-sync ruff check .
 ```
+
+The default test suite requires the optional Google KMS distribution;
+`pip install -e ".[dev]"` alone does not install workspace members. These are
+developer dependencies only: installing the base `dnsid` distribution still does
+not install Google dependencies.
 
 ## Signed commits
 

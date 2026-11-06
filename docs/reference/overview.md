@@ -16,7 +16,7 @@ these pages are the generated API reference.
 
 ## Import surface
 
-Everything documented here is importable from the package root
+Core SDK exports documented here are importable from the package root
 (`from dnsid import IdentityManager, JoseProfile`), mirroring the
 TypeScript SDK's umbrella package. The application-profile classes are
 also importable from their home submodules — both paths are supported
@@ -27,8 +27,9 @@ from dnsid.jose import JoseProfile
 from dnsid.http_signatures import HttpSignatureProfile
 ```
 
-The transparency-log integration is the exception: import it from
-`dnsid.c2sp_tlog`.
+Import transparency-log integration from `dnsid.c2sp_tlog`. Install
+`dnsid-google-kms` separately and import its provider from `dnsid_google_kms`;
+the base SDK does not install Google dependencies.
 
 ## Async verification
 
