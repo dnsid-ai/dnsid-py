@@ -6,7 +6,7 @@ import copy
 import datetime
 import hashlib
 from dataclasses import replace
-from unittest.mock import Mock
+from unittest.mock import DEFAULT, Mock
 
 import pytest
 
@@ -230,6 +230,28 @@ def test_rejection_is_not_resubmitted(setup):
     with pytest.raises(ManagedIssuanceOperationError):
         resume_managed_issuance(**shared)
     assert len(registry.submits) == 1
+
+
+def test_countersigning_provider_fails_once_then_resume_succeeds(setup):
+    shared, store, registry, _ = setup
+    provider = shared["key_provider"]
+    provider.sign_key = Mock(
+        wraps=provider.sign_key,
+        side_effect=[OSError("KMS temporarily unavailable"), DEFAULT],
+    )
+    with pytest.raises(ManagedIssuanceOperationError) as caught:
+        begin(shared)
+    assert caught.value.transient and caught.value.state == "prepared"
+    assert not store.state.terminal_failure and store.state.activation_blocked
+    assert store.state.prepared_entry_bytes and not store.state.entry_bytes
+    assert not registry.submits
+    prepared = store.state.prepared_entry_bytes
+    recovered = resume_managed_issuance(**shared)
+    assert recovered.submission.accepted and not recovered.terminal_failure
+    assert recovered.prepared_entry_bytes == prepared
+    assert len(registry.prepares) == len(registry.submits) == 1
+    assert provider.sign_key.call_count == 2
+    assert provider.sign_key.call_args_list[0] == provider.sign_key.call_args_list[1]
 
 
 def test_resume_accepted_does_not_need_initial_private_key(setup):

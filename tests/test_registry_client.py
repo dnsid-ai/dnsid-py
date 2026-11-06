@@ -179,9 +179,11 @@ class TestRegisterAgent:
             )
         assert "capabilities_url" not in captured[0]["body"]
 
-    def test_live_registration_uses_dedicated_operation_and_derives_domain(self):
+    @pytest.mark.parametrize("domain_member", [{}, {"domain": None}, {"domain": ""}])
+    def test_live_registration_uses_dedicated_operation_and_derives_domain(self, domain_member):
         key = _live_key()
         response = _live_challenge_response(key)
+        response.update(domain_member)
         ctx, captured = _post_capturing(response)
         with ctx:
             result = _make_client().register_live_agent(
@@ -203,7 +205,8 @@ class TestRegisterAgent:
             "headers": {"Idempotency-Key": "live-1"},
         }
 
-    def test_live_registration_replay_allows_empty_challenge_fields(self):
+    @pytest.mark.parametrize("domain_member", [{}, {"domain": None}, {"domain": ""}])
+    def test_live_registration_replay_allows_empty_challenge_fields(self, domain_member):
         key = _live_key()
         response = {
             "request_id": "live-1",
@@ -212,6 +215,7 @@ class TestRegisterAgent:
             "challenge": "",
             "challenge_message": "",
         }
+        response.update(domain_member)
         ctx, _ = _post_capturing(response)
         with ctx:
             result = _make_client().register_live_agent(

@@ -1164,6 +1164,40 @@ def test_interruption_at_each_durable_boundary(setup, boundary):
     assert len({(data, key) for _, data, key in server.submitted}) == 1
 
 
+def test_only_second_completion_write_fails_then_active_resumes(setup, monkeypatch):
+    server, store, arguments = setup
+    save = store.save
+    completion_writes = []
+
+    def fail_second_completion(key, document):
+        issuance = document.get("issuance", {})
+        if issuance.get("complete"):
+            completion_writes.append(copy.deepcopy(issuance))
+            if len(completion_writes) == 2:
+                assert not issuance["activationBlocked"]
+                raise OSError("second completion write failed")
+        save(key, document)
+
+    monkeypatch.setattr(store, "save", fail_second_completion)
+    with create("billing-agent", **arguments) as identity:
+        with pytest.raises(FoundryError):
+            identity.active()
+        interrupted = saved(store)
+        assert completion_writes[0]["activationBlocked"]
+        assert interrupted["issuance"]["complete"]
+        assert interrupted["issuance"]["activationBlocked"]
+        assert interrupted["phase"] == "issuance-accepted"
+        with pytest.raises(SigningPaused):
+            identity.sign(b"paused")
+        identity.active()
+        completed = saved(store)
+        assert completed["phase"] == "complete"
+        assert completed["issuance"]["complete"]
+        assert not completed["issuance"]["activationBlocked"]
+        assert arguments["key_provider"].signing_key().verify(b"active", identity.sign(b"active"))
+    assert len(server.created) == server.prepare_calls == len(server.submitted) == 1
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
