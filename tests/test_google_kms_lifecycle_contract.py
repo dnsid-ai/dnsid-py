@@ -155,16 +155,38 @@ def test_given_pending_key_when_activated_then_previous_signing_is_locally_super
     assert set(client.keys) == {VERSION, SUCCESSOR}
 
 
-def test_given_active_key_when_superseded_then_no_active_signing_or_live_key_remains():
+def test_given_explicit_active_retirement_permission_then_no_signing_or_cloud_mutation():
     """**Mode**: fake-only (KMS). Given/When/Then: local retirement is not cloud deletion."""
     client = VersionKms()
     signer = provider(client)
     kid = signer.signing_key().kid
     before = len(client.calls)
-    successful_lifecycle_operation(signer, "supersede", kid)
+    signer.supersede(kid, allow_active=True)
     assert len(client.calls) == before, "supersession must not mutate cloud versions"
     assert signer.list_key_ids() == []
     assert_signing_rejected_without_kms(client, lambda: signer.sign(b"retired"))
     assert_signing_rejected_without_kms(client, lambda: signer.sign_key(kid, b"retired"))
     assert_signing_rejected_without_kms(client, signer.signing_key)
     assert set(client.keys) == {VERSION}
+
+
+@pytest.mark.parametrize("permission", [None, False])
+def test_active_retirement_requires_existing_interface_permission(permission):
+    """**Mode**: fake-only KMS. KeyProvider.supersede guard, as local/AWS.
+
+    The former unconditional-active test contradicted interfaces.KeyProvider:
+    active retirement is reserved for publicly verified cross-provider rotation.
+    Explicit permission is tested separately; no cloud retirement is implied.
+    """
+    client = VersionKms()
+    signer = provider(client)
+    previous = signer.signing_key().to_dict()
+    before = len(client.calls)
+    kwargs = {} if permission is None else {"allow_active": permission}
+    with pytest.raises(ArgumentError):
+        signer.supersede(previous["kid"], **kwargs)
+    assert len(client.calls) == before
+    assert signer.signing_key().to_dict() == previous
+    assert signer.list_key_ids() == [previous["kid"]]
+    payload = b"guard rejection preserves active signing"
+    client.keys[VERSION].public_key().verify(signer.sign(payload), payload)
