@@ -66,8 +66,13 @@ a2a = [
     "sse-starlette",
 ]
 
+# Release gate: include Foundry only after server acceptance SR-1 through SR-7.
 [tool.hatch.build.targets.wheel]
 packages = ["dnsid"]
+exclude = ["/dnsid/foundry"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/dnsid/foundry"]
 
 [tool.ruff]
 target-version = "py311"

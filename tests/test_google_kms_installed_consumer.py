@@ -4,7 +4,9 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import venv
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,12 +29,19 @@ def test_release_artifacts_and_installed_gcp_extra_consumer(tmp_path):
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
     dist = tmp_path / "dist"
-    run([sys.executable, "-m", "build", "--outdir", str(dist), str(ROOT)], cwd=tmp_path, env=env)
+    # Build both directly from the checkout to exercise each target's exclusion.
+    run([sys.executable, "-m", "build", "--sdist", "--wheel", "--outdir", str(dist), str(ROOT)], cwd=tmp_path, env=env)
     artifacts = list(dist.iterdir())
     wheels = sorted(dist.glob("*.whl"))
     sdists = sorted(dist.glob("*.tar.gz"))
     assert len(artifacts) == 2 and len(wheels) == len(sdists) == 1
     assert wheels[0].name.startswith("dnsid-")
+    # Foundry cannot ship before the server acceptance gate is cleared.
+    with zipfile.ZipFile(wheels[0]) as archive:
+        assert not any(name.startswith("dnsid/foundry/") for name in archive.namelist())
+        assert "dnsid/config_loading.py" in archive.namelist()
+    with tarfile.open(sdists[0]) as archive:
+        assert not any("/dnsid/foundry/" in name for name in archive.getnames())
     run([sys.executable, str(ROOT / "scripts/check_distribution_attribution.py"), str(dist)], cwd=tmp_path, env=env)
     consumer = tmp_path / "consumer"
     consumer.mkdir()
@@ -43,8 +52,10 @@ def test_release_artifacts_and_installed_gcp_extra_consumer(tmp_path):
 import importlib.util
 import sys
 from dnsid import ArgumentError, GoogleKmsKeyProvider
-from dnsid.config_loading import KeySource, _validate_key_source
+from dnsid.config_loading import FoundryConfig, KeySource, _validate_key_source
 
+assert FoundryConfig.__module__ == "dnsid.config_loading"
+assert importlib.util.find_spec("dnsid.foundry") is None
 assert "google.cloud.kms_v1" not in sys.modules
 assert "google_crc32c" not in sys.modules
 assert importlib.util.find_spec("google_crc32c") is None

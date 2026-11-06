@@ -391,6 +391,8 @@ class FoundryIdentity:
             raise FoundryStateError("saved proof organization mismatch")
         if transcript.expires_at <= datetime.datetime.now(datetime.UTC):
             if proof.get("submissionState") != "prepared":
+                # shortcut: proof rejection is not reconciled, add safe reissue when
+                # the server defines its expired-challenge code.
                 raise FoundryError(
                     "expired proof outcome is unknown; registry reconciliation required",
                     operation=operation,
