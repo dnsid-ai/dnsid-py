@@ -668,9 +668,13 @@ GoogleKmsKeyProvider.supersede(kid: str, *, allow_active: bool = False) -> None
 
 Locally retire an active or retained key without any cloud mutation.
 
-Explicit active supersession leaves no signer. The shared interface's
-allow_active keyword is accepted, but Google permits this explicit local
-retirement regardless; it never activates a replacement implicitly.
+``allow_active`` is reserved for an accepted, publicly verified
+cross-provider rotation. Explicit active supersession leaves no signer;
+it never activates a replacement implicitly.
+
+**Raises:**
+
+- `ArgumentError`: If *kid* is active without ``allow_active=True``, or is not an active or retained key.
 
 ### `sign`
 
