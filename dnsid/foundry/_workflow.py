@@ -298,6 +298,8 @@ class FoundryIdentity:
                         delay = _sleep(delay)
                         registration = facade.registration(operation)
                         facade.remember_registration(key, operation, registration, self._signer)
+                    # A used proof can settle only after the registry advances.
+                    self._proof(operation, registration)
                     facade.publication(key, operation, registration)
                     # A new manager isolates readiness from application caches and acceptance.
                     with facade.manager(operation) as verifier:
@@ -390,18 +392,15 @@ class FoundryIdentity:
         if transcript.org_id != operation["organizationId"]:
             raise FoundryStateError("saved proof organization mismatch")
         if transcript.expires_at <= datetime.datetime.now(datetime.UTC):
-            if proof.get("submissionState") != "prepared":
-                # shortcut: proof rejection is not reconciled, add safe reissue when
-                # the server defines its expired-challenge code.
-                raise FoundryError(
-                    "expired proof outcome is unknown; registry reconciliation required",
-                    operation=operation,
-                    resumable=True,
+            try:
+                response = facade.registry.reissue_live_proof(
+                    self.domain,
+                    LiveProofReissueRequest(operation["requestId"], initial),
                 )
-            response = facade.registry.reissue_live_proof(
-                self.domain,
-                LiveProofReissueRequest(operation["requestId"], initial),
-            )
+            except RegistryRequestError as cause:
+                if cause.status_code == 409:
+                    return
+                raise
             if response.request_id != operation["requestId"] or (
                 response.agent_id != operation["identityId"]
                 or response.challenge_transcript.org_id != operation["organizationId"]
@@ -410,6 +409,7 @@ class FoundryIdentity:
             proof.update(
                 challenge=response.challenge,
                 challengeMessage=response.challenge_message,
+                submissionState="prepared",
             )
             proof.pop("signature", None)
             facade.save(self._key, operation)

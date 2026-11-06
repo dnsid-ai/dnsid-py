@@ -184,7 +184,7 @@ class FoundryServer:
             raise self.onboarding_error
         return copy.deepcopy(self.onboarding)
 
-    def challenge(self, key, request_id):
+    def challenge(self, key, request_id, *, challenge="proof-nonce"):
         expiry = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
             seconds=-60 if self.proof_expired else 3600,
         )
@@ -194,14 +194,14 @@ class FoundryServer:
             "agent_id": "id-1",
             "fqdn": DOMAIN,
             "key_id": key.thumbprint(),
-            "nonce": "proof-nonce",
+            "nonce": challenge,
             "expires_at": expiry.isoformat(),
         }
         return {
             "request_id": request_id,
             "agent_id": "id-1",
             "status": "challenge_pending",
-            "challenge": "proof-nonce",
+            "challenge": challenge,
             "challenge_message": b64url_encode(canonical_bytes(transcript)),
         }
 
@@ -248,7 +248,9 @@ class FoundryServer:
         self.reissues.append(request)
         self.proof_expired = False
         response = _live_provisioning_from_response(
-            self.challenge(request.public_key_jwk, request.request_id),
+            self.challenge(
+                request.public_key_jwk, request.request_id, challenge="replacement-nonce"
+            ),
             request.public_key_jwk,
         )
         return response
@@ -1225,10 +1227,30 @@ def test_provider_without_cancellation_checked_after_call(setup):
     assert not server.created
 
 
-def test_unknown_proof_outcome_is_not_reissued_when_expired(setup):
+@pytest.mark.parametrize("used", [False, True])
+def test_expired_unknown_proof_outcome_reissues_or_waits(setup, monkeypatch, used):
     server, store, arguments = setup
     server.proof_required = server.proof_expired = True
     server.status = "VERIFICATION"
+    monkeypatch.setattr("dnsid.foundry._workflow.time.sleep", lambda delay: None)
+    status_reads = []
+    if used:
+        def reject_reissue(domain, request):
+            server.reissues.append(request)
+            raise RegistryRequestError("/proof/reissue", 409, "INVALID_TRANSITION")
+
+        registration = server.get_registration
+
+        def advance_status(domain):
+            result = registration(domain)
+            status_reads.append(result.registry_status)
+            if server.reissues:
+                server.status = "READY"
+            return result
+
+        server.reissue_live_proof = reject_reissue
+        server.get_registration = advance_status
+
     with create("billing-agent", **arguments) as identity:
         key = (server._base_url, ORG, "billing-agent")
         with store.lock(key):
@@ -1240,11 +1262,32 @@ def test_unknown_proof_outcome_is_not_reissued_when_expired(setup):
                 )
             )
             proof["submissionState"] = "submitting"
+            original = copy.deepcopy(proof)
             store.save(key, document)
-        with pytest.raises(FoundryError) as caught:
-            identity.active()
-        assert caught.value.resumable
-        assert not server.reissues and not server.proofs
+        identity.active()
+        record = saved(store)
+        proof = record["proof"]
+        assert record["phase"] == "complete"
+        assert proof["outcome"] in {"READY", "PROVISIONING"}
+        assert len(server.created) == len(server.reissues) == 1
+        assert server.reissues[0].request_id == document["requestId"]
+        assert server.reissues[0].public_key_jwk.to_dict() == document["initialPublicKey"]
+        if used:
+            assert status_reads == ["VERIFICATION", "VERIFICATION", "READY"]
+            assert not server.proofs
+            assert proof["challengeMessage"] == original["challengeMessage"]
+            assert proof["signature"] == original["signature"]
+        else:
+            assert len(server.proofs) == 1
+            assert proof["challenge"] != original["challenge"]
+            assert proof["challengeMessage"] != original["challengeMessage"]
+            assert proof["signature"] != original["signature"]
+            assert server.proofs[0].challenge == proof["challenge"]
+            assert server.proofs[0].signature == proof["signature"]
+            assert server.proofs[0].public_key_jwk.verify(
+                b64url_decode_strict(proof["challengeMessage"]),
+                b64url_decode_strict(proof["signature"]),
+            )
 
 
 @pytest.mark.parametrize("status", ["RETIRED", "REVOKED", "ERROR", "CANCELLED", "REJECTED"])
