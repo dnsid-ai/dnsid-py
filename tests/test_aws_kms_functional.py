@@ -9,6 +9,9 @@ from __future__ import annotations
 import json
 
 import pytest
+
+pytest.importorskip("botocore")
+
 from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
