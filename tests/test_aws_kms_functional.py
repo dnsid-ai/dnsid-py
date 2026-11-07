@@ -16,8 +16,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from dnsid import ValidationError, identity_manager_from_file
 from dnsid._utils import b64url_decode
-from tests.test_google_kms_functional import checked_profile, publication
-from tests.test_google_kms_runtime_contract import SEED
+from tests._kms_publication import SEED, checked_profile, publication
 
 A = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-4111-8111-111111111111"
 B = "arn:aws:kms:us-east-1:111122223333:key/22222222-2222-4222-8222-222222222222"
@@ -26,9 +25,9 @@ B = "arn:aws:kms:us-east-1:111122223333:key/22222222-2222-4222-8222-222222222222
 @pytest.mark.parametrize("mode", ["existing A", "selected B", "read denied"])
 def test_aws_config_open_functional(tmp_path, monkeypatch, mode):
     """Open exact A, reject B/publication A, or propagate denied public read."""
-    # Stable existing GCP consumer publication helper: independent signed A,
+    # Shared cloud-neutral consumer publication helper: independent signed A,
     # real C2SP verification, DNS record/status/JWKS checks, and JOSE verification.
-    evidence = publication(tmp_path)
+    evidence = publication(tmp_path, key_source={"provider": "aws-kms", "keyRef": A})
     keys = {
         A: Ed25519PrivateKey.from_private_bytes(SEED),
         B: Ed25519PrivateKey.from_private_bytes(bytes([29]) * 32),
