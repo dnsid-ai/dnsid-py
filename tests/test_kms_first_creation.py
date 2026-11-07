@@ -2,8 +2,7 @@
 
 Contract inputs: shared 01 KeyProvider, 12 open-only configuration, and #58
 existing-parent bootstrap scope. All dependencies run fake; RFC8032 vector 1
-provides independently known public material. Missing create is surface RED,
-not execution of the downstream functional assertions.
+provides independently known public material for the public creation flow.
 """
 
 import base64
@@ -189,15 +188,6 @@ def forbid_local_custody(monkeypatch):
         monkeypatch.setattr(tempfile, name, forbidden)
 
 
-def create_surface():
-    create = getattr(GoogleKmsKeyProvider, "create", None)
-    assert callable(create), (
-        "#58 missing public GoogleKmsKeyProvider.create(client, crypto_key_name); "
-        "surface assertion RED only: functional flow has not executed"
-    )
-    return create
-
-
 def assert_inactive(provider, client):
     before = list(client.calls)
     assert provider.list_key_ids() == []
@@ -247,7 +237,7 @@ def test_gcp_first_version_pending_activate_reopen(tmp_path, monkeypatch):
 
     Fake-only custody guards additionally cover this offline execution.
     """
-    create = create_surface()
+    create = GoogleKmsKeyProvider.create
     client = FirstVersionService()
     monkeypatch.chdir(tmp_path)
     with monkeypatch.context() as guard:
@@ -275,7 +265,7 @@ def test_gcp_first_version_pending_activate_reopen(tmp_path, monkeypatch):
 ])
 def test_gcp_failed_first_version_returns_no_provider_or_fallback(fault, tmp_path, monkeypatch):
     """**Mode**: fake-only. Given native fault, when creating, then fail once without local custody."""
-    create = create_surface()
+    create = GoogleKmsKeyProvider.create
     client = FirstVersionService(fault)
     monkeypatch.chdir(tmp_path)
     with monkeypatch.context() as guard:
@@ -291,7 +281,7 @@ def test_gcp_failed_first_version_returns_no_provider_or_fallback(fault, tmp_pat
 @pytest.mark.parametrize("parent", ["", VERSION, "projects/p/locations/l/keyRings/r"])
 def test_gcp_invalid_parent_fails_before_mutation(parent):
     """**Mode**: fake-only. Given invalid parent, when creating, then no cloud mutation."""
-    create = create_surface()
+    create = GoogleKmsKeyProvider.create
     client = FirstVersionService()
     with pytest.raises((ArgumentError, ValueError)):
         create(client, parent)
@@ -349,7 +339,7 @@ def test_aws_failed_first_create_has_no_partial_activation(fault, tmp_path, monk
 @pytest.mark.parametrize("fault", ["parent_name", "parent_purpose", "parent_algorithm"])
 def test_gcp_incompatible_parent_rejected_before_create(fault, tmp_path, monkeypatch):
     """**Mode**: fake-only. Given wrong parent/template, when bootstrapping, then no create."""
-    create = create_surface()
+    create = GoogleKmsKeyProvider.create
     client = FirstVersionService(fault)
     monkeypatch.chdir(tmp_path)
     with monkeypatch.context() as guard:

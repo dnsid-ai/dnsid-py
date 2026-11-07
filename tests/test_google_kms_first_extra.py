@@ -153,6 +153,8 @@ class ReadinessService(FirstVersionService):
         super().__init__()
         self.outcome = outcome
         self.polls = 0
+        self.timeouts = []
+        self.remaining = None
 
     def create_crypto_key_version(self, request):
         response = super().create_crypto_key_version(request)
@@ -161,6 +163,13 @@ class ReadinessService(FirstVersionService):
 
     def get_crypto_key_version(self, request, **options):
         self.calls.append(("poll", request["name"]))
+        assert "retry" in options and options["retry"] is None
+        assert self.remaining is not None, "readiness proof requires virtual budget"
+        timeout = options["timeout"]
+        assert 0 < timeout <= self.remaining() + 1e-9
+        if self.timeouts:
+            assert timeout < self.timeouts[-1], "each poll must consume the shared budget"
+        self.timeouts.append(timeout)
         self.polls += 1
         assert request["name"] == VERSION
         assert self.polls <= 100, "readiness must be finite, without duplicate create"
@@ -184,13 +193,16 @@ class ReadinessService(FirstVersionService):
         return SimpleNamespace(**fields)
 
 
-def virtual_time(monkeypatch):
+def virtual_time(monkeypatch, client):
     """Replace time dependency, not provider helpers; never wait ten real seconds."""
     now = [0.0]
     sleeps = []
+    started = []
 
     def monotonic():
         now[0] += 0.05
+        if not started:
+            started.append(now[0])
         return now[0]
 
     def sleep(delay):
@@ -198,6 +210,8 @@ def virtual_time(monkeypatch):
         sleeps.append(delay)
         now[0] += delay
 
+    # Public create documents one ten-second readiness budget, not per-call budgets.
+    client.remaining = lambda: started[0] + 10.0 - now[0]
     monkeypatch.setattr(time, "monotonic", monotonic)
     monkeypatch.setattr(time, "sleep", sleep)
     return now, sleeps
@@ -210,7 +224,7 @@ def test_given_generating_version_when_ready_then_same_pending_identity(
     client = ReadinessService("ready")
     monkeypatch.chdir(tmp_path)
     with monkeypatch.context() as guard:
-        virtual_time(guard)
+        virtual_time(guard, client)
         forbid_local_custody(guard)
         provider, kid, reference = GoogleKmsKeyProvider.create(client, PARENT)
         assert reference == VERSION and kid == assert_public(provider.jwk(kid))
@@ -238,7 +252,7 @@ def test_given_readiness_failure_when_creating_then_no_usable_provider_or_recrea
     client = ReadinessService(outcome)
     monkeypatch.chdir(tmp_path)
     with monkeypatch.context() as guard:
-        now, sleeps = virtual_time(guard)
+        now, sleeps = virtual_time(guard, client)
         forbid_local_custody(guard)
         with pytest.raises((ArgumentError, ValueError, PermissionError, TimeoutError)):
             GoogleKmsKeyProvider.create(client, PARENT)
@@ -278,7 +292,7 @@ def test_given_known_version_when_postcreate_fails_then_error_retains_recovery_r
         monkeypatch.setattr(client, "get_public_key", deny_public)
     monkeypatch.chdir(tmp_path)
     with monkeypatch.context() as guard:
-        now, sleeps = virtual_time(guard)
+        now, sleeps = virtual_time(guard, client)
         forbid_local_custody(guard)
         with pytest.raises((ArgumentError, ValueError, PermissionError, TimeoutError)) as caught:
             GoogleKmsKeyProvider.create(client, PARENT)
@@ -291,7 +305,7 @@ def test_given_known_version_when_postcreate_fails_then_error_retains_recovery_r
         if fault.startswith("readiness-"):
             assert all(name != "public" for name, _ in client.calls)
         if fault == "readiness-timeout":
-            assert isinstance(error, TimeoutError)
+            assert isinstance(error, ArgumentError)
             assert now[0] > 0 and sleeps
         if fault.endswith("permission"):
             chain = []

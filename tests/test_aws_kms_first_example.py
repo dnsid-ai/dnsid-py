@@ -81,7 +81,7 @@ class BotoService(RemoteMaterial):
 
 def prepare(monkeypatch, client):
     """Load actual example and replace only external boto/network dependencies."""
-    import boto3
+    boto3 = pytest.importorskip("boto3")
 
     main = runpy.run_path(str(EXAMPLE))["main"]
     for name, value in SETTINGS.items():
