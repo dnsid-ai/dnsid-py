@@ -202,19 +202,22 @@ class GoogleKmsKeyProvider(KeyProvider):
                 raise ArgumentError("google-kms created version parent mismatch")
             if name in self._versions.values():
                 raise ArgumentError("google-kms created version is already known")
-            if wait_for_ready:
-                response = self._wait_for_created_version(response, name)
-            if (
-                response.algorithm
-                != kms_v1.CryptoKeyVersion.CryptoKeyVersionAlgorithm.EC_SIGN_ED25519
-                or response.protection_level != kms_v1.ProtectionLevel.SOFTWARE
-                or response.state != kms_v1.CryptoKeyVersion.CryptoKeyVersionState.ENABLED
-            ):
-                raise ArgumentError("google-kms created version must be enabled software Ed25519")
-            key = self._read_public_key(name)
-            kid = key["kid"]
-            if kid in self._keys:
-                raise ArgumentError("google-kms public key is already bound to another version")
+            try:
+                if wait_for_ready:
+                    response = self._wait_for_created_version(response, name)
+                if (
+                    response.algorithm
+                    != kms_v1.CryptoKeyVersion.CryptoKeyVersionAlgorithm.EC_SIGN_ED25519
+                    or response.protection_level != kms_v1.ProtectionLevel.SOFTWARE
+                    or response.state != kms_v1.CryptoKeyVersion.CryptoKeyVersionState.ENABLED
+                ):
+                    raise ArgumentError("google-kms created version must be enabled software Ed25519")
+                key = self._read_public_key(name)
+                kid = key["kid"]
+                if kid in self._keys:
+                    raise ArgumentError("google-kms public key is already bound to another version")
+            except Exception as cause:
+                raise ArgumentError(f"google-kms created version {name}: {cause}") from cause
             self._keys[kid] = key
             self._versions[kid] = name
             self._pending.add(kid)
