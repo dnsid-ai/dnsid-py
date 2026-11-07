@@ -46,10 +46,16 @@ The `.example` names below are placeholders; replace them with published DNSid
 domains for networked workflows. For a local `.test` identity, see the
 [validate-domain example](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/validate-domain/README.md).
 
-For explicit first-key creation inside AWS KMS without a local key file, see the
-[AWS KMS first-key setup example](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/aws-kms-first).
-It hands off the operational public key; entity signing, publication and protocol
-issuance remain separate requirements.
+For explicit first-key creation inside KMS without a local key file, see the
+[AWS KMS first-key setup example](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/aws-kms-first)
+or [Google Cloud KMS first-key setup example](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/gcp-kms-first).
+Use ambient cloud credentials with the permissions listed in each example. AWS
+requires a supported region; Google requires an existing `ASYMMETRIC_SIGN`
+CryptoKey parent with a `SOFTWARE` / `EC_SIGN_ED25519` version template, but no
+prior version. These examples hand off the operational public key; entity
+signing, publication and protocol issuance remain separate requirements.
+Subsequent startup reopens the saved reference, never reruns creation; ordinary
+configuration remains open-only.
 
 For local development and testing, use `LocalKeyProvider.generate()` for Ed25519 or
 `LocalKeyProvider.generate("ES256")` for P-256.
