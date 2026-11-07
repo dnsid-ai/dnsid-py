@@ -46,6 +46,11 @@ The `.example` names below are placeholders; replace them with published DNSid
 domains for networked workflows. For a local `.test` identity, see the
 [validate-domain example](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/validate-domain/README.md).
 
+For explicit first-key creation inside AWS KMS without a local key file, see the
+[AWS KMS first-key setup example](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/aws-kms-first).
+It hands off the operational public key; entity signing, publication and protocol
+issuance remain separate requirements.
+
 For local development and testing, use `LocalKeyProvider.generate()` for Ed25519 or
 `LocalKeyProvider.generate("ES256")` for P-256.
 
