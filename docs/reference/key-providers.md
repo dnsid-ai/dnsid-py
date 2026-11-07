@@ -608,6 +608,33 @@ GoogleKmsKeyProvider(client: Any, key_version_name: str) -> None
 
 Read and validate an existing version through a synchronous KMS client.
 
+### `create`
+
+```python
+GoogleKmsKeyProvider.create(client: Any, crypto_key_name: str) -> tuple[GoogleKmsKeyProvider, str, str]
+```
+
+Create a pending version under an existing compatible CryptoKey.
+
+The parent must have ASYMMETRIC_SIGN purpose and a SOFTWARE
+EC_SIGN_ED25519 version template. No prior version is opened.
+Native readiness polling is bounded to ten seconds. Failure never
+recreates or deletes a version; service errors pass through unchanged.
+The injected client remains caller-owned on success and failure.
+
+**Arguments:**
+
+- `client` (`Any`): Caller-supplied synchronous Google KMS client.
+- `crypto_key_name` (`str`): Fully qualified existing CryptoKey parent name.
+
+**Returns:**
+
+- `tuple[GoogleKmsKeyProvider, str, str]` — The pending provider, RFC 7638 key ID, and immutable version name. Persist the public reference for recovery and call ``activate(kid)`` explicitly before using the provider as the initial signer.
+
+**Raises:**
+
+- `ArgumentError`: If metadata or public material is invalid, or native generation does not become ready within the polling bound.
+
 ### `signing_key`
 
 ```python
