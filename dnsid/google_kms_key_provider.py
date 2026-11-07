@@ -211,7 +211,9 @@ class GoogleKmsKeyProvider(KeyProvider):
                     or response.protection_level != kms_v1.ProtectionLevel.SOFTWARE
                     or response.state != kms_v1.CryptoKeyVersion.CryptoKeyVersionState.ENABLED
                 ):
-                    raise ArgumentError("google-kms created version must be enabled software Ed25519")
+                    raise ArgumentError(
+                        "google-kms created version must be enabled software Ed25519"
+                    )
                 key = self._read_public_key(name)
                 kid = key["kid"]
                 if kid in self._keys:
