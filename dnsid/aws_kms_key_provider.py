@@ -106,6 +106,10 @@ class AwsKmsFacade(ABC):
         Returns a dict with keys:
           ``key_id`` (str | None), ``public_key`` (bytes), ``key_spec`` (str | None),
           ``key_usage`` (str | None), ``signing_algorithms`` (list[str] | None).
+
+        For newly created keys, ``key_id`` must be the canonical key ARN matching
+        the ARN returned by ``create_signing_key``. When opening an existing key,
+        ``key_id`` remains optional and alias references remain supported.
         """
 
     @abstractmethod

@@ -1,8 +1,11 @@
 """Optional synchronous Google Cloud KMS Ed25519 signing support.
 
 Credentials use Google's ambient credential chain. Opening a version only reads
-its public key; it never creates or replaces cloud keys. Service exceptions pass
-through unchanged, without logging payloads or credential material.
+its public key; it never creates or replaces cloud keys. Service exceptions during
+opening or before creation pass through unchanged. After a created version is
+identified and bound to its parent, readiness and public-key validation failures
+raise ArgumentError naming the version and chaining the original cause. Payloads
+and credential material are not logged.
 """
 
 from __future__ import annotations
@@ -89,7 +92,10 @@ class GoogleKmsKeyProvider(KeyProvider):
         The parent must have ASYMMETRIC_SIGN purpose and a SOFTWARE
         EC_SIGN_ED25519 version template. No prior version is opened.
         Native readiness polling is bounded to ten seconds. Failure never
-        recreates or deletes a version; service errors pass through unchanged.
+        recreates or deletes a version. Service errors before creation pass
+        through unchanged. Once the created version is identified and bound to
+        its parent, readiness and public-key validation failures raise
+        ArgumentError naming the version and chaining the original cause.
         The injected client remains caller-owned on success and failure.
 
         Args:
@@ -104,6 +110,9 @@ class GoogleKmsKeyProvider(KeyProvider):
         Raises:
             ArgumentError: If metadata or public material is invalid, or native
                 generation does not become ready within the polling bound.
+                Readiness and public-key validation failures after the created
+                version is identified and bound to its parent name that version
+                and chain the original cause.
         """
         from google.cloud import kms_v1
 

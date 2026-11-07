@@ -562,6 +562,10 @@ Fetch public key info for *key_id*.
 
 > **Returns a dict with keys:** ``key_id`` (str | None), ``public_key`` (bytes), ``key_spec`` (str | None), ``key_usage`` (str | None), ``signing_algorithms`` (list[str] | None).
 
+For newly created keys, ``key_id`` must be the canonical key ARN matching
+the ARN returned by ``create_signing_key``. When opening an existing key,
+``key_id`` remains optional and alias references remain supported.
+
 ### `sign`
 
 ```python
@@ -619,7 +623,10 @@ Create a pending version under an existing compatible CryptoKey.
 The parent must have ASYMMETRIC_SIGN purpose and a SOFTWARE
 EC_SIGN_ED25519 version template. No prior version is opened.
 Native readiness polling is bounded to ten seconds. Failure never
-recreates or deletes a version; service errors pass through unchanged.
+recreates or deletes a version. Service errors before creation pass
+through unchanged. Once the created version is identified and bound to
+its parent, readiness and public-key validation failures raise
+ArgumentError naming the version and chaining the original cause.
 The injected client remains caller-owned on success and failure.
 
 **Arguments:**
@@ -633,7 +640,7 @@ The injected client remains caller-owned on success and failure.
 
 **Raises:**
 
-- `ArgumentError`: If metadata or public material is invalid, or native generation does not become ready within the polling bound.
+- `ArgumentError`: If metadata or public material is invalid, or native generation does not become ready within the polling bound. Readiness and public-key validation failures after the created version is identified and bound to its parent name that version and chain the original cause.
 
 ### `signing_key`
 
