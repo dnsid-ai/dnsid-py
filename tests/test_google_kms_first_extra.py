@@ -249,3 +249,56 @@ def test_given_readiness_failure_when_creating_then_no_usable_provider_or_recrea
         if outcome == "timeout":
             assert now[0] > 0 and sleeps, "exercise waiting budget, not immediate rejection"
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("fault", [
+    "readiness-permission", "readiness-timeout", "public-permission", "public_name", "public_crc",
+])
+def test_given_known_version_when_postcreate_fails_then_error_retains_recovery_reference(
+    fault, tmp_path, monkeypatch,
+):
+    """**Mode**: fake-only. Given known create, when failure follows, then operator can reconcile."""
+    denied = PermissionError("fixture post-create permission denied")
+    client = (ReadinessService("timeout") if fault.startswith("readiness-")
+              else FirstVersionService(fault))
+
+    def deny_poll(request, **options):
+        client.calls.append(("poll", request["name"]))
+        assert client.created and request["name"] == VERSION
+        raise denied
+
+    def deny_public(request):
+        client.calls.append(("public", request["name"]))
+        assert client.created and request["name"] == VERSION
+        raise denied
+
+    if fault == "readiness-permission":
+        monkeypatch.setattr(client, "get_crypto_key_version", deny_poll)
+    if fault == "public-permission":
+        monkeypatch.setattr(client, "get_public_key", deny_public)
+    monkeypatch.chdir(tmp_path)
+    with monkeypatch.context() as guard:
+        now, sleeps = virtual_time(guard)
+        forbid_local_custody(guard)
+        with pytest.raises((ArgumentError, ValueError, PermissionError, TimeoutError)) as caught:
+            GoogleKmsKeyProvider.create(client, PARENT)
+        error = caught.value
+        assert client.created
+        assert sum(name == "create" for name, _ in client.calls) == 1
+        assert all(name in ("parent", "create", "poll", "public") for name, _ in client.calls)
+        assert all(ref == VERSION for name, ref in client.calls if name in ("poll", "public"))
+        assert not client.closed
+        if fault.startswith("readiness-"):
+            assert all(name != "public" for name, _ in client.calls)
+        if fault == "readiness-timeout":
+            assert isinstance(error, TimeoutError)
+            assert now[0] > 0 and sleeps
+        if fault.endswith("permission"):
+            chain = []
+            current = error
+            while current is not None and all(current is not item for item in chain):
+                chain.append(current)
+                current = current.__cause__ or current.__context__
+            assert any(item is denied for item in chain), "original permission cause lost"
+        assert list(tmp_path.iterdir()) == []
+        assert VERSION in str(error), "caller error omitted known immutable recovery version"
