@@ -76,6 +76,7 @@ def empty_provider(client):
     "metadata,binding,requested",
     [
         pytest.param({"Arn": ARN, "KeyId": UUID}, OTHER_ARN, ARN, id="unrelated-public-arn"),
+        pytest.param({"KeyId": UUID}, OTHER_ARN, UUID, id="bare-uuid-unrelated-public-arn"),
         pytest.param({"Arn": ARN, "KeyId": UUID}, None, ARN, id="missing-public-binding"),
         pytest.param({"Arn": ALIAS}, ARN, ALIAS, id="mutable-create-alias"),
         pytest.param({"Arn": "not-an-immutable-key"}, ARN, "not-an-immutable-key", id="malformed-create"),
