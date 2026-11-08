@@ -562,6 +562,10 @@ Fetch public key info for *key_id*.
 
 > **Returns a dict with keys:** ``key_id`` (str | None), ``public_key`` (bytes), ``key_spec`` (str | None), ``key_usage`` (str | None), ``signing_algorithms`` (list[str] | None).
 
+For newly created keys, ``key_id`` must be the canonical key ARN matching
+the ARN returned by ``create_signing_key``. When opening an existing key,
+``key_id`` remains optional and alias references remain supported.
+
 ### `sign`
 
 ```python
@@ -608,6 +612,36 @@ GoogleKmsKeyProvider(client: Any, key_version_name: str) -> None
 
 Read and validate an existing version through a synchronous KMS client.
 
+### `create`
+
+```python
+GoogleKmsKeyProvider.create(client: Any, crypto_key_name: str) -> tuple[GoogleKmsKeyProvider, str, str]
+```
+
+Create a pending version under an existing compatible CryptoKey.
+
+The parent must have ASYMMETRIC_SIGN purpose and a SOFTWARE
+EC_SIGN_ED25519 version template. No prior version is opened.
+Native readiness polling is bounded to ten seconds. Failure never
+recreates or deletes a version. Service errors before creation pass
+through unchanged. Once the created version is identified and bound to
+its parent, readiness and public-key validation failures raise
+ArgumentError naming the version and chaining the original cause.
+The injected client remains caller-owned on success and failure.
+
+**Arguments:**
+
+- `client` (`Any`): Caller-supplied synchronous Google KMS client.
+- `crypto_key_name` (`str`): Fully qualified existing CryptoKey parent name.
+
+**Returns:**
+
+- `tuple[GoogleKmsKeyProvider, str, str]` — The pending provider, RFC 7638 key ID, and immutable version name. Persist the public reference for recovery and call ``activate(kid)`` explicitly before using the provider as the initial signer.
+
+**Raises:**
+
+- `ArgumentError`: If metadata or public material is invalid, or native generation does not become ready within the polling bound. Readiness and public-key validation failures after the created version is identified and bound to its parent name that version and chain the original cause.
+
 ### `signing_key`
 
 ```python
@@ -651,6 +685,11 @@ Create a pending Ed25519 version under the originally configured parent.
 Creation uses the parent's version template. Both the creation response
 and public key must confirm software Ed25519 before local registration.
 Failure after creation never promotes a key or retries by creating another.
+Service errors before creation pass through unchanged.
+
+**Raises:**
+
+- `ArgumentError`: If the returned version name is invalid, belongs to another parent, or is already known. Once the created version is identified and bound to its parent, metadata validation and public-key read or validation failures raise ArgumentError naming the immutable version and chaining the original cause.
 
 ### `activate`
 

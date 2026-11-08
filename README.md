@@ -924,6 +924,8 @@ Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/
 | Example | Description | Prerequisites |
 |---|---|---|
 | [examples/key-rotation/](examples/key-rotation/) | Authorized operational-key rotation with durable restart recovery | Local registry (Docker + DNSid CLI) |
+| [examples/aws-kms-first/](examples/aws-kms-first/) | Explicit first operational-key creation in AWS KMS; public-key handoff, not issuance | `aws` extra, ambient AWS credentials, supported region and create/public-key/sign permissions |
+| [examples/gcp-kms-first/](examples/gcp-kms-first/) | Explicit first operational-key version creation in Google Cloud KMS; public-key handoff, not issuance | `gcp` extra, ambient Google credentials, compatible existing CryptoKey parent and create/read/sign permissions |
 | [examples/local-key-provider/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/local-key-provider) | File-backed local key provider demo | None — fully self-contained |
 | [examples/published-signing/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/published-signing) | Load deployment config, verify an existing identity, and sign with AWS KMS or file custody | Published identity and its existing operational key |
 | [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Local registry (Docker + DNSid CLI) |
