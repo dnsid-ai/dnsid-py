@@ -32,7 +32,8 @@ def main() -> None:
     import boto3
 
     # The application owns this client. No local key provider or state file is used.
-    with boto3.client("kms", region_name=region) as client:
+    client = boto3.client("kms", region_name=region)
+    try:
         facade = BotoKmsFacade(client)
         provider = AwsKmsKeyProvider.load(facade, AwsKmsConfig(
             algorithm="ED25519_SHA_512",
@@ -63,6 +64,8 @@ def main() -> None:
                 manager.get_key_set().to_dict(),
             ))
         # Stop here: the accountable entity/issuer owns record signing and issuance.
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
