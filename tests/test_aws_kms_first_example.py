@@ -39,15 +39,13 @@ class BotoService(RemoteMaterial):
         super().__init__()
         self.failure = failure
         self.signatures = []
-        self.context_events = []
+        self.close_events = []
+        self.public_failure = PermissionError("remote public read denied")
 
-    def __enter__(self):
-        self.context_events.append("enter")
-        return self
-
-    def __exit__(self, *exc):
-        # This is application context management, not provider ownership.
-        self.context_events.append("exit")
+    def close(self):
+        # Like native boto, expose close(), not a fabricated context protocol.
+        super().close()
+        self.close_events.append("close")
 
     def create_key(self, **request):
         self.calls.append(("create", request))
@@ -63,7 +61,7 @@ class BotoService(RemoteMaterial):
         self.calls.append(("public", request))
         assert self.created and request == {"KeyId": ARN}
         if self.failure == "public":
-            raise PermissionError("remote public read denied")
+            raise self.public_failure
         return dict(KeyId=ARN, PublicKey=self.der, KeySpec="ECC_NIST_EDWARDS25519",
                     KeyUsage="SIGN_VERIFY", SigningAlgorithms=["ED25519_SHA_512"])
 
@@ -81,6 +79,7 @@ class BotoService(RemoteMaterial):
 
 def prepare(monkeypatch, client):
     """Load actual example and replace only external boto/network dependencies."""
+    assert not hasattr(client, "__enter__") and not hasattr(client, "__exit__")
     boto3 = pytest.importorskip("boto3")
 
     main = runpy.run_path(str(EXAMPLE))["main"]
@@ -133,7 +132,7 @@ def test_given_remote_key_when_example_runs_then_public_handoff_reopens_once(
     assert len(client.signatures) == 1
     for payload, signature in client.signatures:
         client.public.verify(signature, payload)
-    assert client.context_events == ["enter", "exit"]
+    assert client.closed and client.close_events == ["close"]
     assert list(tmp_path.iterdir()) == []
     # Output is fully accounted for above: no private material, status success,
     # entity issuance, DNS publication or protocol ACTIVE assertion is produced.
@@ -153,7 +152,8 @@ def test_given_missing_setting_when_example_runs_then_no_client_or_create(
         with pytest.raises(KeyError) as caught:
             main()
     assert caught.value.args == (missing,)
-    assert requests == [] and client.calls == [] and client.context_events == []
+    assert requests == [] and client.calls == [] and client.close_events == []
+    assert not client.closed
     assert capsys.readouterr().out == ""
     assert list(tmp_path.iterdir()) == []
 
@@ -174,6 +174,6 @@ def test_given_remote_failure_when_example_runs_then_no_retry_fallback_or_files(
     assert [name for name, _ in client.calls] == (
         ["create"] if failure == "create" else ["create", "public"]
     )
-    assert client.context_events == ["enter", "exit"]
+    assert client.closed and client.close_events == ["close"]
     assert capsys.readouterr().out == ""
     assert list(tmp_path.iterdir()) == []

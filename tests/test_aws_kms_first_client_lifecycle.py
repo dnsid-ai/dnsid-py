@@ -10,6 +10,7 @@ import socket
 
 import pytest
 
+from dnsid import ArgumentError
 from tests.test_aws_kms_first_example import EXAMPLE, SETTINGS, BotoService
 from tests.test_kms_first_creation import ARN, forbid_local_custody
 
@@ -91,7 +92,13 @@ def test_given_real_boto_client_when_setup_runs_then_native_client_is_closed(
             "active_key_id": ARN, "retained_key_ids": [], "pending_key_ids": [],
         }
     else:
-        assert isinstance(caught, PermissionError)
+        if failure == "public":
+            assert isinstance(caught, ArgumentError)
+            assert caught.__cause__ is service.public_failure
+            assert isinstance(caught.__cause__, PermissionError)
+            assert ARN in str(caught)
+        else:
+            assert isinstance(caught, PermissionError)
         assert operations == (["CreateKey"] if failure == "create" else ["CreateKey", "GetPublicKey"])
         assert capsys.readouterr().out == ""
     assert closed == clients and len(closed) == 1
