@@ -109,7 +109,8 @@ class FirstVersionService(RemoteMaterial):
             name=PARENT if self.fault != "parent_name" else PARENT + "-other",
             purpose=1 if self.fault == "parent_purpose" else 5,
             version_template=SimpleNamespace(
-                algorithm=12 if self.fault == "parent_algorithm" else 40, protection_level=1,
+                algorithm=12 if self.fault == "parent_algorithm" else 40,
+                protection_level=2 if self.fault == "parent_protection" else 1,
             ),
         )
 
@@ -336,7 +337,9 @@ def test_aws_failed_first_create_has_no_partial_activation(fault, tmp_path, monk
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("fault", ["parent_name", "parent_purpose", "parent_algorithm"])
+@pytest.mark.parametrize("fault", [
+    "parent_name", "parent_purpose", "parent_algorithm", "parent_protection",
+])
 def test_gcp_incompatible_parent_rejected_before_create(fault, tmp_path, monkeypatch):
     """**Mode**: fake-only. Given wrong parent/template, when bootstrapping, then no create."""
     create = GoogleKmsKeyProvider.create

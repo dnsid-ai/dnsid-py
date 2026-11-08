@@ -21,10 +21,14 @@ def test_given_generation_failure_when_operator_generates_then_existing_signer_i
     signer = provider(client)
     previous = signer.signing_key().to_dict()
     attempted = []
+    denied_error = GenerationDenied(
+        "fixture denies version creation" if failure == "create"
+        else "fixture cannot read generated public key"
+    )
     if failure == "create":
         def denied(request):
             attempted.append(("create", request["parent"]))
-            raise GenerationDenied("fixture denies version creation")
+            raise denied_error
 
         client.create_crypto_key_version = denied
     else:
@@ -33,12 +37,17 @@ def test_given_generation_failure_when_operator_generates_then_existing_signer_i
         def denied(request):
             if request["name"] == SUCCESSOR:
                 attempted.append(("generated_public", request["name"]))
-                raise GenerationDenied("fixture cannot read generated public key")
+                raise denied_error
             return original(request)
 
         client.get_public_key = denied
-    with pytest.raises((GenerationDenied, ArgumentError, ValueError)):
+    with pytest.raises(GenerationDenied if failure == "create" else ArgumentError) as caught:
         signer.generate_key()
+    if failure == "create":
+        assert caught.value is denied_error
+    else:
+        assert SUCCESSOR in str(caught.value)
+        assert caught.value.__cause__ is denied_error
     expected = [("create", PARENT)] if failure == "create" else [
         ("generated_public", SUCCESSOR),
     ]
