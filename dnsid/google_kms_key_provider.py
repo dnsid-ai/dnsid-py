@@ -197,6 +197,14 @@ class GoogleKmsKeyProvider(KeyProvider):
         Creation uses the parent's version template. Both the creation response
         and public key must confirm software Ed25519 before local registration.
         Failure after creation never promotes a key or retries by creating another.
+        Service errors before creation pass through unchanged.
+
+        Raises:
+            ArgumentError: If the returned version name is invalid, belongs to
+                another parent, or is already known. Once the created version is
+                identified and bound to its parent, metadata validation and
+                public-key read or validation failures raise ArgumentError naming
+                the immutable version and chaining the original cause.
         """
         return self._generate_key(wait_for_ready=False)
 
