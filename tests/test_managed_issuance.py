@@ -22,7 +22,8 @@ from dnsid.c2sp_tlog import (
     sign_prepared_event,
 )
 from dnsid.c2sp_tlog.canonical import canonical_bytes
-from dnsid.exceptions import ArgumentError, RegistryRequestError, ValidationError
+from dnsid.enums import VerificationCode
+from dnsid.exceptions import ArgumentError, RegistryRequestError, ValidationError, VerificationError
 from dnsid.models import IssuanceEvent
 
 DOMAIN = "agent.example.com"
@@ -182,6 +183,30 @@ def test_submit_request_failure_retries_same_bytes(setup, status, response):
     registry.result = registry.error = None
     assert resume_managed_issuance(**shared).submission.accepted
     assert registry.submits == [original, original] and len(registry.prepares) == 1
+
+
+@pytest.mark.parametrize("stage", ["prepare", "submit"])
+@pytest.mark.parametrize("transient", [False, True])
+def test_request_verification_failure_preserves_retry_semantics(setup, stage, transient):
+    shared, store, registry, _ = setup
+    error = VerificationError(
+        VerificationCode.RECORD_INVALID, "receipt hash mismatch", transient=transient,
+    )
+    if stage == "prepare":
+        registry.prepare_issuance = Mock(side_effect=error)
+    else:
+        registry.error = error
+    with pytest.raises(ManagedIssuanceOperationError) as caught:
+        begin(shared)
+    assert caught.value.__cause__ is error
+    assert caught.value.transient is transient
+    assert caught.value.retry_same_bytes is (transient and stage == "submit")
+    assert not store.state.terminal_failure
+    if stage == "submit":
+        assert store.state.entry_bytes and store.state.submission.state == "pending"
+        assert len(registry.submits) == 1
+    else:
+        assert not store.state.entry_bytes and not registry.submits
 
 
 @pytest.mark.parametrize("change", [

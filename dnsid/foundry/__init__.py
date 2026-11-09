@@ -4,6 +4,9 @@
 and code configuration pass ``config=LoadedConfig(...)`` and a separate credential.
 Call ``identity.active()`` to complete public readiness; no background task runs.
 Create the provider's signing key first; Foundry never provisions or selects a key.
+Foundry create rejects configuration with ordinary identity fields, including
+``DNSID_DOMAIN`` and ``DNSID_GOVERNANCE_ID`` environment variables. Set Foundry's
+expected GI through ``foundry.governanceId`` in file/code configuration.
 
 Contract: dnsid-sdk-compliance e01bcf3, design 13. This module is source-checkout
 only: it is excluded from wheels and sdists until the server passes acceptance

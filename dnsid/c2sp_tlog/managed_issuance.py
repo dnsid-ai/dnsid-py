@@ -14,7 +14,7 @@ from typing import Protocol
 
 from .._utils import normalize_fqdn
 from .._verification_budget import remaining_seconds
-from ..exceptions import ArgumentError, DNSidError, VerificationError
+from ..exceptions import ArgumentError, DNSidError, RegistryRequestError, VerificationError
 from ..interfaces import KeyProvider
 from ..models import JWK, JWKS, PreparedRegistryEvent, SubmissionResult
 from .lr import parse_c2sp_tlog_lr
@@ -283,9 +283,15 @@ def _prepare(
             state, last_error_code=getattr(cause, "error_code", ""),
             terminal_failure=not transient,
         ))
+        transient = transient and (
+            not isinstance(cause, VerificationError)
+            or isinstance(cause, RegistryRequestError)
+            or cause.transient
+        )
         raise ManagedIssuanceOperationError(
             "managed issuance preparation failed", state,
-            state="prepared" if transient else "rejected", transient=transient, cause=cause,
+            state="rejected" if state.terminal_failure else "prepared",
+            transient=transient, cause=cause,
         ) from cause
     try:
         context = _context(state)
@@ -345,9 +351,14 @@ def _submit(
                 status_code=getattr(cause, "status_code", None),
             ), terminal_failure=not retry,
         ))
+        retry = retry and (
+            not isinstance(cause, VerificationError)
+            or isinstance(cause, RegistryRequestError)
+            or cause.transient
+        )
         raise ManagedIssuanceOperationError(
             "managed issuance submission failed", state,
-            state="indeterminate" if retry else "rejected", transient=retry,
+            state="rejected" if state.terminal_failure else "indeterminate", transient=retry,
             retry_same_bytes=retry, cause=cause,
         ) from cause
     try:

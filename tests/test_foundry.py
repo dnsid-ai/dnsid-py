@@ -25,7 +25,7 @@ from dnsid import (
     SubmissionResult,
 )
 from dnsid._utils import b64url_decode_strict, b64url_encode
-from dnsid._verification_budget import verification_budget
+from dnsid._verification_budget import BudgetExhausted, remaining_seconds, verification_budget
 from dnsid.c2sp_tlog import (
     C2spSignerRole,
     C2spTlogReader,
@@ -1063,9 +1063,8 @@ def test_foundry_config_is_loader_owned_and_validated_by_the_facade(setup):
     server, _, arguments = setup
     assert FoundryConfig.__module__ == "dnsid.config_loading"
     arguments["config"].foundry = {"organizationId": ORG}
-    with pytest.raises(FoundryError) as caught:
+    with pytest.raises(ArgumentError, match="config.foundry must be a FoundryConfig"):
         create("billing-agent", **arguments)
-    assert isinstance(caught.value.__cause__, ArgumentError)
     assert not server.created
 
 
@@ -1120,6 +1119,102 @@ def test_mismatch_pause_survives_restart_until_active_verifies_again(setup):
     with create("billing-agent", **arguments) as identity:
         identity.sign(b"second restart")
     assert server.prepare_calls == len(server.submitted) == len(server.created) == 1
+
+
+@pytest.mark.parametrize("observation", ["mismatch", "terminal"])
+@pytest.mark.parametrize("expiry", ["deadline", "cancellation"])
+def test_confirmed_pause_survives_caller_budget_and_restart(setup, monkeypatch, observation, expiry):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+        clock = [100.0]
+        monkeypatch.setattr("dnsid._verification_budget.time.monotonic", lambda: clock[0])
+        cancelled = threading.Event()
+
+        def spend_budget():
+            if expiry == "deadline":
+                clock[0] += 2.0
+            else:
+                cancelled.set()
+            with pytest.raises(BudgetExhausted):
+                remaining_seconds()
+
+        if observation == "mismatch":
+            server.public_provider = LocalKeyProvider.generate()
+            check_public = identity._facade.check_public
+
+            def observe(*args):
+                spend_budget()
+                check_public(*args)
+
+            monkeypatch.setattr(identity._facade, "check_public", observe)
+            expected = KeyMismatch
+        else:
+            def observe(*args):
+                spend_budget()
+                return SimpleNamespace(logged_state="RETIRED")
+
+            server.reader.verify_non_revocation.side_effect = observe
+            expected = TerminalIdentity
+        save = store.save
+        pause_budgets = []
+
+        def save_pause(key, operation):
+            if operation.get("signingPaused"):
+                pause_budgets.append(remaining_seconds(10.0))
+            save(key, operation)
+
+        monkeypatch.setattr(store, "save", save_pause)
+        with pytest.raises(expected):
+            identity.active(timeout=1.0, cancelled=cancelled)
+        assert pause_budgets == [5.0]
+        assert saved(store)["signingPaused"] is True
+        with pytest.raises(SigningPaused):
+            identity.sign(b"expired observation")
+    if observation == "terminal":
+        with pytest.raises(TerminalIdentity):
+            create("billing-agent", **arguments)
+    else:
+        with create("billing-agent", **arguments) as reopened:
+            with pytest.raises(SigningPaused):
+                reopened.sign(b"restart")
+
+
+def test_pause_write_failure_keeps_original_observation_error(setup, monkeypatch):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+        server.public_provider = LocalKeyProvider.generate()
+        save = store.save
+
+        def fail_pause(key, operation):
+            if operation.get("signingPaused"):
+                raise OSError("pause storage unavailable")
+            save(key, operation)
+
+        monkeypatch.setattr(store, "save", fail_pause)
+        with pytest.raises(KeyMismatch) as caught:
+            identity.active()
+        assert any("pause storage unavailable" in note for note in caught.value.__notes__)
+        with pytest.raises(SigningPaused):
+            identity.sign(b"failed pause write")
+
+
+def test_ordinary_store_save_still_fails_after_budget_expiry(setup, monkeypatch):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments):
+        pass
+    document = saved(store)
+    clock = [100.0]
+    monkeypatch.setattr("dnsid._verification_budget.time.monotonic", lambda: clock[0])
+    key = (server._base_url, ORG, "billing-agent")
+    with store.lock(key):
+        with pytest.raises(BudgetExhausted):
+            with verification_budget(1.0):
+                clock[0] += 2.0
+                with pytest.raises(BudgetExhausted):
+                    store.save(key, {**document, "lateWrite": True})
+    assert saved(store) == document
 
 
 def test_algorithms_and_revoked_credentials(setup):

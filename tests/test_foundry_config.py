@@ -72,6 +72,15 @@ def test_foundry_empty_source_values_absent_and_no_new_environment_names(tmp_pat
     )
 
 
+@pytest.mark.parametrize("variable", ["DNSID_DOMAIN", "DNSID_GOVERNANCE_ID"])
+def test_foundry_rejects_ordinary_identity_environment_before_registry_calls(variable):
+    registry = Mock()
+    with patch.dict("os.environ", {variable: GI}, clear=True):
+        with pytest.raises(ArgumentError, match="ordinary identity selectors"):
+            create("invalid-config", registry_client=registry)
+    assert not registry.mock_calls
+
+
 def test_core_construction_ignores_foundry_expectations():
     manager = construct_identity_manager(LoadedConfig(foundry=FoundryConfig(ORG, GI)))
     assert manager.config.identity is None

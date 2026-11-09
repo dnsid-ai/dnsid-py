@@ -15,7 +15,12 @@ from dataclasses import asdict, fields, replace
 from typing import Any
 
 from .._utils import b64url_decode_strict, b64url_encode, normalize_fqdn
-from .._verification_budget import BudgetExhausted, remaining_seconds, verification_budget
+from .._verification_budget import (
+    BudgetExhausted,
+    detached_budget,
+    remaining_seconds,
+    verification_budget,
+)
 from ..c2sp_tlog import C2spTlogReader
 from ..c2sp_tlog.errors import C2spTlogError
 from ..c2sp_tlog.managed_issuance import (
@@ -218,6 +223,8 @@ def create(
                 handle = FoundryIdentity(facade, key, operation, selected)
                 transferred = True
                 return handle
+    except ArgumentError:
+        raise
     except Exception as cause:
         error = _error(cause, operation)
         if error is cause:
@@ -801,7 +808,10 @@ class _Foundry:
                 ):
                     operation["signingPaused"] = True
                     try:
-                        self.save(key, operation)
+                        with detached_budget(5.0):
+                            self.save(key, operation)
+                    except Exception as save_error:
+                        cause.add_note(f"could not persist signing pause: {save_error!r}")
                     finally:
                         if signer is not None:
                             signer.paused = True

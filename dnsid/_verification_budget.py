@@ -101,6 +101,16 @@ def verification_budget(
         _budget.reset(token)
 
 
+@contextmanager
+def detached_budget(timeout: float) -> Iterator[None]:
+    """Give a required write its own short budget after the caller's budget is spent."""
+    token = _budget.set((time.monotonic() + timeout, ()))
+    try:
+        yield
+    finally:
+        _budget.reset(token)
+
+
 def verification_work_context(
     track_work: Callable[[Future[Any]], None], *, independent: bool = False,
 ) -> contextvars.Context:
