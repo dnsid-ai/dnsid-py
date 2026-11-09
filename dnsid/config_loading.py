@@ -696,7 +696,7 @@ def _operational_key_provider(source: KeySource, domain: str) -> KeyProvider | N
         return LocalKeyProvider.load(source.key_ref)
     if source.cli_directory:
         base = Path(source.cli_directory)
-        if (base / "private.jwk").exists() or (base / "private.pem").exists():
+        if not domain or (base / "private.jwk").exists() or (base / "private.pem").exists():
             return LocalKeyProvider.from_cli_directory(base)
         return LocalKeyProvider.from_domain(domain, base)
     if source.key_store_path:

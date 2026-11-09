@@ -789,9 +789,11 @@ returned `bindings_ready` is true only for matching, verified governance proof
 and verified entity delegation. Pending proofs remain pending; no entity JWKS URL
 is inferred from this response.
 
-Initial issuance requires one durable coordinator and one retry owner. The SDK
-provides preparation, signing, and submission primitives, not a complete issuance
-coordinator. See [integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
+Initial issuance uses the shared durable coordinator in `dnsid.c2sp_tlog`:
+`begin_managed_issuance`, `resume_managed_issuance`, and
+`complete_managed_issuance`. The caller supplies exclusive durable storage, owns
+publication and retries, and verifies public ACTIVE before completion. See
+[integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
 
 To move an established signer, use explicit `rotate_operational_key()` with a
 `target_key_provider` and stable old/target provider references. To change the signing

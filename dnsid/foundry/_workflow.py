@@ -655,7 +655,14 @@ class _Foundry:
         if self.config.foundry.governance_id is not None:
             normalize_fqdn(self.config.foundry.governance_id)
         if self._provider is None:
-            self._provider = provider_call(_operational_key_provider, self.config.key_source, "")
+            try:
+                self._provider = provider_call(
+                    _operational_key_provider, self.config.key_source, ""
+                )
+            except FileNotFoundError as cause:
+                raise KeyMissing(
+                    "signing key not found; create the key first", cause=cause
+                ) from cause
             if self._provider is None:
                 raise KeyMissing("configure an existing signing key or inject a key provider")
         if self.deps.log_registry is None:

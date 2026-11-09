@@ -186,6 +186,24 @@ def test_no_provider_or_trust_never_uses_sandbox(tmp_path):
     assert not server.created
 
 
+@pytest.mark.parametrize("source", ["cli_directory", "key_ref"])
+def test_missing_configured_key_fails_before_registry_calls(tmp_path, source):
+    path = tmp_path / "missing"
+    if source == "cli_directory":
+        path.mkdir()
+    config = LoadedConfig(key_source=KeySource(**{source: str(path)}))
+    registry = Mock()
+    with (
+        pytest.warns(UserWarning, match="Local file keys"),
+        pytest.raises(KeyMissing, match="create the key first") as caught,
+    ):
+        create("missing-key", config=config, registry_client=registry)
+    assert caught.value.category == "KEY_MISSING"
+    assert isinstance(caught.value.__cause__, FileNotFoundError)
+    assert not caught.value.resumable
+    assert not registry.mock_calls
+
+
 def test_managed_log_fetcher_uses_effective_transport_and_is_owned():
     from dnsid.config_loading import _log_registry_from_trust
     from dnsid.registry import LogRegistry
