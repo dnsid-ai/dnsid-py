@@ -1,12 +1,13 @@
 """Low-level wire additions needed by named Live and issuance recovery."""
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
 
-from dnsid import LocalKeyProvider, RegistryClient
+from dnsid import LocalKeyProvider, RegistryClient, SubmissionResult
 from dnsid.exceptions import RegistryRequestError, ValidationError
+from dnsid.foundry._issuance import IssuanceRegistry
 from dnsid.registry_client import _live_provisioning_from_response
 from tests.test_foundry import DOMAIN, FoundryServer
 
@@ -58,6 +59,14 @@ def test_issuance_prepare_preserves_wire_status_and_code():
             client.prepare_issuance(DOMAIN, "issuance-1")
     assert caught.value.status_code == 409
     assert caught.value.error_code == "TLOG_PREPARATION_MISMATCH"
+
+
+def test_pending_202_is_not_a_registry_request_error():
+    registry, store = Mock(), Mock()
+    registry.submit_prepared_event.return_value = SubmissionResult("pending", status_code=202)
+    result = IssuanceRegistry(registry, store).submit_prepared_event(DOMAIN, b"{}", "issuance-1")
+    assert result.state == "pending" and result.status_code == 202
+    assert store.request_error is None
 
 
 def test_submission_rejection_preserves_http_status_with_normalized_result():

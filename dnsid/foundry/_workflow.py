@@ -9,6 +9,8 @@ import hashlib
 import os
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, fields, replace
 from typing import Any
 
@@ -35,7 +37,6 @@ from ..config_loading import (
 from ..enums import VerificationCode
 from ..exceptions import (
     ArgumentError,
-    NoActiveSigningKeyError,
     RegistryRequestError,
     ValidationError,
     VerificationError,
@@ -47,6 +48,7 @@ from ..models import (
     AgentRegistration,
     DnsidConfig,
     IdentityConfig,
+    IssuanceEvent,
     LiveAgentRegistrationInput,
     LiveProofReissueRequest,
     LiveProofRequest,
@@ -127,8 +129,7 @@ def create(
             facade.configure()
             org, gi = facade.onboarding()
             key = (facade.registry_url, org, name)
-            with facade.store.lock(key):
-                operation = facade.store.load(key) or {}
+            with facade.locked_operation(key) as operation:
                 if operation:
                     facade.bindings(operation, org, gi)
                     _registry_outcome(operation)
@@ -158,11 +159,11 @@ def create(
                     facade.save(key, operation)
                 if not (operation.get("identityId") and operation.get("domain")):
                     frozen = operation["creationInput"]
-                    initial = JWK.from_dict(operation["initialPublicKey"])
-                    request_id = registration_key(org, name, initial.thumbprint())
+                    creation_key = JWK.from_dict(frozen["public_key"])
+                    request_id = registration_key(org, name, creation_key.thumbprint())
                     response = facade.registry.register_live_agent(
                         LiveAgentRegistrationInput(
-                            public_key_jwk=initial,
+                            public_key_jwk=creation_key,
                             name=frozen["name"],
                             environment=frozen.get("environment", ""),
                             capabilities_url=frozen.get("capabilities_url", ""),
@@ -245,7 +246,11 @@ class FoundryIdentity:
         self._manager: IdentityManager | None = None
         self.state: str | None = None
         self.registry_status: str | None = operation.get("registryStatus")
-        if operation["phase"] == "complete":
+        if (
+            operation["phase"] == "complete"
+            and operation.get("registryStatus") not in {"REVOKED", "RETIRED"}
+            and not operation.get("signingPaused", False)
+        ):
             self._signer.enable(selected)
 
     @property
@@ -280,25 +285,23 @@ class FoundryIdentity:
         operation = self._operation
         try:
             with verification_budget(timeout, cancelled=cancelled):
-                with facade.store.lock(key):
-                    latest = facade.store.load(key)
-                    if latest is None:
+                with facade.locked_operation(key, self._signer) as operation:
+                    if not operation:
                         raise FoundryStateError("saved Foundry operation is missing")
-                    operation = latest
                     self._operation = operation
                     if operation.get("domain") != self.domain:
                         raise FoundryStateError("saved identity domain changed")
                     facade.bindings(operation, key[1], operation["governanceId"])
-                    _registry_outcome(operation, self._signer)
+                    _registry_outcome(operation)
                     selected = facade.signing_key(operation)
                     registration = facade.registration(operation)
-                    facade.remember_registration(key, operation, registration, self._signer)
+                    facade.remember_registration(key, operation, registration)
                     self._proof(operation, registration)
                     delay = 1.0
                     while registration.registry_status not in {"VERIFIED", "READY"}:
                         delay = _sleep(delay)
                         registration = facade.registration(operation)
-                        facade.remember_registration(key, operation, registration, self._signer)
+                        facade.remember_registration(key, operation, registration)
                     # A used proof can settle only after the registry advances.
                     self._proof(operation, registration)
                     facade.publication(key, operation, registration)
@@ -316,7 +319,7 @@ class FoundryIdentity:
                                 facade.check_public(operation, observed, selected)
                                 evidence = verifier.verify_log_evidence(observed)
                                 if evidence.logged_state in {"REVOKED", "RETIRED"}:
-                                    self._signer.paused = True
+                                    operation["registryStatus"] = evidence.logged_state
                                     raise TerminalIdentity("public lifecycle history is terminal")
                                 if evidence.logged_state != "ACTIVE":
                                     raise UnsupportedContract(
@@ -327,7 +330,7 @@ class FoundryIdentity:
                                 if cause.agent_state is not None:
                                     self.state = cause.agent_state
                                 if cause.agent_state in {"REVOKED", "RETIRED"}:
-                                    self._signer.paused = True
+                                    operation["registryStatus"] = cause.agent_state
                                     raise TerminalIdentity(
                                         "public identity is terminal",
                                         operation=operation,
@@ -337,7 +340,6 @@ class FoundryIdentity:
                                     VerificationCode.RECORD_NOT_FOUND,
                                     VerificationCode.STATUS_NOT_ACTIVE,
                                 }:
-                                    self._signer.paused = True
                                     raise
                                 delay = _sleep(delay)
                         state = issuance_store.load_managed_issuance(self.domain)
@@ -346,6 +348,7 @@ class FoundryIdentity:
                                 self.domain, issuance_store, lambda blocked: None
                             )
                         operation["phase"] = "complete"
+                        operation["signingPaused"] = False
                         facade.save(key, operation)
                         self._signer.enable(selected)
                         self.registry_status = operation.get("registryStatus")
@@ -458,8 +461,17 @@ class FoundryIdentity:
             existing is not None
             and existing.submission is not None
             and existing.submission.accepted
-        ):
-            if not facade.recover_issuance(operation, entity, store, expected=existing):
+        ) or (existing is None and operation.get("registryStatus") == "READY"):
+            try:
+                recovered = facade.recover_issuance(operation, entity, store, expected=existing)
+            except (C2spTlogError, VerificationError) as cause:
+                raise FoundryError(
+                    "accepted issuance cannot yet be reconciled with verified log evidence",
+                    operation=operation,
+                    resumable=True,
+                    cause=cause,
+                ) from cause
+            if not recovered:
                 raise FoundryError(
                     "accepted issuance is not visible in the log yet",
                     operation=operation,
@@ -521,6 +533,12 @@ class FoundryIdentity:
                     saved_rejection.get("httpStatus"),
                 )
                 if rejected:
+                    rejection_cause = (
+                        RegistryRequestError(
+                            "/issuance", saved_rejection["httpStatus"],
+                            saved_rejection["errorCode"],
+                        ) if saved_rejection else cause
+                    )
                     # Rejection binds local bytes; a verified competing entry can still win.
                     try:
                         if facade.recover_issuance(operation, entity, store):
@@ -530,13 +548,13 @@ class FoundryIdentity:
                             "rejected issuance cannot yet be reconciled with verified log evidence",
                             operation=operation,
                             resumable=True,
-                            cause=evidence_error,
+                            cause=rejection_cause,
                         ) from evidence_error
                     raise FoundryError(
                         "rejected issuance is not visible in the log yet; call active() again",
                         operation=operation,
                         resumable=True,
-                        cause=cause,
+                        cause=rejection_cause,
                     ) from cause
                 if (
                     isinstance(remote, (ArgumentError, ValidationError))
@@ -696,18 +714,12 @@ class _Foundry:
             raise UnsupportedContract("configured log trust differs from the saved operation")
 
     def signing_key(self, operation: dict[str, Any]) -> JWK:
-        try:
-            selected = provider_call(self.provider.signing_key)
-        except NoActiveSigningKeyError as cause:
-            if operation:
-                raise KeyMissing("saved identity requires its existing provider key", cause=cause)
-            ensure = getattr(self.provider, "ensure_signing_key", None)
-            if not callable(ensure):
-                raise KeyMissing(
-                    "provider has no signing key and cannot provision one", cause=cause
-                )
-            provider_call(ensure)
-            selected = provider_call(self.provider.signing_key)
+        if not provider_call(self.provider.list_key_ids):
+            raise KeyMissing(
+                "provider has no signing key; create the key first, for example through "
+                "explicit KMS-first creation"
+            )
+        selected = provider_call(self.provider.signing_key)
         if operation:
             expected = JWK.from_dict(
                 operation.get("currentPublicKey", operation["initialPublicKey"])
@@ -773,6 +785,28 @@ class _Foundry:
             }
         return result
 
+    @contextmanager
+    def locked_operation(
+        self, key: OperationKey, signer: ApplicationSigner | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        with self.store.lock(key):
+            operation = self.store.load(key) or {}
+            try:
+                yield operation
+            except Exception as cause:
+                if operation and (
+                    isinstance(cause, (KeyMismatch, TerminalIdentity, UnsupportedContract))
+                    or (isinstance(cause, VerificationError) and not cause.transient)
+                    or getattr(cause, "error_code", "") == "KEY_MISMATCH"
+                ):
+                    operation["signingPaused"] = True
+                    try:
+                        self.save(key, operation)
+                    finally:
+                        if signer is not None:
+                            signer.paused = True
+                raise
+
     def save(self, key: OperationKey, operation: dict[str, Any]) -> None:
         remaining_seconds()
         self.store.save(key, operation)
@@ -792,11 +826,10 @@ class _Foundry:
         key: OperationKey,
         operation: dict[str, Any],
         registration: AgentRegistration,
-        signer: ApplicationSigner | None = None,
     ) -> None:
         operation["registryStatus"] = registration.registry_status
         self.save(key, operation)
-        _registry_outcome(operation, signer)
+        _registry_outcome(operation)
 
     def publication(
         self,
@@ -896,16 +929,23 @@ class _Foundry:
                 operation["domain"], [item.event for item in history.current_stream_events]
             ).snapshot_at(datetime.datetime.now(datetime.UTC))
             if snapshot.historical_state in {"REVOKED", "RETIRED"}:
+                operation["registryStatus"] = snapshot.historical_state
                 raise TerminalIdentity(
                     "accepted lifecycle history is terminal", operation=operation
                 )
-        initial = JWK.from_dict(operation["initialPublicKey"])
+        creation_key = JWK.from_dict(operation["creationInput"]["public_key"])
         for event in history.current_stream_events:
             # History verification already checked inclusion, signatures, and chain continuity.
             from ..c2sp_tlog import C2spVerificationContext, entry_bytes, parse_prepared_issuance
 
-            if event.event.event_type.value != "ISSUANCE":
+            if not isinstance(event.event, IssuanceEvent):
                 continue
+            initial = event.event.operational_key
+            if initial is None or (
+                initial.thumbprint() != creation_key.thumbprint()
+                and snapshot.active_key_thumbprint != creation_key.thumbprint()
+            ):
+                raise KeyMismatch("creation key does not follow from the accepted issuance")
             context = C2spVerificationContext(
                 fqdn=operation["domain"],
                 gi=operation["governanceId"],
@@ -941,6 +981,9 @@ class _Foundry:
                     LogRef.parse(f"{reference}@{event.index}"),
                 ),
             )
+            operation["initialPublicKey"] = initial.to_dict()
+            if initial.thumbprint() != creation_key.thumbprint():
+                operation["currentPublicKey"] = creation_key.to_dict()
             store.persist_managed_issuance(state)
             return True
         return False
@@ -975,14 +1018,9 @@ def _live_key(key: JWK) -> dict[str, Any]:
     return _live_public_jwk_dict(key)
 
 
-def _registry_outcome(
-    operation: dict[str, Any],
-    signer: ApplicationSigner | None = None,
-) -> None:
+def _registry_outcome(operation: dict[str, Any]) -> None:
     state = operation.get("registryStatus")
     if state in {"REVOKED", "RETIRED"}:
-        if signer is not None:
-            signer.paused = True
         raise TerminalIdentity("terminal identities cannot be replaced", operation=operation)
     if state in {"ERROR", "REJECTED", "CANCELLED"}:
         raise WorkflowOutcome("registry workflow requires customer action", operation=operation)

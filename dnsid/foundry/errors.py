@@ -34,7 +34,7 @@ class FoundryError(DNSidError):
 
 
 class KeyMissing(FoundryError):
-    """The selected provider has no signing key and cannot provision it."""
+    """The provider has no signing key; the operator must create it first."""
 
     category = "KEY_MISSING"
 

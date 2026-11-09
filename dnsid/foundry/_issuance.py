@@ -59,7 +59,7 @@ class IssuanceRegistry:
         except RegistryRequestError as error:
             self.store.request_error = error
             raise
-        if not result.accepted and result.status_code is not None:
+        if result.status_code is not None and 400 <= result.status_code < 600:
             self.store.request_error = RegistryRequestError(
                 f"/api/v1/agent/{domain}/tlog/events",
                 result.status_code,

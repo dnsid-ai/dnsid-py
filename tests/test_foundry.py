@@ -36,7 +36,7 @@ from dnsid.c2sp_tlog import (
 )
 from dnsid.c2sp_tlog.canonical import canonical_bytes
 from dnsid.enums import DNSSECState
-from dnsid.exceptions import NoActiveSigningKeyError, RegistryRequestError
+from dnsid.exceptions import RegistryRequestError
 from dnsid.foundry import (
     FileFoundryStore,
     FoundryBusy,
@@ -112,7 +112,7 @@ class PublicHTTPS:
                 "state": self.server.public_status,
                 "lastTransitionAt": "2026-11-01T00:00:00Z",
                 **(
-                    {"revocationReason": "KEY_COMPROMISE"}
+                    {"revocationReason": "keyCompromise"}
                     if self.server.public_status == "REVOKED"
                     else {}
                 ),
@@ -129,7 +129,8 @@ class FoundryServer:
         self.provider = provider
         self.public_provider = provider
         self.entity = LocalKeyProvider.generate()
-        self.status = "READY"
+        self.status = "VERIFIED"
+        self.replay_status = None
         self.public_status = "ACTIVE"
         self.public_gi = GI
         self.public_lr = LR
@@ -218,7 +219,7 @@ class FoundryServer:
             raw = {
                 "request_id": idempotency_key,
                 "agent_id": "id-1",
-                "status": self.status,
+                "status": self.replay_status or self.status,
                 "challenge": "",
                 "challenge_message": "",
             }
@@ -239,7 +240,7 @@ class FoundryServer:
 
     def submit_live_proof(self, domain, request):
         self.proofs.append(request)
-        self.status = "READY"
+        self.status = "VERIFIED"
         if self.lose_proof:
             raise TimeoutError("lost proof response")
         return LiveProofResponse(request.request_id, "id-1", "PROVISIONING")
@@ -302,6 +303,7 @@ class FoundryServer:
         parsed = parse_c2sp_event_entry(data)
         if not self.history:
             self.history.append(SimpleNamespace(index=0, data=data, event=parsed))
+        self.status = "READY"
         if self.competitor:
             return SubmissionResult("rejected", error_code="IDEMPOTENCY_MISMATCH")
         return SubmissionResult(
@@ -341,10 +343,28 @@ def test_hash_vectors_and_exact_names():
     assert validate_name("😀" * 255) == "😀" * 255
     names = ["agent", "Agent", "agent ", "café", "cafe\u0301", "\u00a0cafe\u0301\u3000"]
     assert len({registration_key(ORG, name, initial) for name in names}) == len(names)
-    assert registration_key(ORG, "café", initial) == "kBdivhIHZhZ_20_Ku_KnIVYE7x0iSw4K1ceQb2s6fxs"
+    vectors = [
+        ("agent", "ksFWEjxU0Yf_F7-_UEwFWQ3J97VRmQPVLjVM5l-3YlY"),
+        ("Agent", "43mRUDBHeMLHZ6AZKy6RTQXox_LZxBDLa3IXLQ0qCGI"),
+        ("agent ", "eVX-4H-42OOxnU2EbgtKoEzYad0bIaaRoCkf5T2BIEM"),
+        ("café", "kBdivhIHZhZ_20_Ku_KnIVYE7x0iSw4K1ceQb2s6fxs"),
+        ("cafe\u0301", "WxS5QzyfB3D0utVhJDzJQTY6eXDMagDV3tqOImr_u6A"),
+        ("\u00a0cafe\u0301\u3000", "x6ARjxrBFYbZ1jCSznnOWBUX9DpFr4edVmYy1zLnyTc"),
+        ("😀" * 255, "AEttzAMd8C-GpyQqR_y5G-IfIawJpRWIMi4ZpfbkqWU"),
+        ('a"b', "2bWVuTgcCN056vagU5cF40TRXcroeKQCLhd5hTVjhcM"),
+        ("a\\b", "g8sOgOWQxkQncp1g_H2nI81dTe-60Y8p6ryb87s3Vrk"),
+        ("a\u0001b", "oNMzk-Vz7VqZ75bxvj4srioM6Dtxd0lNFT3W_-uOF0A"),
+        ("a\nb", "yM6te8_oTYfg8b2Co21WukeVw4SfYQgCG9brN_W9Bio"),
+        ("<a>&", "D-ZrRgfx1r9BUVg-wF9Pbey_cfLsZjWeOUCRCsYhTnk"),
+        ("a\u2028b", "-0mnonROfh4y6N--aNbASSi_x7pWEcBu8-Ldwmop4mU"),
+        ("a\u007fb", "V9Xm6mXYXgQCT7DLYtBfT-etOMFRmX9mgKK60ocWtTA"),
+        ("a/b", "vQvjQxYsTU1TyU3oai2SQY07iNjuCrSBPH5fCjHqhiE"),
+    ]
+    for name, expected in vectors:
+        assert registration_key(ORG, name, initial) == expected
 
 
-@pytest.mark.parametrize("name", ["", "\ud800", "😀" * 256, 5])
+@pytest.mark.parametrize("name", ["", "\ud800", "\udfff", "😀" * 256, 5])
 def test_invalid_name_before_discovery(setup, name):
     server, _, arguments = setup
     server.get_organization_onboarding = Mock(side_effect=AssertionError("discovery"))
@@ -472,26 +492,17 @@ def test_account_bindings_before_mutation(setup, change, expected):
     assert not server.created
 
 
-def test_empty_provider_only_calls_ensure_if_supported(setup):
-    server, store, arguments = setup
-    provider = arguments["key_provider"]
+def test_empty_provider_does_not_generate_or_select_a_key(setup):
+    server, _, arguments = setup
     empty = Mock(spec=LocalKeyProvider)
-    empty.signing_key.side_effect = NoActiveSigningKeyError()
+    empty.list_key_ids.return_value = []
     arguments["key_provider"] = empty
-    with pytest.raises(KeyMissing):
+    with pytest.raises(KeyMissing, match="create the key first"):
         create("billing-agent", **arguments)
+    empty.list_key_ids.assert_called_once()
+    empty.signing_key.assert_not_called()
     empty.generate_key.assert_not_called()
-    empty.ensure_signing_key = Mock(
-        side_effect=lambda: setattr(empty.signing_key, "side_effect", None)
-    )
-    empty.signing_key.return_value = provider.signing_key()
-    with create("billing-agent", **arguments):
-        pass
-    empty.ensure_signing_key.assert_called_once()
-    empty.signing_key.side_effect = NoActiveSigningKeyError()
-    with pytest.raises(KeyMissing):
-        create("billing-agent", **arguments)
-    assert empty.ensure_signing_key.call_count == 1
+    assert not server.created
 
 
 def test_wrong_key_saved_and_stateless_replica(setup):
@@ -728,7 +739,7 @@ def test_polling_backoff_doubles_from_one_second_and_caps_at_fifteen(setup, monk
         def registration(domain):
             nonlocal attempts
             attempts += 1
-            server.status = "PROVISIONING" if attempts <= 6 else "READY"
+            server.status = "PROVISIONING" if attempts <= 6 else "VERIFIED"
             return original(domain)
 
         server.get_registration = registration
@@ -739,7 +750,9 @@ def test_polling_backoff_doubles_from_one_second_and_caps_at_fifteen(setup, monk
             nonlocal attempts
             attempts += 1
             if attempts <= 6:
-                return SubmissionResult("pending", error_code="TLOG_SUBMISSION_BUSY")
+                return SubmissionResult(
+                    "pending", error_code="TLOG_SUBMISSION_BUSY", status_code=202,
+                )
             return original(domain, data, key)
 
         server.submit_prepared_event = submit
@@ -819,8 +832,68 @@ def test_stateless_same_key_replica_adopts_accepted_history(setup):
     arguments["store"] = FileFoundryStore(store.directory.parent / "replica")
     with create("billing-agent", **arguments) as identity:
         identity.active()
-    assert server.prepare_calls == 2 and len(server.submitted) == 1
+    assert server.prepare_calls == len(server.submitted) == 1
     assert len(server.created) == 2 and server.created[0] == server.created[1]
+
+
+@pytest.mark.parametrize("saved_issuance", [False, True])
+@pytest.mark.parametrize("empty_result", [False, True])
+def test_ready_issuance_recovery_waits_for_log_visibility(setup, saved_issuance, empty_result):
+    from dnsid.c2sp_tlog.errors import C2spTlogVerificationError
+
+    server, store, arguments = setup
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+    if not saved_issuance:
+        arguments["store"] = FileFoundryStore(store.directory.parent / "replica")
+    original_load = server.load_history
+    server.reader._load_complete_history.side_effect = (
+        (lambda *a, **kw: SimpleNamespace(current_stream_events=[]))
+        if empty_result else C2spTlogVerificationError("lifecycle contains no ISSUANCE event")
+    )
+    with create("billing-agent", **arguments) as identity:
+        with pytest.raises(FoundryError) as caught:
+            identity.active()
+        assert caught.value.resumable
+        assert server.prepare_calls == len(server.submitted) == 1
+        server.reader._load_complete_history.side_effect = original_load
+        identity.active()
+    assert server.prepare_calls == len(server.submitted) == 1
+
+
+@pytest.mark.parametrize("stage", ["preparation", "submission", "submission-exception"])
+@pytest.mark.parametrize("empty_result", [False, True])
+def test_invalid_entry_stays_resumable_with_registry_code(setup, stage, empty_result):
+    from dnsid.c2sp_tlog.errors import C2spTlogVerificationError
+
+    server, store, arguments = setup
+    if stage == "preparation":
+        server.prepare_issuance = Mock(
+            side_effect=RegistryRequestError("/prepare", 422, "TLOG_INVALID_ENTRY"),
+        )
+    elif stage == "submission":
+        server.submit_prepared_event = Mock(return_value=SubmissionResult(
+            "rejected", error_code="TLOG_INVALID_ENTRY", status_code=422,
+        ))
+    else:
+        server.submit_prepared_event = Mock(
+            side_effect=RegistryRequestError("/submit", 422, "TLOG_INVALID_ENTRY"),
+        )
+    server.reader._load_complete_history.side_effect = (
+        (lambda *a, **kw: SimpleNamespace(current_stream_events=[]))
+        if empty_result else C2spTlogVerificationError("lifecycle contains no ISSUANCE event")
+    )
+    for _ in range(2):
+        with create("billing-agent", **arguments) as identity:
+            with pytest.raises(FoundryError) as caught:
+                identity.active()
+            assert caught.value.resumable
+            assert caught.value.error_code == "TLOG_INVALID_ENTRY"
+            assert caught.value.status_code == 422
+        if stage != "preparation":
+            assert saved(store)["issuance"]["entryBytes"]
+    method = server.prepare_issuance if stage == "preparation" else server.submit_prepared_event
+    assert method.call_count == 1
 
 
 def test_interrupted_issuance_retries_identical_bytes_after_restart(setup):
@@ -905,26 +978,83 @@ def test_proof_outcome_moves_to_identity_known_before_issuance(setup, lost_respo
     assert len(server.proofs) == 1
 
 
-def test_stateless_replica_after_rotation_returns_key_mismatch_without_resolution(setup):
+@pytest.mark.parametrize("evidence", ["valid", "missing-rotation", "wrong-ku"])
+def test_stateless_replica_after_rotation_recovers_initial_issuance(setup, evidence):
+    from dnsid.c2sp_tlog import C2spChain, parse_prepared_issuance
+    from dnsid.c2sp_tlog.event_codec import parse_c2sp_event_entry
+    from dnsid.c2sp_tlog.stream_verifier import state_hash
+    from dnsid.models import KeyRotationEvent
+
     server, store, arguments = setup
+    original = arguments["key_provider"]
     with create("billing-agent", **arguments) as identity:
         identity.active()
     rotated = LocalKeyProvider.generate()
-    server.public_provider = rotated
+    previous = original.signing_key()
+    current = rotated.signing_key()
+    context = C2spVerificationContext(
+        fqdn=DOMAIN, entity_key=server.entity.signing_key(),
+        previous_operational_key=previous, operational_key=current,
+    )
+    issuance = parse_prepared_issuance(server.history[0].data, C2spVerificationContext())
+    rotation = prepare_event(
+        KeyRotationEvent(
+            domain=DOMAIN, previous_kid=previous.kid,
+            previous_thumbprint=previous.thumbprint(), new_kid=current.kid,
+            new_thumbprint=current.thumbprint(), new_public_key=current,
+            timestamp=datetime.datetime(2026, 11, 2, tzinfo=datetime.UTC),
+        ),
+        LR,
+        C2spChain(1, issuance.event_id, state_hash({
+            "fqdn": DOMAIN, "status": "ACTIVE",
+            "entity_thumb": server.entity.signing_key().thumbprint(),
+            "operational_thumb": previous.thumbprint(),
+        })),
+    )
+    rotation = sign_prepared_event(rotation, C2spSignerRole.PREVIOUS_OPERATIONAL, original, context)
+    rotation = sign_prepared_event(rotation, C2spSignerRole.NEW_OPERATIONAL, rotated, context)
+    data = entry_bytes(rotation, context)
+    if evidence != "missing-rotation":
+        server.history.append(SimpleNamespace(index=1, data=data, event=parse_c2sp_event_entry(data)))
+    server.provider = rotated
+    server.public_provider = original if evidence == "wrong-ku" else rotated
+    server.replay_status = "provider_deferred"
     arguments["key_provider"] = rotated
-    arguments["store"] = FileFoundryStore(store.directory.parent / "rotated-replica")
-    server.get_registration = Mock(wraps=server.get_registration)
-    server.reader._load_complete_history.reset_mock()
-    server.https.urls.clear()
-    with pytest.raises(KeyMismatch) as caught:
-        create("billing-agent", **arguments)
-    assert caught.value.error_code == "KEY_MISMATCH"
-    assert len(server.created) == 2 and server.created[0][1] != server.created[1][1]
-    assert server.created[-1][0].public_key_jwk.thumbprint() == rotated.signing_key().thumbprint()
-    server.get_registration.assert_not_called()
-    server.reader._load_complete_history.assert_not_called()
-    assert not server.https.urls
-    assert len(server.submitted) == 1
+    replica = FileFoundryStore(store.directory.parent / "rotated-replica")
+    arguments["store"] = replica
+    with create("billing-agent", **arguments) as identity:
+        with pytest.raises(SigningPaused):
+            identity.sign(b"before active")
+        if evidence == "valid":
+            identity.active()
+            assert current.verify(b"replica", identity.sign(b"replica"))
+            document = saved(replica)
+            assert document["initialPublicKey"] == previous.to_dict()
+            assert document["currentPublicKey"] == current.to_dict()
+            assert document["creationInput"]["public_key"] == current.to_dict()
+            assert document["requestId"] == registration_key(ORG, "billing-agent", current.thumbprint())
+            assert b64url_decode_strict(document["issuance"]["entryBytes"]) == server.history[0].data
+        else:
+            with pytest.raises(FoundryError):
+                identity.active()
+            with pytest.raises(SigningPaused):
+                identity.sign(b"unverified")
+    if evidence == "valid":
+        with create("billing-agent", **arguments) as identity:
+            identity.sign(b"restart")
+            identity.active()
+        partial = saved(replica)
+        partial["phase"] = "creation-pending"
+        partial.pop("identityId")
+        replay = FileFoundryStore(store.directory.parent / "partial-rotated-replica")
+        replay.import_operation(canonical_bytes(partial))
+        arguments["store"] = replay
+        with create("billing-agent", **arguments) as identity:
+            identity.active()
+        assert server.created[2] == server.created[1]
+    assert len(server.created) == (3 if evidence == "valid" else 2)
+    assert server.created[0][1] != server.created[1][1]
+    assert server.prepare_calls == len(server.submitted) == 1
 
 
 def test_foundry_config_is_loader_owned_and_validated_by_the_facade(setup):
@@ -939,17 +1069,57 @@ def test_foundry_config_is_loader_owned_and_validated_by_the_facade(setup):
     assert not server.created
 
 
-def test_refresh_terminal_public_observation_pauses_existing_profiles(setup):
+@pytest.mark.parametrize("state", ["REVOKED", "RETIRED"])
+@pytest.mark.parametrize("source", ["registry", "public", "log"])
+def test_terminal_observation_stays_paused_after_restart(setup, state, source):
     server, store, arguments = setup
     with create("billing-agent", **arguments) as identity:
         identity.active()
         manager = identity.identity_manager()
-        server.public_status = "RETIRED"
+        if source == "registry":
+            server.status = state
+        elif source == "public":
+            server.public_status = state
+        else:
+            server.reader.verify_non_revocation.return_value.logged_state = state
         with pytest.raises(TerminalIdentity):
             identity.active()
-        assert identity.state == "RETIRED"
+        assert saved(store)["registryStatus"] == state
+        assert saved(store)["signingPaused"] is True
         with pytest.raises(SigningPaused):
             manager.key_provider.sign(b"profile")
+        server.status = "READY"
+        server.public_status = "ACTIVE"
+        server.reader.verify_non_revocation.return_value.logged_state = "ACTIVE"
+        with pytest.raises(TerminalIdentity):
+            identity.active()
+    with pytest.raises(TerminalIdentity):
+        create("billing-agent", **arguments)
+    assert server.prepare_calls == len(server.submitted) == len(server.created) == 1
+
+
+def test_mismatch_pause_survives_restart_until_active_verifies_again(setup):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+        server.public_provider = LocalKeyProvider.generate()
+        with pytest.raises(KeyMismatch):
+            identity.active()
+        assert saved(store)["phase"] == "complete"
+        assert saved(store)["signingPaused"] is True
+        with pytest.raises(SigningPaused):
+            identity.sign(b"mismatch")
+    server.public_provider = arguments["key_provider"]
+    with create("billing-agent", **arguments) as identity:
+        with pytest.raises(SigningPaused):
+            identity.identity_manager().key_provider.sign(b"restart")
+        assert saved(store)["signingPaused"] is True
+        identity.active()
+        identity.sign(b"verified")
+        assert saved(store)["signingPaused"] is False
+    with create("billing-agent", **arguments) as identity:
+        identity.sign(b"second restart")
+    assert server.prepare_calls == len(server.submitted) == len(server.created) == 1
 
 
 def test_algorithms_and_revoked_credentials(setup):
@@ -1025,6 +1195,8 @@ def test_portable_roundtrip_unknown_members_private_files_and_id_lookup(setup):
         lambda raw: dict(raw, phase="future"),
         lambda raw: dict(raw, name="\ud800"),
         lambda raw: dict(raw, creationInput={}),
+        lambda raw: dict(raw, signingPaused="false"),
+        lambda raw: dict(raw, initialPublicKey=LocalKeyProvider.generate().signing_key().to_dict()),
         lambda raw: dict(raw, initialPublicKey={**raw["initialPublicKey"], "d": "private"}),
     ],
 )
@@ -1285,7 +1457,7 @@ def test_expired_unknown_proof_outcome_reissues_or_waits(setup, monkeypatch, use
             result = registration(domain)
             status_reads.append(result.registry_status)
             if server.reissues:
-                server.status = "READY"
+                server.status = "VERIFIED"
             return result
 
         server.reissue_live_proof = reject_reissue
@@ -1308,12 +1480,12 @@ def test_expired_unknown_proof_outcome_reissues_or_waits(setup, monkeypatch, use
         record = saved(store)
         proof = record["proof"]
         assert record["phase"] == "complete"
-        assert proof["outcome"] in {"READY", "PROVISIONING"}
+        assert proof["outcome"] in {"VERIFIED", "PROVISIONING"}
         assert len(server.created) == len(server.reissues) == 1
         assert server.reissues[0].request_id == document["requestId"]
         assert server.reissues[0].public_key_jwk.to_dict() == document["initialPublicKey"]
         if used:
-            assert status_reads == ["VERIFICATION", "VERIFICATION", "READY"]
+            assert status_reads == ["VERIFICATION", "VERIFICATION", "VERIFIED"]
             assert not server.proofs
             assert proof["challengeMessage"] == original["challengeMessage"]
             assert proof["signature"] == original["signature"]

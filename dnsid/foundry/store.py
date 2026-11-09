@@ -125,12 +125,20 @@ def validate_operation(document: dict[str, Any], key: OperationKey | None = None
             from ..models import JWKS
 
             JWKS([JWK.from_dict(document["currentPublicKey"])]).validate_operational()
+        if "signingPaused" in document and type(document["signingPaused"]) is not bool:
+            raise ValueError("signingPaused must be boolean")
         creation = document["creationInput"]
         if not isinstance(document["keySource"], dict) or not isinstance(creation, dict):
             raise ValueError("invalid provider reference or frozen input")
+        creation_key = JWK.from_dict(creation["public_key"])
+        _live_public_jwk_dict(creation_key)
+        if initial.thumbprint() != creation_key.thumbprint() and (
+            "currentPublicKey" not in document
+            or document.get("issuance", {}).get("submission", {}).get("state") != "accepted"
+        ):
+            raise ValueError("a different initial key requires accepted issuance and a current key")
         if creation.get("name") != document["name"] or (
-            creation.get("public_key") != initial.to_dict()
-            or creation.get("tier") != "live"
+            creation.get("tier") != "live"
             or creation.get("managed") is not True
             or set(creation)
             - {
@@ -144,7 +152,7 @@ def validate_operation(document: dict[str, Any], key: OperationKey | None = None
         ):
             raise ValueError("frozen creation input conflicts with bindings")
         expected_request = registration_key(
-            document["organizationId"], document["name"], initial.thumbprint()
+            document["organizationId"], document["name"], creation_key.thumbprint()
         )
         if "requestId" in document and document["requestId"] != expected_request:
             raise ValueError("requestId mismatch")
@@ -339,9 +347,14 @@ class FileFoundryStore:
         validate_operation(document, key)
         previous = self.load(key)
         if previous is not None:
-            for member in ("initialPublicKey", "creationInput", "identityId", "domain"):
+            for member in ("creationInput", "identityId", "domain"):
                 if member in previous and previous[member] != document.get(member):
                     raise FoundryStateError("cannot replace established operation facts")
+            if previous["initialPublicKey"] != document["initialPublicKey"] and (
+                previous.get("issuance", {}).get("submission", {}).get("state") == "accepted"
+                or document.get("issuance", {}).get("submission", {}).get("state") != "accepted"
+            ):
+                raise FoundryStateError("initial key can change only when recovering issuance")
         descriptor, name = tempfile.mkstemp(prefix=".foundry-", dir=self.directory)
         temporary = Path(name)
         try:

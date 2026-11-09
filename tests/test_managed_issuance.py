@@ -268,6 +268,23 @@ def test_countersigning_provider_fails_once_then_resume_succeeds(setup):
     assert provider.sign_key.call_args_list[0] == provider.sign_key.call_args_list[1]
 
 
+def test_invalid_local_countersignature_retries_same_preparation(setup):
+    shared, store, registry, _ = setup
+    provider = shared["key_provider"]
+    provider.sign_key = Mock(wraps=provider.sign_key, side_effect=[b"\x00" * 64, DEFAULT])
+    with pytest.raises(ManagedIssuanceOperationError) as caught:
+        begin(shared)
+    assert caught.value.transient and caught.value.state == "prepared"
+    assert store.state.prepared_entry_bytes and not store.state.entry_bytes
+    assert not store.state.terminal_failure and not registry.submits
+    assert all(not write.entry_bytes for write in store.writes)
+    prepared = store.state.prepared_entry_bytes
+    assert resume_managed_issuance(**shared).submission.accepted
+    assert store.state.prepared_entry_bytes == prepared
+    assert len(registry.prepares) == len(registry.submits) == 1
+    assert provider.sign_key.call_args_list[0] == provider.sign_key.call_args_list[1]
+
+
 def test_resume_accepted_does_not_need_initial_private_key(setup):
     shared, store, registry, _ = setup
     begin(shared)
