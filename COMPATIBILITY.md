@@ -148,9 +148,9 @@ SDK cannot guarantee prompt return from arbitrary caller code.
 
 Standalone bundle migration rejection remains an API limitation rather than a
 design deviation: configured readers recursively verify predecessor histories.
-Managed log-trust construction uses the factory's fixed defaults, as required by
-design 12. Applications that need custom transport or durable checkpoint storage
-construct and inject their log registry explicitly.
+Managed log-trust construction uses the effective transport configuration through
+`SafeC2spResourceFetcher(transport_config=...)`. Applications that need durable
+checkpoint storage construct and inject their log registry explicitly.
 
 ## Configuration and Lifecycle Boundaries
 
@@ -172,12 +172,13 @@ registry authorization and unavailable-service errors are preserved.
 `PreparedC2spTlogEvent.event_id` is locally derived from canonical signed bytes.
 It is not a signed envelope member and does not change when signatures are added.
 
-The SDK exposes initial-issuance preparation, signing, and submission primitives,
-not a complete durable issuance coordinator. The application or registry owns
-one coordinator and one retry owner. It must persist intent and exact signed
-bytes, verify external publication, bind acceptance to the submitted hash and
-reference, and converge ACTIVE status idempotently after acceptance. SDK tests
-do not establish deployment-owned persistence or recovery.
+`dnsid.c2sp_tlog` exports the shared durable issuance coordinator:
+`begin_managed_issuance`, `resume_managed_issuance`, and `complete_managed_issuance`.
+It persists intent and exact signed bytes through the supplied store and binds
+acceptance to the submitted hash and reference. The caller supplies exclusive
+durable storage, owns publication and retries, and verifies public ACTIVE
+convergence before calling `complete_managed_issuance`. SDK tests do not establish
+deployment-owned persistence or recovery.
 
 ### Known Design Deviations
 

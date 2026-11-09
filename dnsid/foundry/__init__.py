@@ -8,10 +8,9 @@ Foundry create rejects configuration with ordinary identity fields, including
 ``DNSID_DOMAIN`` and ``DNSID_GOVERNANCE_ID`` environment variables. Set Foundry's
 expected GI through ``foundry.governanceId`` in file/code configuration.
 
-Contract: dnsid-sdk-compliance e01bcf3, design 13. This module is source-checkout
-only: it is excluded from wheels and sdists until the server passes acceptance
-SR-1 through SR-7. No server revision is certified for this adapter; ordinary
-24-hour registration replay retention is not sufficient.
+The module stays source-only until the server's named-Live requirements are
+released. It is excluded from wheels and sdists. No server revision is certified
+for this adapter; ordinary 24-hour registration replay retention is not sufficient.
 """
 
 from ._workflow import FoundryIdentity, create

@@ -201,12 +201,24 @@ def test_request_verification_failure_preserves_retry_semantics(setup, stage, tr
     assert caught.value.__cause__ is error
     assert caught.value.transient is transient
     assert caught.value.retry_same_bytes is (transient and stage == "submit")
-    assert not store.state.terminal_failure
+    assert store.state.terminal_failure is not transient
+    assert caught.value.state == (
+        ("indeterminate" if stage == "submit" else "prepared") if transient else "rejected"
+    )
     if stage == "submit":
-        assert store.state.entry_bytes and store.state.submission.state == "pending"
+        assert store.state.entry_bytes
+        assert store.state.submission.state == ("pending" if transient else "rejected")
         assert len(registry.submits) == 1
     else:
         assert not store.state.entry_bytes and not registry.submits
+    if not transient:
+        with pytest.raises(ManagedIssuanceOperationError) as resumed:
+            resume_managed_issuance(**shared)
+        assert resumed.value.state == "rejected" and not resumed.value.transient
+        if stage == "prepare":
+            assert registry.prepare_issuance.call_count == 1
+        else:
+            assert len(registry.submits) == 1
 
 
 @pytest.mark.parametrize("change", [

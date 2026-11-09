@@ -35,8 +35,8 @@ from dnsid.c2sp_tlog import (
     sign_prepared_event,
 )
 from dnsid.c2sp_tlog.canonical import canonical_bytes
-from dnsid.enums import DNSSECState
-from dnsid.exceptions import RegistryRequestError
+from dnsid.enums import DNSSECState, VerificationCode
+from dnsid.exceptions import RegistryRequestError, VerificationError
 from dnsid.foundry import (
     FileFoundryStore,
     FoundryBusy,
@@ -418,6 +418,59 @@ def test_reopen_completed_without_public_network_or_reissuance(setup):
     assert len(server.created) == len(server.submitted) == 1
 
 
+@pytest.mark.parametrize("error", [
+    RegistryRequestError("/status", 401),
+    RegistryRequestError("/status", 403),
+    RegistryRequestError("/status", 429),
+    VerificationError(VerificationCode.RECORD_INVALID, "invalid registry response"),
+    UnsupportedContract("unsupported registry capability"),
+])
+def test_control_plane_reopen_failure_does_not_pause_completed_identity(setup, error):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+    before = saved(store)
+    registration = server.get_registration
+    server.get_registration = Mock(side_effect=error)
+    with pytest.raises(FoundryError) as caught:
+        create("billing-agent", **arguments)
+    assert caught.value is error or caught.value.__cause__ is error
+    assert not saved(store).get("signingPaused")
+    assert saved(store) == before
+    server.get_registration = registration
+    with create("billing-agent", **arguments) as reopened:
+        reopened.sign(b"after control-plane recovery")
+    assert server.prepare_calls == len(server.submitted) == 1
+
+
+def test_registry_key_mismatch_still_pauses_completed_identity(setup):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+    registration = server.get_registration
+    server.get_registration = Mock(side_effect=RegistryRequestError("/status", 409, "KEY_MISMATCH"))
+    with pytest.raises(KeyMismatch):
+        create("billing-agent", **arguments)
+    assert saved(store)["signingPaused"] is True
+    server.get_registration = registration
+    with create("billing-agent", **arguments) as reopened:
+        with pytest.raises(SigningPaused):
+            reopened.sign(b"unverified key mismatch")
+
+
+def test_unsupported_publication_capability_does_not_pause_completed_identity(setup):
+    server, store, arguments = setup
+    with create("billing-agent", **arguments) as identity:
+        identity.active()
+        registration = server.get_registration(DOMAIN)
+        registration.publication_authority = "client"
+        server.get_registration = Mock(return_value=registration)
+        with pytest.raises(UnsupportedContract):
+            identity.active()
+        assert not saved(store).get("signingPaused")
+        identity.sign(b"unsupported capability is not a binding mismatch")
+
+
 def test_replay_without_domain_keeps_facts_and_resumes(setup):
     server, store, arguments = setup
     server.omit_domain = True
@@ -488,6 +541,39 @@ def test_account_bindings_before_mutation(setup, change, expected):
     server, _, arguments = setup
     server.onboarding.update(change)
     with pytest.raises(expected):
+        create("billing-agent", **arguments)
+    assert not server.created
+
+
+@pytest.mark.parametrize("missing", [("gi",), ("governance_domain",), ("gi", "governance_domain")])
+def test_absent_governance_onboarding_is_resumable_before_binding_comparison(setup, missing):
+    server, _, arguments = setup
+    for member in missing:
+        server.onboarding.pop(member)
+    arguments["config"].foundry = FoundryConfig("other-org", "other.example")
+    with pytest.raises(WorkflowOutcome, match="organization onboarding is not ready") as caught:
+        create("billing-agent", **arguments)
+    assert caught.value.resumable
+    assert not server.created
+
+
+@pytest.mark.parametrize("body", [
+    None, [], {}, {"org_id": ORG}, {"ek": {"status": "verified"}},
+    {"org_id": ORG, "ek": {}},
+])
+def test_malformed_or_missing_required_onboarding_is_unsupported(setup, body):
+    server, _, arguments = setup
+    server.get_organization_onboarding = Mock(return_value=body)
+    with pytest.raises(UnsupportedRegistry):
+        create("billing-agent", **arguments)
+    assert not server.created
+
+
+@pytest.mark.parametrize("member", ["domain", "state", "gate_authorized"])
+def test_present_incomplete_governance_proof_is_unsupported(setup, member):
+    server, _, arguments = setup
+    server.onboarding["gi"].pop(member)
+    with pytest.raises(UnsupportedRegistry):
         create("billing-agent", **arguments)
     assert not server.created
 
@@ -594,6 +680,7 @@ def test_wrong_public_binding_fails_closed(setup, binding):
             identity.active()
         with pytest.raises(SigningPaused):
             identity.sign(b"message")
+        assert saved(store)["signingPaused"] is True
 
 
 def test_no_history_read_before_initial_preparation_or_on_indeterminate_submission(setup):
@@ -1354,13 +1441,15 @@ def test_integrity_failure_after_submission_stops_without_retry(setup):
     from dnsid.enums import VerificationCode
     from dnsid.exceptions import VerificationError
 
-    server, _, arguments = setup
+    server, store, arguments = setup
     server.submit_error = VerificationError(
         VerificationCode.RECORD_INVALID, "receipt hash mismatch"
     )
     with create("billing-agent", **arguments) as identity:
-        with pytest.raises(FoundryError):
-            identity.active()
+        for _ in range(2):
+            with pytest.raises(FoundryError):
+                identity.active()
+        assert saved(store)["issuance"]["terminalFailure"] is True
         assert len(server.submitted) == server.prepare_calls == 1
         server.reader._load_complete_history.assert_not_called()
         with pytest.raises(SigningPaused):

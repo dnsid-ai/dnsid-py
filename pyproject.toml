@@ -66,7 +66,7 @@ a2a = [
     "sse-starlette",
 ]
 
-# Release gate: include Foundry only after server acceptance SR-1 through SR-7.
+# The module stays source-only until the server's named-Live requirements are released.
 [tool.hatch.build.targets.wheel]
 packages = ["dnsid"]
 exclude = ["/dnsid/foundry"]

@@ -1031,7 +1031,8 @@ class RegistryClient(AbstractRegistryClient):
         if proof and proof.get("domain") is not None:
             if not isinstance(proof["domain"], str):
                 raise ValidationError("onboarding gi.domain must be a domain")
-            if normalize_fqdn(proof["domain"]) != gi:
+            proof_domain = normalize_fqdn(proof["domain"])
+            if gi is not None and proof_domain != gi:
                 raise ValidationError("onboarding governance proof domain mismatch")
         data["bindings_ready"] = bool(
             gi

@@ -109,12 +109,6 @@ class IssuanceStore:
             state = replace(state, terminal_failure=True, submission=latest)
         if error is not None and not issuance_rejected(error.error_code, error.status_code):
             raw["requestError"] = {"httpStatus": error.status_code, "errorCode": error.error_code}
-        elif (
-            latest is not None
-            and latest.state == "rejected"
-            and not (issuance_rejected(latest.error_code, latest.status_code))
-        ):
-            raw["requestError"] = {"errorCode": latest.error_code}
         else:
             raw.pop("requestError", None)
         if "requestError" in raw:

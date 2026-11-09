@@ -279,15 +279,15 @@ def _prepare(
         transient = not issuance_rejected(
             getattr(cause, "error_code", ""), getattr(cause, "status_code", None),
         )
-        state = _persist(store, replace(
-            state, last_error_code=getattr(cause, "error_code", ""),
-            terminal_failure=not transient,
-        ))
         transient = transient and (
             not isinstance(cause, VerificationError)
             or isinstance(cause, RegistryRequestError)
             or cause.transient
         )
+        state = _persist(store, replace(
+            state, last_error_code=getattr(cause, "error_code", ""),
+            terminal_failure=not transient,
+        ))
         raise ManagedIssuanceOperationError(
             "managed issuance preparation failed", state,
             state="rejected" if state.terminal_failure else "prepared",
@@ -344,6 +344,11 @@ def _submit(
         retry = not issuance_rejected(
             getattr(cause, "error_code", ""), getattr(cause, "status_code", None),
         )
+        retry = retry and (
+            not isinstance(cause, VerificationError)
+            or isinstance(cause, RegistryRequestError)
+            or cause.transient
+        )
         state = _persist(store, replace(
             state, submission=SubmissionResult(
                 state="pending" if retry else "rejected", entry_hash=state.entry_hash,
@@ -351,11 +356,6 @@ def _submit(
                 status_code=getattr(cause, "status_code", None),
             ), terminal_failure=not retry,
         ))
-        retry = retry and (
-            not isinstance(cause, VerificationError)
-            or isinstance(cause, RegistryRequestError)
-            or cause.transient
-        )
         raise ManagedIssuanceOperationError(
             "managed issuance submission failed", state,
             state="rejected" if state.terminal_failure else "indeterminate", transient=retry,

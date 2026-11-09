@@ -45,6 +45,16 @@ def test_wire_domain_must_match_challenge_after_normalization():
         _live_provisioning_from_response(raw, provider.signing_key())
 
 
+def test_onboarding_without_governance_domain_keeps_proof_but_is_not_ready():
+    body = {
+        "org_id": "org-1", "ek": {"status": "verified"},
+        "gi": {"domain": "example.com", "state": "verified", "gate_authorized": True},
+    }
+    with RegistryClient("https://registry.example", api_key="test-placeholder") as client:
+        with patch.object(client, "_http_request", return_value=httpx.Response(200, json=body)):
+            assert client.get_organization_onboarding() == {**body, "bindings_ready": False}
+
+
 def test_issuance_prepare_preserves_wire_status_and_code():
     response = httpx.Response(409, json={"error": "TLOG_PREPARATION_MISMATCH"})
     with (

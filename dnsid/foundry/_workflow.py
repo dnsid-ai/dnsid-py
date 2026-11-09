@@ -93,6 +93,11 @@ from .store import (
     validate_operation,
 )
 
+
+class _BindingMismatch(UnsupportedContract):
+    """A confirmed identity binding mismatch that requires a durable signing pause."""
+
+
 _PUBLICATION = {
     "publish_profile": "publishProfile",
     "governance_id": "governanceId",
@@ -188,7 +193,7 @@ def create(
                             and operation["domain"] != response.domain
                         )
                     ):
-                        raise UnsupportedContract("Live replay changed its request or identity ID")
+                        raise _BindingMismatch("Live replay changed its request or identity ID")
                     operation.update(
                         identityId=response.agent_id,
                         requestId=response.request_id,
@@ -200,7 +205,7 @@ def create(
                         operation["phase"] = "identity-known"
                     if response.challenge_transcript is not None:
                         if response.challenge_transcript.org_id != org:
-                            raise UnsupportedContract(
+                            raise _BindingMismatch(
                                 "Live challenge belongs to another organization"
                             )
                         operation["proof"] = {
@@ -347,7 +352,12 @@ class FoundryIdentity:
                                     VerificationCode.RECORD_NOT_FOUND,
                                     VerificationCode.STATUS_NOT_ACTIVE,
                                 }:
-                                    raise
+                                    if isinstance(cause, RegistryRequestError):
+                                        raise
+                                    raise _BindingMismatch(
+                                        "public identity verification failed",
+                                        operation=operation, cause=cause,
+                                    ) from cause
                                 delay = _sleep(delay)
                         state = issuance_store.load_managed_issuance(self.domain)
                         if state is not None and (not state.complete or state.activation_blocked):
@@ -367,7 +377,7 @@ class FoundryIdentity:
                     KeyMissing,
                     KeyMismatch,
                     TerminalIdentity,
-                    UnsupportedContract,
+                    _BindingMismatch,
                     FoundryStateError,
                 ),
             ):
@@ -416,7 +426,7 @@ class FoundryIdentity:
                 response.agent_id != operation["identityId"]
                 or response.challenge_transcript.org_id != operation["organizationId"]
             ):
-                raise UnsupportedContract("replacement proof changed identity bindings")
+                raise _BindingMismatch("replacement proof changed identity bindings")
             proof.update(
                 challenge=response.challenge,
                 challengeMessage=response.challenge_message,
@@ -450,7 +460,7 @@ class FoundryIdentity:
         if response_proof.request_id != operation["requestId"] or (
             response_proof.agent_id != operation["identityId"]
         ):
-            raise UnsupportedContract("proof receipt changed identity bindings")
+            raise _BindingMismatch("proof receipt changed identity bindings")
         proof.update(submissionState="accepted", outcome=response_proof.status)
         operation["phase"] = "identity-known"
         operation["registryStatus"] = response_proof.status
@@ -676,16 +686,20 @@ class _Foundry:
             raise
         except ValidationError as cause:
             raise UnsupportedRegistry("registry onboarding contract is incomplete", cause=cause)
-        required = ("org_id", "governance_domain", "gi", "ek")
-        if any(member not in result for member in required) or not (
-            isinstance(result["org_id"], str)
+        if not isinstance(result, dict) or not (
+            isinstance(result.get("org_id"), str)
             and result["org_id"].strip()
-            and isinstance(result["gi"], dict)
-            and isinstance(result["ek"], dict)
-            and all(member in result["gi"] for member in ("domain", "state", "gate_authorized"))
+            and isinstance(result.get("ek"), dict)
             and "status" in result["ek"]
         ):
             raise UnsupportedRegistry("registry onboarding contract is incomplete")
+        if "gi" in result and not (
+            isinstance(result["gi"], dict)
+            and all(member in result["gi"] for member in ("domain", "state", "gate_authorized"))
+        ):
+            raise UnsupportedRegistry("registry onboarding contract is incomplete")
+        if "governance_domain" not in result or "gi" not in result:
+            raise WorkflowOutcome("organization onboarding is not ready", resumable=True)
         org = result["org_id"]
         try:
             gi = normalize_fqdn(result["governance_domain"])
@@ -709,16 +723,16 @@ class _Foundry:
     def bindings(self, operation: dict[str, Any], org: str, gi: str) -> None:
         validate_operation(operation, (self.registry_url, org, operation["name"]))
         if operation["governanceId"] != normalize_fqdn(gi):
-            raise UnsupportedContract("saved governance binding differs from onboarding")
+            raise _BindingMismatch("saved governance binding differs from onboarding")
         configured = self.config.foundry
         if configured.organization_id not in {None, org} or (
             configured.governance_id is not None
             and normalize_fqdn(configured.governance_id) != operation["governanceId"]
         ):
-            raise UnsupportedContract("configured account differs from the saved operation")
+            raise _BindingMismatch("configured account differs from the saved operation")
         trust = self.trust_document()
         if "logTrust" in operation and trust and operation["logTrust"] != trust:
-            raise UnsupportedContract("configured log trust differs from the saved operation")
+            raise _BindingMismatch("configured log trust differs from the saved operation")
 
     def signing_key(self, operation: dict[str, Any]) -> JWK:
         if not provider_call(self.provider.list_key_ids):
@@ -802,8 +816,7 @@ class _Foundry:
                 yield operation
             except Exception as cause:
                 if operation and (
-                    isinstance(cause, (KeyMismatch, TerminalIdentity, UnsupportedContract))
-                    or (isinstance(cause, VerificationError) and not cause.transient)
+                    isinstance(cause, (KeyMismatch, TerminalIdentity, _BindingMismatch))
                     or getattr(cause, "error_code", "") == "KEY_MISMATCH"
                 ):
                     operation["signingPaused"] = True
@@ -828,7 +841,7 @@ class _Foundry:
         if result is None:
             raise FoundryError("registry identity is not available", resumable=True)
         if result.id != operation["identityId"] or result.domain != operation["domain"]:
-            raise UnsupportedContract("registry read changed the saved identity binding")
+            raise _BindingMismatch("registry read changed the saved identity binding")
         return result
 
     def remember_registration(
@@ -851,20 +864,20 @@ class _Foundry:
         if registration.publication_authority != "registry" or publication is None:
             raise UnsupportedContract("Foundry requires registry-managed publication configuration")
         if normalize_fqdn(publication.governance_id) != operation["governanceId"]:
-            raise UnsupportedContract("publication governance binding mismatch")
+            raise _BindingMismatch("publication governance binding mismatch")
         _validate_publication_config(publication, operation["domain"])
         snapshot = {
             _PUBLICATION[name]: value for name, value in asdict(publication).items() if value != ""
         }
         saved = operation.get("publicationConfig", {})
         if saved and {member: saved.get(member) for member in snapshot} != snapshot:
-            raise UnsupportedContract("registry changed the saved publication configuration")
+            raise _BindingMismatch("registry changed the saved publication configuration")
         operation["publicationConfig"] = {**saved, **snapshot}
         if registration.oidc_issuer_url:
             if operation.get("oidcIssuerUrl", registration.oidc_issuer_url) != (
                 registration.oidc_issuer_url
             ):
-                raise UnsupportedContract("registry changed the saved OIDC issuer")
+                raise _BindingMismatch("registry changed the saved OIDC issuer")
             operation["oidcIssuerUrl"] = registration.oidc_issuer_url
         self.save(key, operation)
 
@@ -913,7 +926,7 @@ class _Foundry:
             ).thumbprint()
             != entity.thumbprint()
         ):
-            raise UnsupportedContract("entity key changed without supported continuity")
+            raise _BindingMismatch("entity key changed without supported continuity")
         operation["entityPublicKey"] = entity.to_dict()
         return entity
 
@@ -964,14 +977,14 @@ class _Foundry:
             )
             prepared = parse_prepared_issuance(event.data, context)
             if prepared.reference.lr != reference or entry_bytes(prepared, context) != event.data:
-                raise UnsupportedContract("accepted issuance has an unexpected binding")
+                raise _BindingMismatch("accepted issuance has an unexpected binding")
             if expected is not None:
                 if (
                     expected.entry_bytes != event.data
                     or expected.submission is None
                     or (expected.submission.index != event.index)
                 ):
-                    raise UnsupportedContract("accepted log entry differs from saved acceptance")
+                    raise _BindingMismatch("accepted log entry differs from saved acceptance")
                 return True
             from ..models import LogRef
 
@@ -1008,7 +1021,7 @@ class _Foundry:
         ) or observed.signing_key.thumbprint() != JWK.from_dict(
             operation["entityPublicKey"],
         ).thumbprint():
-            raise UnsupportedContract("public identity does not match the expected bindings")
+            raise _BindingMismatch("public identity does not match the expected bindings")
         public = observed.jwks.current_operational_signing_key(observed.record.v)
         if public.thumbprint() != selected.thumbprint():
             raise KeyMismatch("signed current ku does not serve the configured provider key")
