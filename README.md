@@ -789,9 +789,11 @@ returned `bindings_ready` is true only for matching, verified governance proof
 and verified entity delegation. Pending proofs remain pending; no entity JWKS URL
 is inferred from this response.
 
-Initial issuance requires one durable coordinator and one retry owner. The SDK
-provides preparation, signing, and submission primitives, not a complete issuance
-coordinator. See [integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
+Initial issuance uses the shared durable coordinator in `dnsid.c2sp_tlog`:
+`begin_managed_issuance`, `resume_managed_issuance`, and
+`complete_managed_issuance`. The caller supplies exclusive durable storage, owns
+publication and retries, and verifies public ACTIVE before completion. See
+[integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
 
 To move an established signer, use explicit `rotate_operational_key()` with a
 `target_key_provider` and stable old/target provider references. To change the signing
@@ -884,13 +886,21 @@ combines them field-wise (later wins, lists replace; `log_trust` and operational
 from dnsid import (
     identity_manager_from_environment,  # DNSID_* variables
     identity_manager_from_dnsid,        # ~/.dnsid or a DNSid CLI identity directory
-    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry", "keySource"}
+    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry", "keySource", "foundry"}
     load_environment, load_file, load_cli_directory, merge_loaded_config, construct_identity_manager, LoadedConfig,
 )
 
 idm = identity_manager_from_environment()          # under `dnsid local run`: keys, transport, log trust
 idm = construct_identity_manager(merge_loaded_config(load_file("dnsid.json"), load_environment()))
 ```
+
+Only the Foundry workflow reads the `foundry` deployment member. Core identity
+construction ignores it. The workflow is source-checkout only and is excluded
+from published packages until server acceptance passes, so `foundry` has no
+effect in released versions until that gate clears. Foundry create rejects configuration
+with ordinary identity fields, including the `DNSID_DOMAIN` and
+`DNSID_GOVERNANCE_ID` environment variables. Its expected GI is
+`foundry.governanceId`, set through file/code configuration.
 
 | Variable | Maps to |
 |---|---|

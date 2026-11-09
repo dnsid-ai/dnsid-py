@@ -66,8 +66,13 @@ a2a = [
     "sse-starlette",
 ]
 
+# The module stays source-only until the server's named-Live requirements are released.
 [tool.hatch.build.targets.wheel]
 packages = ["dnsid"]
+exclude = ["/dnsid/foundry"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/dnsid/foundry", "/tests/test_foundry*.py"]
 
 [tool.ruff]
 target-version = "py311"
