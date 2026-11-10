@@ -167,3 +167,40 @@ def test_given_regional_config_when_reopened_then_exact_region_and_arn_remain_se
     # The exact error class is not broadened into a new contract; no signer/result.
     assert caught.value is not None
     assert calls == ["GetPublicKey", "Sign"] * 4 + ["GetPublicKey"]
+
+
+@pytest.mark.parametrize("size", [4096, 4097])
+def test_aws_raw_boundary_61(size):
+    """F2 Mode: fake-only; Given RAW bytes, When signing, Then enforce 4096 bound."""
+    class CountedAws(Aws):
+        creates = 0
+
+        def create_signing_key(self, *args, **kwargs):
+            self.creates += 1
+            raise RuntimeError("unexpected generation")
+
+    ref = "arn:aws:kms:us-east-1:123456789012:key/mrk-0123456789abcdef0123456789abcdef"
+    client = CountedAws(ref)
+    provider = AwsKmsKeyProvider.load(client, AwsKmsConfig(active_key_id=ref, algorithm="ED25519_SHA_512"))
+    kid = provider.signing_key().kid
+    payload = b"a" * size
+    outcomes = []
+    # Fake native Sign accepts both sizes; provider must reject oversized data first.
+    for action in (lambda: provider.sign(payload), lambda: provider.sign_key(kid, payload)):
+        before = client.calls.count("sign")
+        signature, error = None, None
+        try:
+            signature = action()
+        except Exception as caught:
+            error = caught
+        outcomes.append((signature, error, client.calls.count("sign") - before))
+    assert client.creates == 0
+    for signature, error, native_calls in outcomes:
+        if size == 4096:
+            assert error is None and signature is not None
+            assert native_calls == 1
+            Ed25519PublicKey.from_public_bytes(PUBLIC).verify(signature, payload)
+        else:
+            assert (error is not None, signature is None, native_calls) == (True, True, 0), (
+                "4097 bytes must error without substitute before native Sign", error, signature is not None, native_calls
+            )
