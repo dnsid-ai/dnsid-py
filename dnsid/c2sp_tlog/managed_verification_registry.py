@@ -28,7 +28,9 @@ _DEVELOPMENT_TRUST_PROFILE = (
     b"witness.dev.dnsid.ai/w1+50822ded+BAH9KuulelD3yZBDTneG46gKZY+OWwdUPBmLmq/YjOkO\\n"
     b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
     b'    "dnsid-stream-bundle+0c241174+'
-    b'AeuT9PKyiewb9hkzygvki7UuOs5ly2kfY/C4Tfh7/ix0"\n  ]\n}'
+    b'AeuT9PKyiewb9hkzygvki7UuOs5ly2kfY/C4Tfh7/ix0",\n'
+    b'    "dnsid-stream-bundle+62f7f9fa+'
+    b'ATdOWF5P759HgvDod9mIC0r1nXhTtJ7x1Ws0fjTvqwDV"\n  ]\n}'
 )
 _PRODUCTION_TRUST_PROFILE = (
     b'{\n  "version": 1,\n  "scope": "public",\n'
