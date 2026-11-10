@@ -204,3 +204,46 @@ def test_aws_raw_boundary_61(size):
             assert (error is not None, signature is None, native_calls) == (True, True, 0), (
                 "4097 bytes must error without substitute before native Sign", error, signature is not None, native_calls
             )
+
+
+def test_aws_compatibility_cov1_omitted_response_key_id():
+    """COV-1 Mode: real-capable (AWS=fake); unchanged existing-ARN compatibility."""
+    from dnsid import BotoKmsFacade
+
+    ref = "arn:aws:kms:us-east-1:123456789012:key/mrk-0123456789abcdef0123456789abcdef"
+    payload = b"COV-1 unchanged compatibility"
+
+    class NativeExistingKms:
+        def __init__(self):
+            self.calls = []
+
+        def get_public_key(self, **request):
+            self.calls.append("GetPublicKey")
+            assert request == {"KeyId": ref}
+            # Intentionally no KeyId: ordinary existing opens preserve the request.
+            return dict(PublicKey=PRIVATE.public_key().public_bytes(
+                serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo),
+                KeySpec="ECC_NIST_EDWARDS25519", KeyUsage="SIGN_VERIFY", SigningAlgorithms=["ED25519_SHA_512"])
+
+        def sign(self, **request):
+            self.calls.append("Sign")
+            assert request == dict(KeyId=ref, Message=payload, MessageType="RAW", SigningAlgorithm="ED25519_SHA_512")
+            return dict(KeyId=ref, Signature=PRIVATE.sign(payload), SigningAlgorithm="ED25519_SHA_512")
+
+        def create_key(self, **request):
+            self.calls.append("CreateKey")
+            pytest.fail("existing-key open/sign must not generate")
+
+    # Given immutable ARN plus omitted native response KeyId; When facade loads.
+    client = NativeExistingKms()
+    provider = AwsKmsKeyProvider.load(BotoKmsFacade(client), AwsKmsConfig(active_key_id=ref, algorithm="ED25519_SHA_512"))
+    key = provider.signing_key().to_dict()
+    # Then public binding and native thumbprint kid survive, no substitute signer.
+    assert {k: key[k] for k in ("kty", "crv", "alg", "x", "kid")} == dict(
+        kty="OKP", crv="Ed25519", alg="EdDSA", x=b64(PUBLIC), kid=thumbprint(b64(PUBLIC)))
+    assert "d" not in key
+    assert provider.list_key_ids() == [key["kid"]]
+    assert provider.jwk(key["kid"]).to_dict()["x"] == b64(PUBLIC)
+    assert provider.state_snapshot().active_key_id == ref
+    Ed25519PublicKey.from_public_bytes(PUBLIC).verify(provider.sign(payload), payload)
+    assert client.calls == ["GetPublicKey", "Sign"]
