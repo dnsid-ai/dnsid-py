@@ -42,6 +42,8 @@ witness dnsid-witness-1 witness.dev.dnsid.ai/w1+50822ded+BAH9KuulelD3yZBDTneG46g
 quorum dnsid-witness-1
 """
 _DEVELOPMENT_BUNDLE_KEY = "dnsid-stream-bundle+0c241174+AeuT9PKyiewb9hkzygvki7UuOs5ly2kfY/C4Tfh7/ix0"
+# Signs dev bundles over the 4096-byte KMS limit (Identity-Digital/dnsid#3286).
+_DEVELOPMENT_OVERFLOW_BUNDLE_KEY = "dnsid-stream-bundle+62f7f9fa+ATdOWF5P759HgvDod9mIC0r1nXhTtJ7x1Ws0fjTvqwDV"
 _PRODUCTION_POLICY = b"""log log.dnsid.ai+f10a26bc+Aeo6u4o1XvQlcRczgY462ZdIGpm/ejBC2G3vSbyYYqqY
 witness dnsid-witness-1 witness.dnsid.ai/w1+706fd4fb+BLqX21Sx9xG5+5vK7kSK5omcu9+2il20PLdfpOp8lQOJ
 quorum dnsid-witness-1
@@ -73,11 +75,14 @@ def test_development_catalog_entry_is_exact_trust_profile() -> None:
         "scope": "public",
         "log_prefix": "https://log.dev.dnsid.ai",
         "tlog_policy": _DEVELOPMENT_POLICY.decode(),
-        "bundle_verifier_keys": [_DEVELOPMENT_BUNDLE_KEY],
+        "bundle_verifier_keys": [_DEVELOPMENT_BUNDLE_KEY, _DEVELOPMENT_OVERFLOW_BUNDLE_KEY],
     }
     profile = parse_c2sp_tlog_trust_profile(_DEVELOPMENT_TRUST_PROFILE)
     assert profile.policy_document == _DEVELOPMENT_POLICY
-    assert profile.bundle_verifier_keys == [parse_signed_note_verifier_key(_DEVELOPMENT_BUNDLE_KEY)]
+    assert profile.bundle_verifier_keys == [
+        parse_signed_note_verifier_key(_DEVELOPMENT_BUNDLE_KEY),
+        parse_signed_note_verifier_key(_DEVELOPMENT_OVERFLOW_BUNDLE_KEY),
+    ]
 
 
 def test_production_catalog_entry_is_exact_trust_profile() -> None:
@@ -143,6 +148,41 @@ def test_partners_profile_verifies_partner_stream_bundle() -> None:
     assert result.bundle_signer_kid == "dnsid-stream-bundle+b1e0b597"
     assert result.logged_state == "ACTIVE"
     assert len(result.events) == 1
+
+
+@pytest.mark.parametrize(
+    ("fixture", "kid", "events"),
+    [
+        ("c2sp-dev-stream-bundle-kms-key.json", "dnsid-stream-bundle+0c241174", 2),
+        ("c2sp-dev-stream-bundle-overflow-key.json", "dnsid-stream-bundle+62f7f9fa", 3),
+    ],
+)
+def test_development_profile_verifies_bundles_from_both_bundle_keys(fixture: str, kid: str, events: int) -> None:
+    # Reviewed service fixtures from Identity-Digital/dnsid#3286, captured 2026-11-10.
+    # The dev log signs a bundle of at most 4096 signed bytes with its KMS key and a
+    # larger one with a secret-held key, so the pinned development profile must
+    # accept both: a two-event stream signed by the KMS key and a three-event
+    # stream (issuance, key rotation, revocation) signed by the secret-held key.
+    profile = parse_c2sp_tlog_trust_profile(_DEVELOPMENT_TRUST_PROFILE)
+    data = (Path(__file__).parent / "vectors" / fixture).read_bytes()
+    bundle = json.loads(data)
+    issuance = json.loads(b64url_decode_strict(bundle["events"][0]["entry"]))
+    result = verify_c2sp_stream_bundle(
+        data,
+        C2spStreamBundleVerifierOptions(
+            policy_bytes=profile.policy_document,
+            bundle_keys=profile.bundle_verifier_keys,
+            entity_key=jwk_from_dict(issuance["ek"]),
+            checkpoint_freshness_ms=600_000,
+            max_bundle_lifetime_ms=600_000,
+            max_bundle_bytes=128 * 1024,
+            max_events=16,
+            now=lambda: bundle["expires"] - 60,
+        ),
+    )
+    assert result.bundle_signer_kid == kid
+    assert result.logged_state == "REVOKED"
+    assert len(result.events) == events
 
 
 def test_managed_registry_implements_selection_vectors() -> None:
