@@ -211,6 +211,12 @@ class BotoKmsFacade(AwsKmsFacade):
             raise ArgumentError(
                 f"AWS KMS GetPublicKey response did not include PublicKey for {key_id}"
             )
+        if (
+            re.fullmatch(r"arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+", key_id)
+            and "KeyId" in response
+            and response["KeyId"] != key_id
+        ):
+            raise ArgumentError("AWS KMS public key reference mismatch")
         return {
             "key_id": response.get("KeyId"),
             "public_key": bytes(pub),
