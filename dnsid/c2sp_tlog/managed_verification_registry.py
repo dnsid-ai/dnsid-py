@@ -61,6 +61,22 @@ _PARTNERS_TRUST_PROFILE = (
 )
 
 
+# Matches the reviewed service profile embedded in the DNSid CLI;
+# the log's discovery endpoints are not trust anchors.
+_STAGING_TRUST_PROFILE = (
+    b'{\n  "version": 1,\n  "scope": "public",\n'
+    b'  "log_prefix": "https://log.stg.dnsid.ai",\n  "tlog_policy": "'
+    b"log log.stg.dnsid.ai+f6ad3bd8+ARl6baGOUzNIH2QvsnlqA8C71WM4SYecXE7eAwmytAsL\\n"
+    b"witness dnsid-witness-1 "
+    b"witness.stg.dnsid.ai/w1+11a84cde+BEKB6hwsWXOm+PMnS7/JvO4i6bazjzJ8ojECphOTB3gt\\n"
+    b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
+    b'    "dnsid-stream-bundle+65c31b14+'
+    b'AXCMTPR4I/fqOgSHge4AEMp+1pWcflDqC1YEDaHDe3Ps",\n'
+    b'    "dnsid-stream-bundle+cdd64875+'
+    b'ATu1SYXvRiZPBUzrUJAfKHeMH3eHr3T22jKez/C3Yl1m"\n  ]\n}'
+)
+
+
 @dataclass
 class DnsidManagedVerificationOptions:
     """Shared infrastructure for managed DNSid log verification.
@@ -98,6 +114,11 @@ _MANAGED_CATALOG = (
         "https://log.partners.dnsid.ai",
         trust_profile_document=_PARTNERS_TRUST_PROFILE,
     ),
+    _ManagedTrustEntry(
+        "public",
+        "https://log.stg.dnsid.ai",
+        trust_profile_document=_STAGING_TRUST_PROFILE,
+    ),
 )
 
 
@@ -110,8 +131,9 @@ def create_dnsid_managed_verification_registry(
     decision; the generic factory never selects these roots implicitly. Trust
     snapshots are bundled with the SDK and selected only for an exact canonical
     ``(scope, log_prefix)`` pair. The catalog covers the development,
-    production, and partner (``https://log.partners.dnsid.ai``) logs, each
-    preferring signed stream bundles with safe raw-scan fallback.
+    production, partner (``https://log.partners.dnsid.ai``), and staging
+    (``https://log.stg.dnsid.ai``) logs, each preferring signed stream bundles
+    with safe raw-scan fallback.
     """
     if options is None:
         options = DnsidManagedVerificationOptions()

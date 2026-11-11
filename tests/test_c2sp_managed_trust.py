@@ -31,6 +31,7 @@ from dnsid.c2sp_tlog.managed_verification_registry import (
     _MANAGED_CATALOG,
     _PARTNERS_TRUST_PROFILE,
     _PRODUCTION_TRUST_PROFILE,
+    _STAGING_TRUST_PROFILE,
     _create_dnsid_managed_verification_registry,
     _ManagedTrustEntry,
 )
@@ -61,6 +62,13 @@ class _Fetcher:
         return C2spResourceFetchGuarantees(True, True, True, True, True)
 
 
+_STAGING_POLICY = b"""log log.stg.dnsid.ai+f6ad3bd8+ARl6baGOUzNIH2QvsnlqA8C71WM4SYecXE7eAwmytAsL
+witness dnsid-witness-1 witness.stg.dnsid.ai/w1+11a84cde+BEKB6hwsWXOm+PMnS7/JvO4i6bazjzJ8ojECphOTB3gt
+quorum dnsid-witness-1
+"""
+_STAGING_BUNDLE_KEY = "dnsid-stream-bundle+65c31b14+AXCMTPR4I/fqOgSHge4AEMp+1pWcflDqC1YEDaHDe3Ps"
+# Signs staging bundles over the 4096-byte KMS limit (Identity-Digital/dnsid#3286).
+_STAGING_OVERFLOW_BUNDLE_KEY = "dnsid-stream-bundle+cdd64875+ATu1SYXvRiZPBUzrUJAfKHeMH3eHr3T22jKez/C3Yl1m"
 _PARTNERS_POLICY = b"""log log.partners.dnsid.ai+f0143e09+Ae5vrTVQUr0h2GKbeHq70ml37N+uVBsU4NpZD4qMqAu1
 witness dnsid-witness-1 witness.partners.dnsid.ai/w1+a115eb67+BB0avWVeSelUBk2w8FtTbT+orf2i826q9VemA0jaXxg4
 quorum dnsid-witness-1
@@ -223,8 +231,9 @@ def test_managed_registry_shares_infrastructure_and_fixed_defaults() -> None:
     partners = registry.new_reader(
         "c2sp-tlog:public:https://log.partners.dnsid.ai#EREREREREREREREREREREQ"
     )
+    staging = registry.new_reader("c2sp-tlog:public:https://log.stg.dnsid.ai#EREREREREREREREREREREQ")
 
-    for reader in (development, production, partners):
+    for reader in (development, production, partners, staging):
         assert reader._options.checkpoint_store is store
         assert reader._options.checkpoint_freshness_ms == 600_000
         assert reader._options.max_clock_skew_ms == 0
@@ -270,3 +279,56 @@ def test_managed_registry_rejects_invalid_catalog(catalog) -> None:
         _create_dnsid_managed_verification_registry(
             DnsidManagedVerificationOptions(_Fetcher()), catalog
         )
+
+
+def test_staging_catalog_entry_is_exact_trust_profile() -> None:
+    document = json.loads(_STAGING_TRUST_PROFILE)
+    assert document == {
+        "version": 1,
+        "scope": "public",
+        "log_prefix": "https://log.stg.dnsid.ai",
+        "tlog_policy": _STAGING_POLICY.decode(),
+        "bundle_verifier_keys": [_STAGING_BUNDLE_KEY, _STAGING_OVERFLOW_BUNDLE_KEY],
+    }
+    profile = parse_c2sp_tlog_trust_profile(_STAGING_TRUST_PROFILE)
+    assert profile.policy_document == _STAGING_POLICY
+    assert profile.bundle_verifier_keys == [
+        parse_signed_note_verifier_key(_STAGING_BUNDLE_KEY),
+        parse_signed_note_verifier_key(_STAGING_OVERFLOW_BUNDLE_KEY),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("fixture", "kid", "state", "events"),
+    [
+        ("c2sp-staging-stream-bundle-kms-key.json", "dnsid-stream-bundle+65c31b14", "ACTIVE", 1),
+        ("c2sp-staging-stream-bundle-overflow-key.json", "dnsid-stream-bundle+cdd64875", "REVOKED", 3),
+    ],
+)
+def test_staging_profile_verifies_bundles_from_both_bundle_keys(
+    fixture: str, kid: str, state: str, events: int
+) -> None:
+    # Reviewed service fixtures captured from log.stg.dnsid.ai on 2026-11-11
+    # (Identity-Digital/dnsid#3286): a one-event stream small enough for the KMS
+    # bundle key and a three-event stream (issuance, key rotation, revocation)
+    # over the 4096-byte KMS limit, signed by the secret-held key.
+    profile = parse_c2sp_tlog_trust_profile(_STAGING_TRUST_PROFILE)
+    data = (Path(__file__).parent / "vectors" / fixture).read_bytes()
+    bundle = json.loads(data)
+    issuance = json.loads(b64url_decode_strict(bundle["events"][0]["entry"]))
+    result = verify_c2sp_stream_bundle(
+        data,
+        C2spStreamBundleVerifierOptions(
+            policy_bytes=profile.policy_document,
+            bundle_keys=profile.bundle_verifier_keys,
+            entity_key=jwk_from_dict(issuance["ek"]),
+            checkpoint_freshness_ms=600_000,
+            max_bundle_lifetime_ms=600_000,
+            max_bundle_bytes=128 * 1024,
+            max_events=16,
+            now=lambda: bundle["expires"] - 60,
+        ),
+    )
+    assert result.bundle_signer_kid == kid
+    assert result.logged_state == state
+    assert len(result.events) == events
