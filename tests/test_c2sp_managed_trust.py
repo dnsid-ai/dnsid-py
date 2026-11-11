@@ -49,6 +49,8 @@ witness dnsid-witness-1 witness.dnsid.ai/w1+706fd4fb+BLqX21Sx9xG5+5vK7kSK5omcu9+
 quorum dnsid-witness-1
 """
 _PRODUCTION_BUNDLE_KEY = "dnsid-stream-bundle+2e77a3f1+AbKj/zrAfK04/NM07Zj7kxP2YXbM5neT8ym6juXC2PXG"
+# Signs production bundles over the 4096-byte KMS limit (Identity-Digital/dnsid#3286).
+_PRODUCTION_OVERFLOW_BUNDLE_KEY = "dnsid-stream-bundle+0f5a76a0+AXavEa0+EGj/qZFH4QuAOeomigSukspWQHC7PrVJa7pj"
 
 
 class _Fetcher:
@@ -64,6 +66,8 @@ witness dnsid-witness-1 witness.partners.dnsid.ai/w1+a115eb67+BB0avWVeSelUBk2w8F
 quorum dnsid-witness-1
 """
 _PARTNERS_BUNDLE_KEY = "dnsid-stream-bundle+b1e0b597+AQt9ol4cfwPHxdH4NHNRidsAvU2bYE7KVItOlBG/bsaZ"
+# Signs partner bundles over the 4096-byte KMS limit (Identity-Digital/dnsid#3286).
+_PARTNERS_OVERFLOW_BUNDLE_KEY = "dnsid-stream-bundle+bc0d8136+AVfizbWWQD+s2N7OfpOeP7IaWF8nAeTqT4JpD03vKqc6"
 # Live checkpoint captured on 2026-10-16, signed by the log and its witness.
 _PARTNERS_CHECKPOINT = Path(__file__).parent / "vectors" / "c2sp-partners-checkpoint.txt"
 
@@ -92,11 +96,14 @@ def test_production_catalog_entry_is_exact_trust_profile() -> None:
         "scope": "public",
         "log_prefix": "https://log.dnsid.ai",
         "tlog_policy": _PRODUCTION_POLICY.decode(),
-        "bundle_verifier_keys": [_PRODUCTION_BUNDLE_KEY],
+        "bundle_verifier_keys": [_PRODUCTION_BUNDLE_KEY, _PRODUCTION_OVERFLOW_BUNDLE_KEY],
     }
     profile = parse_c2sp_tlog_trust_profile(_PRODUCTION_TRUST_PROFILE)
     assert profile.policy_document == _PRODUCTION_POLICY
-    assert profile.bundle_verifier_keys == [parse_signed_note_verifier_key(_PRODUCTION_BUNDLE_KEY)]
+    assert profile.bundle_verifier_keys == [
+        parse_signed_note_verifier_key(_PRODUCTION_BUNDLE_KEY),
+        parse_signed_note_verifier_key(_PRODUCTION_OVERFLOW_BUNDLE_KEY),
+    ]
 
 
 def test_partners_catalog_entry_is_exact_trust_profile() -> None:
@@ -106,11 +113,14 @@ def test_partners_catalog_entry_is_exact_trust_profile() -> None:
         "scope": "public",
         "log_prefix": "https://log.partners.dnsid.ai",
         "tlog_policy": _PARTNERS_POLICY.decode(),
-        "bundle_verifier_keys": [_PARTNERS_BUNDLE_KEY],
+        "bundle_verifier_keys": [_PARTNERS_BUNDLE_KEY, _PARTNERS_OVERFLOW_BUNDLE_KEY],
     }
     profile = parse_c2sp_tlog_trust_profile(_PARTNERS_TRUST_PROFILE)
     assert profile.policy_document == _PARTNERS_POLICY
-    assert profile.bundle_verifier_keys == [parse_signed_note_verifier_key(_PARTNERS_BUNDLE_KEY)]
+    assert profile.bundle_verifier_keys == [
+        parse_signed_note_verifier_key(_PARTNERS_BUNDLE_KEY),
+        parse_signed_note_verifier_key(_PARTNERS_OVERFLOW_BUNDLE_KEY),
+    ]
 
 
 def test_partners_policy_verifies_partner_log_checkpoint() -> None:

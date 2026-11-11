@@ -40,7 +40,9 @@ _PRODUCTION_TRUST_PROFILE = (
     b"witness.dnsid.ai/w1+706fd4fb+BLqX21Sx9xG5+5vK7kSK5omcu9+2il20PLdfpOp8lQOJ\\n"
     b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
     b'    "dnsid-stream-bundle+2e77a3f1+'
-    b'AbKj/zrAfK04/NM07Zj7kxP2YXbM5neT8ym6juXC2PXG"\n  ]\n}'
+    b'AbKj/zrAfK04/NM07Zj7kxP2YXbM5neT8ym6juXC2PXG",\n'
+    b'    "dnsid-stream-bundle+0f5a76a0+AXavEa0+'
+    b'EGj/qZFH4QuAOeomigSukspWQHC7PrVJa7pj"\n  ]\n}'
 )
 
 # Matches the reviewed service profile in Identity-Digital/dnsid#2639;
@@ -53,7 +55,9 @@ _PARTNERS_TRUST_PROFILE = (
     b"witness.partners.dnsid.ai/w1+a115eb67+BB0avWVeSelUBk2w8FtTbT+orf2i826q9VemA0jaXxg4\\n"
     b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
     b'    "dnsid-stream-bundle+b1e0b597+'
-    b'AQt9ol4cfwPHxdH4NHNRidsAvU2bYE7KVItOlBG/bsaZ"\n  ]\n}'
+    b'AQt9ol4cfwPHxdH4NHNRidsAvU2bYE7KVItOlBG/bsaZ",\n'
+    b'    "dnsid-stream-bundle+bc0d8136+AVfizbWWQD+'
+    b's2N7OfpOeP7IaWF8nAeTqT4JpD03vKqc6"\n  ]\n}'
 )
 
 
