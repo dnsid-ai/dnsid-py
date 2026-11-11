@@ -1,4 +1,13 @@
 
+## [0.35.0] - 2026-11-10
+
+### Features
+
+- feat: offline AWS/GCP KMS-first setup and explicit GCP creation (#58) ([#126](https://github.com/dnsid-ai/dnsid-py/pull/126))
+- Feat/known foundry create ([#125](https://github.com/dnsid-ai/dnsid-py/pull/125))
+- feat: trust dnsid-dev's secret-held stream-bundle key ([#129](https://github.com/dnsid-ai/dnsid-py/pull/129))
+
+
 ## [0.34.0] - 2026-11-06
 
 ### Features
