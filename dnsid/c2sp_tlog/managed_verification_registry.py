@@ -40,7 +40,9 @@ _PRODUCTION_TRUST_PROFILE = (
     b"witness.dnsid.ai/w1+706fd4fb+BLqX21Sx9xG5+5vK7kSK5omcu9+2il20PLdfpOp8lQOJ\\n"
     b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
     b'    "dnsid-stream-bundle+2e77a3f1+'
-    b'AbKj/zrAfK04/NM07Zj7kxP2YXbM5neT8ym6juXC2PXG"\n  ]\n}'
+    b'AbKj/zrAfK04/NM07Zj7kxP2YXbM5neT8ym6juXC2PXG",\n'
+    b'    "dnsid-stream-bundle+0f5a76a0+AXavEa0+'
+    b'EGj/qZFH4QuAOeomigSukspWQHC7PrVJa7pj"\n  ]\n}'
 )
 
 # Matches the reviewed service profile in Identity-Digital/dnsid#2639;
@@ -53,7 +55,26 @@ _PARTNERS_TRUST_PROFILE = (
     b"witness.partners.dnsid.ai/w1+a115eb67+BB0avWVeSelUBk2w8FtTbT+orf2i826q9VemA0jaXxg4\\n"
     b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
     b'    "dnsid-stream-bundle+b1e0b597+'
-    b'AQt9ol4cfwPHxdH4NHNRidsAvU2bYE7KVItOlBG/bsaZ"\n  ]\n}'
+    b'AQt9ol4cfwPHxdH4NHNRidsAvU2bYE7KVItOlBG/bsaZ",\n'
+    b'    "dnsid-stream-bundle+bc0d8136+AVfizbWWQD+'
+    b's2N7OfpOeP7IaWF8nAeTqT4JpD03vKqc6"\n  ]\n}'
+)
+
+
+# Matches the reviewed service profile internal/c2sptrust/profiles/staging.json in
+# Identity-Digital/dnsid (its second bundle key from Identity-Digital/dnsid#3526);
+# the log's discovery endpoints are not trust anchors.
+_STAGING_TRUST_PROFILE = (
+    b'{\n  "version": 1,\n  "scope": "public",\n'
+    b'  "log_prefix": "https://log.stg.dnsid.ai",\n  "tlog_policy": "'
+    b"log log.stg.dnsid.ai+f6ad3bd8+ARl6baGOUzNIH2QvsnlqA8C71WM4SYecXE7eAwmytAsL\\n"
+    b"witness dnsid-witness-1 "
+    b"witness.stg.dnsid.ai/w1+11a84cde+BEKB6hwsWXOm+PMnS7/JvO4i6bazjzJ8ojECphOTB3gt\\n"
+    b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
+    b'    "dnsid-stream-bundle+65c31b14+'
+    b'AXCMTPR4I/fqOgSHge4AEMp+1pWcflDqC1YEDaHDe3Ps",\n'
+    b'    "dnsid-stream-bundle+cdd64875+'
+    b'ATu1SYXvRiZPBUzrUJAfKHeMH3eHr3T22jKez/C3Yl1m"\n  ]\n}'
 )
 
 
@@ -94,6 +115,11 @@ _MANAGED_CATALOG = (
         "https://log.partners.dnsid.ai",
         trust_profile_document=_PARTNERS_TRUST_PROFILE,
     ),
+    _ManagedTrustEntry(
+        "public",
+        "https://log.stg.dnsid.ai",
+        trust_profile_document=_STAGING_TRUST_PROFILE,
+    ),
 )
 
 
@@ -106,8 +132,9 @@ def create_dnsid_managed_verification_registry(
     decision; the generic factory never selects these roots implicitly. Trust
     snapshots are bundled with the SDK and selected only for an exact canonical
     ``(scope, log_prefix)`` pair. The catalog covers the development,
-    production, and partner (``https://log.partners.dnsid.ai``) logs, each
-    preferring signed stream bundles with safe raw-scan fallback.
+    production, partner (``https://log.partners.dnsid.ai``), and staging
+    (``https://log.stg.dnsid.ai``) logs, each preferring signed stream bundles
+    with safe raw-scan fallback.
     """
     if options is None:
         options = DnsidManagedVerificationOptions()
