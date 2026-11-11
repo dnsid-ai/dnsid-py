@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -332,3 +334,17 @@ def test_staging_profile_verifies_bundles_from_both_bundle_keys(
     assert result.bundle_signer_kid == kid
     assert result.logged_state == state
     assert len(result.events) == events
+
+
+def test_managed_bundle_key_ids_match_their_key_bytes() -> None:
+    # Parsing checks only the key ID's length, so recompute each signed-note key ID
+    # (the first four bytes of SHA-256 over name, newline, type byte and key) to
+    # catch a key copied with the wrong ID before a log starts signing with it.
+    for entry in _MANAGED_CATALOG:
+        assert entry.trust_profile_document is not None
+        keys = json.loads(entry.trust_profile_document)["bundle_verifier_keys"]
+        assert keys, entry.log_prefix
+        for key in keys:
+            name, key_id, encoded = key.split("+", 2)
+            computed = hashlib.sha256(name.encode() + b"\n" + base64.b64decode(encoded)).digest()[:4]
+            assert computed.hex() == key_id, f"{entry.log_prefix}: {key}"

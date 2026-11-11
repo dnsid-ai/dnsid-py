@@ -61,7 +61,8 @@ _PARTNERS_TRUST_PROFILE = (
 )
 
 
-# Matches the reviewed service profile embedded in the DNSid CLI;
+# Matches the reviewed service profile internal/c2sptrust/profiles/staging.json in
+# Identity-Digital/dnsid (its second bundle key from Identity-Digital/dnsid#3526);
 # the log's discovery endpoints are not trust anchors.
 _STAGING_TRUST_PROFILE = (
     b'{\n  "version": 1,\n  "scope": "public",\n'
