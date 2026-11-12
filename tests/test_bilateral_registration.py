@@ -24,7 +24,7 @@ from dnsid.c2sp_tlog import (
     sign_prepared_event,
     write_prepared_event,
 )
-from dnsid.c2sp_tlog.errors import C2spTlogError
+from dnsid.c2sp_tlog.errors import C2spTlogError, C2spTlogVerificationError
 from dnsid.models import IssuanceEvent
 from tests.test_registry_client import _DOMAIN, _REGISTER_RESPONSE, _live_key
 
@@ -130,8 +130,16 @@ def test_owner_envelope_cannot_be_complete_or_appended_and_replays_exactly(algor
                 client.submit_prepared_event(_DOMAIN, owner, "owner-1")
 
 
-@pytest.mark.parametrize("change", ["bad-signature", "missing-signature", "private-key", "invalid-ku", "noncanonical-ku", "missing-ku-coordinate", "same-key"])
-def test_owner_serialization_validates_signature_and_all_key_material(change):
+@pytest.mark.parametrize(("change", "message"), [
+    ("bad-signature", "invalid existing Entity signature"),
+    ("missing-signature", "owner issuance requires only the entity signature"),
+    ("private-key", "owner issuance requires public keys"),
+    ("invalid-ku", "invalid owner issuance public key"),
+    ("noncanonical-ku", "invalid owner issuance public key"),
+    ("missing-ku-coordinate", "invalid owner issuance public key"),
+    ("same-key", "entity and operational keys must be distinct"),
+])
+def test_owner_serialization_validates_signature_and_all_key_material(change, message):
     prepared, entity, _ = _owner_event()
     if change == "bad-signature":
         prepared.envelope["sigs"]["ae"]["sig"] = "AAAA"
@@ -155,7 +163,7 @@ def test_owner_serialization_validates_signature_and_all_key_material(change):
         prepared.envelope.pop("sigs")
         prepared.signed_bytes = canonical_bytes(prepared.envelope)
         prepared = sign_prepared_event(prepared, C2spSignerRole.ENTITY, entity)
-    with pytest.raises((C2spTlogError, VerificationError, ValueError)):
+    with pytest.raises(C2spTlogVerificationError, match=message):
         owner_issuance_bytes(prepared)
 
 

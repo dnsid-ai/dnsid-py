@@ -16,7 +16,9 @@ from dnsid import (
     DNSSECMode,
     IdentityManager,
     IdentityManagerDependencies,
+    VerificationCode,
     VerificationConfig,
+    VerificationError,
 )
 from dnsid.exceptions import ArgumentError, ValidationError
 from dnsid.interfaces import DNSResolver, KeyProvider
@@ -520,7 +522,52 @@ class TestAwaitRegistryManagedPublication:
             manager.await_registry_managed_publication(registry)
         registry.wait_for_status.assert_not_called()
 
-    def test_verifies_observed_dns_record_after_registry_completion(self):
+    @pytest.mark.parametrize("status", ["REJECTED", "CANCELLED", "ERROR", "REVOKED", "RETIRED"])
+    def test_stops_on_failed_or_terminal_registration(self, status):
+        manager = self._manager()
+        registry = MagicMock(spec=RegistryClient)
+        registry.get_registration.side_effect = [
+            AgentRegistration(
+                domain="agent.example.com",
+                publication_authority="registry",
+                registry_status=status,
+                registry_url="https://registry.example.com",
+                dns_published=True,
+            ),
+            AssertionError("terminal registration must not be polled again"),
+        ]
+
+        with (
+            patch("time.sleep") as sleep,
+            patch.object(manager, "_verify_publication_evidence") as verify,
+            pytest.raises(ValidationError, match=f"registry publication failed: {status}"),
+        ):
+            manager.await_registry_managed_publication(registry)
+        registry.get_registration.assert_called_once_with("agent.example.com")
+        sleep.assert_not_called()
+        verify.assert_not_called()
+
+    def test_propagates_non_transient_registration_error(self):
+        manager = self._manager()
+        registry = MagicMock(spec=RegistryClient)
+        error = VerificationError(VerificationCode.RECORD_INVALID, "permanent status failure")
+        registry.get_registration.side_effect = [
+            error, AssertionError("permanent registration error must not be retried"),
+        ]
+
+        with (
+            patch("time.sleep") as sleep,
+            patch.object(manager, "_verify_publication_evidence") as verify,
+            pytest.raises(VerificationError) as caught,
+        ):
+            manager.await_registry_managed_publication(registry)
+        assert caught.value is error
+        registry.get_registration.assert_called_once_with("agent.example.com")
+        sleep.assert_not_called()
+        verify.assert_not_called()
+
+    @pytest.mark.parametrize("transient_failure", [False, True])
+    def test_verifies_observed_dns_record_after_registry_completion(self, transient_failure):
         manager = self._manager()
         registry = MagicMock(spec=RegistryClient)
         registration = AgentRegistration(
@@ -531,9 +578,11 @@ class TestAwaitRegistryManagedPublication:
             dns_published=True,
             raw={"managed": "dnsid"},
         )
-        registry.get_registration.side_effect = [
-            replace(registration, registry_status="PROVISIONING"), registration,
-        ]
+        first = (
+            VerificationError(VerificationCode.RECORD_INVALID, "temporary status failure", transient=True)
+            if transient_failure else replace(registration, registry_status="PROVISIONING")
+        )
+        registry.get_registration.side_effect = [first, registration]
         verified = MagicMock()
         verified.domain = "agent.example.com"
         verified.record.v = "dnsid-draft-01"
