@@ -30,6 +30,9 @@ from dnsid.c2sp_tlog import (
 )
 from dnsid.c2sp_tlog.managed_verification_registry import (
     _DEVELOPMENT_TRUST_PROFILE,
+    _KNOWN_DEVELOPMENT_TRUST_PROFILE,
+    _KNOWN_PRODUCTION_TRUST_PROFILE,
+    _KNOWN_STAGING_TRUST_PROFILE,
     _MANAGED_CATALOG,
     _PARTNERS_TRUST_PROFILE,
     _PRODUCTION_TRUST_PROFILE,
@@ -234,8 +237,25 @@ def test_managed_registry_shares_infrastructure_and_fixed_defaults() -> None:
         "c2sp-tlog:public:https://log.partners.dnsid.ai#EREREREREREREREREREREQ"
     )
     staging = registry.new_reader("c2sp-tlog:public:https://log.stg.dnsid.ai#EREREREREREREREREREREQ")
+    known_development = registry.new_reader(
+        "c2sp-tlog:public:https://log.dev.knownsystems.ai#EREREREREREREREREREREQ"
+    )
+    known_staging = registry.new_reader(
+        "c2sp-tlog:public:https://log.stg.knownsystems.ai#EREREREREREREREREREREQ"
+    )
+    known_production = registry.new_reader(
+        "c2sp-tlog:public:https://log.knownsystems.ai#EREREREREREREREREREREQ"
+    )
 
-    for reader in (development, production, partners, staging):
+    for reader in (
+        development,
+        production,
+        partners,
+        staging,
+        known_development,
+        known_staging,
+        known_production,
+    ):
         assert reader._options.checkpoint_store is store
         assert reader._options.checkpoint_freshness_ms == 600_000
         assert reader._options.max_clock_skew_ms == 0
@@ -348,3 +368,129 @@ def test_managed_bundle_key_ids_match_their_key_bytes() -> None:
             name, key_id, encoded = key.split("+", 2)
             computed = hashlib.sha256(name.encode() + b"\n" + base64.b64decode(encoded)).digest()[:4]
             assert computed.hex() == key_id, f"{entry.log_prefix}: {key}"
+
+
+_KNOWN_PROFILES = {
+    "https://log.dev.knownsystems.ai": (
+        _KNOWN_DEVELOPMENT_TRUST_PROFILE,
+        b"log log.dev.knownsystems.ai+78742e4f+AWJIIC/ZPaSwAprXLHT+JZ7lbTipE3MciQOdUGqG1T3j\n"
+        b"witness dnsid-witness-1 "
+        b"witness.dev.knownsystems.ai/w1+21be2f43+BLsio+pQhADB8grceyZnOVERcoq+V6oJuUNy/IEfhsgt\n"
+        b"quorum dnsid-witness-1\n",
+        [
+            "dnsid-stream-bundle+138e0d41+AXy9jwvH7hY3LgjqoZn3GmNllKTj2TyNApRLKbt/2WSU",
+            "dnsid-stream-bundle+ad87852b+AWWyHhKGf9oKqaRCQfrk9kixjuz4fmhI5P08W5bsYxzj",
+        ],
+    ),
+    "https://log.stg.knownsystems.ai": (
+        _KNOWN_STAGING_TRUST_PROFILE,
+        b"log log.stg.knownsystems.ai+d3504618+AaUJP26XksZKcjmWHs7Cyq244q2efKUH1geUNb6bK5G7\n"
+        b"witness dnsid-witness-1 "
+        b"witness.stg.knownsystems.ai/w1+e3954927+BA8QcWZ+kIuuakqhAbltJ1lFAYeuEqE98AYWyG9eKTil\n"
+        b"quorum dnsid-witness-1\n",
+        [
+            "dnsid-stream-bundle+85bbbf6c+AQEr6kb1rP1ZUJxEUl5ai5KxD86uHDRhHoF9rGewVgvC",
+            "dnsid-stream-bundle+64bf74b3+Aa0M4XaiO7BzP4fn7gLnWOw570/ml9x8xnEiv5fUqIW1",
+        ],
+    ),
+    "https://log.knownsystems.ai": (
+        _KNOWN_PRODUCTION_TRUST_PROFILE,
+        b"log log.knownsystems.ai+ffa9d1c9+Ad/NRlpkBsb9RjFstpUI2V38LF0G9DaJgHWtx5UtS6a7\n"
+        b"witness dnsid-witness-1 "
+        b"witness.knownsystems.ai/w1+f726713e+BPq3DkSLKz0bMwDnwhwb9yhsGKT/0g0iPKZYekuumLfV\n"
+        b"quorum dnsid-witness-1\n",
+        [
+            "dnsid-stream-bundle+4c5de6cf+AeoiHt6HX3fniAPFeNMerJ52HKAlfLxbwFnxvyVM8GPj",
+            "dnsid-stream-bundle+4296adc5+AX8gHt0vQT0mICUKU2svFWcdcIhcQmGHYuR2kk/EsXex",
+        ],
+    ),
+}
+
+
+@pytest.mark.parametrize("log_prefix", sorted(_KNOWN_PROFILES))
+def test_known_catalog_entry_is_exact_trust_profile(log_prefix: str) -> None:
+    document_bytes, policy, keys = _KNOWN_PROFILES[log_prefix]
+    assert json.loads(document_bytes) == {
+        "version": 1,
+        "scope": "public",
+        "log_prefix": log_prefix,
+        "tlog_policy": policy.decode(),
+        "bundle_verifier_keys": keys,
+    }
+    profile = parse_c2sp_tlog_trust_profile(document_bytes)
+    assert profile.policy_document == policy
+    assert profile.bundle_verifier_keys == [parse_signed_note_verifier_key(k) for k in keys]
+    assert [
+        entry.trust_profile_document
+        for entry in _MANAGED_CATALOG
+        if (entry.scope, entry.log_prefix) == ("public", log_prefix)
+    ] == [document_bytes]
+
+
+@pytest.mark.parametrize(
+    ("log_prefix", "fixture", "kid", "state", "events"),
+    [
+        (
+            "https://log.dev.knownsystems.ai",
+            "c2sp-known-dev-stream-bundle-overflow-key.json",
+            "dnsid-stream-bundle+ad87852b",
+            "REVOKED",
+            3,
+        ),
+        (
+            "https://log.stg.knownsystems.ai",
+            "c2sp-known-staging-stream-bundle-kms-key.json",
+            "dnsid-stream-bundle+85bbbf6c",
+            "REVOKED",
+            2,
+        ),
+        (
+            "https://log.stg.knownsystems.ai",
+            "c2sp-known-staging-stream-bundle-overflow-key.json",
+            "dnsid-stream-bundle+64bf74b3",
+            "REVOKED",
+            3,
+        ),
+        (
+            "https://log.knownsystems.ai",
+            "c2sp-known-production-stream-bundle-kms-key.json",
+            "dnsid-stream-bundle+4c5de6cf",
+            "ACTIVE",
+            1,
+        ),
+        (
+            "https://log.knownsystems.ai",
+            "c2sp-known-production-stream-bundle-overflow-key.json",
+            "dnsid-stream-bundle+4296adc5",
+            "REVOKED",
+            3,
+        ),
+    ],
+)
+def test_known_profiles_verify_bundles_their_logs_served(
+    log_prefix: str, fixture: str, kid: str, state: str, events: int
+) -> None:
+    # Bundles the Known logs served on 2026-11-12: streams small enough for each log's
+    # KMS bundle key, and three-event streams over the 4096-byte KMS limit, signed by
+    # the secret-held key. The development log served no KMS-signed bundle among its
+    # recent streams; test_managed_bundle_key_ids_match_their_key_bytes covers that key.
+    profile = parse_c2sp_tlog_trust_profile(_KNOWN_PROFILES[log_prefix][0])
+    data = (Path(__file__).parent / "vectors" / fixture).read_bytes()
+    bundle = json.loads(data)
+    issuance = json.loads(b64url_decode_strict(bundle["events"][0]["entry"]))
+    result = verify_c2sp_stream_bundle(
+        data,
+        C2spStreamBundleVerifierOptions(
+            policy_bytes=profile.policy_document,
+            bundle_keys=profile.bundle_verifier_keys,
+            entity_key=jwk_from_dict(issuance["ek"]),
+            checkpoint_freshness_ms=600_000,
+            max_bundle_lifetime_ms=600_000,
+            max_bundle_bytes=128 * 1024,
+            max_events=16,
+            now=lambda: bundle["expires"] - 60,
+        ),
+    )
+    assert result.bundle_signer_kid == kid
+    assert result.logged_state == state
+    assert len(result.events) == events
