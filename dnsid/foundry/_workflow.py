@@ -185,7 +185,9 @@ def create(
                         )
                     except DNSidError as cause:
                         if cause.registration_response:
-                            operation["creationFacts"] = copy.deepcopy(cause.registration_response)
+                            operation["rejectedCreation"] = copy.deepcopy(
+                                cause.registration_response
+                            )
                             with detached_budget(5.0):
                                 facade.save(key, operation)
                         raise
@@ -412,7 +414,8 @@ class FoundryIdentity:
                 and existing.submission is not None
                 and existing.submission.accepted
             )
-            if accepted or registration.registry_status == "READY":
+            # A saved unaccepted submission resumes with its exact bytes, even at READY.
+            if accepted or (existing is None and registration.registry_status == "READY"):
                 try:
                     recovered = facade.recover_issuance(
                         operation, entity, store, expected=existing if accepted else None,
@@ -431,7 +434,7 @@ class FoundryIdentity:
                         resumable=True,
                     )
                 return
-            if registration.registry_status != "PROVISIONING" or (
+            if registration.registry_status not in {"PROVISIONING", "READY"} or (
                 registration.dns_published is not True
             ):
                 delay = _sleep(delay)

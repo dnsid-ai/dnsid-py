@@ -224,8 +224,10 @@ RegistryClient.verify_agent(domain: str) -> AgentRegistration
 
 Explicitly advance or retry self-managed registration, including ERROR.
 
-Live returns HTTP 409 INVALID_TRANSITION. This never runs automatically.
-Success is workflow progress, not publication or protocol ACTIVE.
+Ordinary self-managed registration needs one call after the record,
+JWKS, and TLS are served; otherwise it stays PROVISIONING until it times
+out. Live returns HTTP 409 INVALID_TRANSITION. This never runs
+automatically. Success is workflow progress, not publication or protocol ACTIVE.
 ``POST /api/v1/agent/{domain}/verify``
 
 ### `async_verify_agent`
@@ -591,6 +593,9 @@ RegistryClient.submit_owner_issuance(domain: str, owner_entry_bytes: bytes, idem
 ```
 
 Submit a persisted entity-only ISSUANCE for registry custody completion.
+
+Not supported yet: the registry exposes no custodied operational public
+key before READY-only claim, so the owner cannot build this envelope.
 
 Send bytes from dnsid.c2sp_tlog.owner_issuance_bytes unchanged. Retry the
 identical envelope and key, including after private-key claim. The receipt

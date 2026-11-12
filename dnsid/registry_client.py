@@ -551,8 +551,10 @@ class RegistryClient(AbstractRegistryClient):
     def verify_agent(self, domain: str) -> AgentRegistration:
         """Explicitly advance or retry self-managed registration, including ERROR.
 
-        Live returns HTTP 409 INVALID_TRANSITION. This never runs automatically.
-        Success is workflow progress, not publication or protocol ACTIVE.
+        Ordinary self-managed registration needs one call after the record,
+        JWKS, and TLS are served; otherwise it stays PROVISIONING until it times
+        out. Live returns HTTP 409 INVALID_TRANSITION. This never runs
+        automatically. Success is workflow progress, not publication or protocol ACTIVE.
         ``POST /api/v1/agent/{domain}/verify``
         """
         return self._run_registry(self._verify_agent_steps(domain))
@@ -1333,6 +1335,9 @@ class RegistryClient(AbstractRegistryClient):
     ) -> SubmissionResult:
         """Submit a persisted entity-only ISSUANCE for registry custody completion.
 
+        Not supported yet: the registry exposes no custodied operational public
+        key before READY-only claim, so the owner cannot build this envelope.
+
         Send bytes from dnsid.c2sp_tlog.owner_issuance_bytes unchanged. Retry the
         identical envelope and key, including after private-key claim. The receipt
         hash identifies the completed bilateral entry, not this uploaded envelope.
@@ -1427,9 +1432,12 @@ class RegistryClient(AbstractRegistryClient):
                 )
         else:
             error_code = str(data.get("error") or "")
+            # TLOG_PUBLICATION_REQUIRED: owner-produced ISSUANCE before the
+            # signed record is live; retry the same bytes once it is.
             if error_code in {
                 "TLOG_SUBMISSION_BUSY",
                 "TLOG_SUBMISSION_INDETERMINATE",
+                "TLOG_PUBLICATION_REQUIRED",
             }:
                 result = SubmissionResult(state="pending", error_code=error_code, raw=data)
             elif response.status_code in (400, 404, 409, 422):

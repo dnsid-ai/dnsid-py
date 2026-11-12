@@ -132,7 +132,7 @@ def test_failed_detail_retains_creation_facts_and_replays_original_request(setup
     with pytest.raises(FoundryError) as caught:
         create("billing-agent", **arguments)
     assert caught.value.identity_id == "id-1" and caught.value.domain == DOMAIN
-    assert saved(store)["creationFacts"]["id"] == "id-1"
+    assert saved(store)["rejectedCreation"]["id"] == "id-1"
     server.register_live_agent = register
     with create("billing-agent", **arguments) as identity:
         assert identity.domain == DOMAIN
