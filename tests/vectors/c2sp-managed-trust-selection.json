@@ -26,19 +26,19 @@
       "trustMode": "trust-profile"
     },
     {
-      "id": "known-development",
+      "id": "identity-digital-known-development",
       "scope": "public",
       "logPrefix": "https://log.dev.knownsystems.ai",
       "trustMode": "trust-profile"
     },
     {
-      "id": "known-staging",
+      "id": "identity-digital-known-staging",
       "scope": "public",
       "logPrefix": "https://log.stg.knownsystems.ai",
       "trustMode": "trust-profile"
     },
     {
-      "id": "known-production",
+      "id": "identity-digital-known-production",
       "scope": "public",
       "logPrefix": "https://log.knownsystems.ai",
       "trustMode": "trust-profile"
@@ -150,7 +150,7 @@
       "lr": "c2sp-tlog:public:https://log.dev.knownsystems.ai#EREREREREREREREREREREQ",
       "expected": {
         "accepted": true,
-        "catalogEntry": "known-development",
+        "catalogEntry": "identity-digital-known-development",
         "trustMode": "trust-profile"
       }
     },
@@ -175,7 +175,7 @@
       "lr": "c2sp-tlog:public:https://log.stg.knownsystems.ai#EREREREREREREREREREREQ",
       "expected": {
         "accepted": true,
-        "catalogEntry": "known-staging",
+        "catalogEntry": "identity-digital-known-staging",
         "trustMode": "trust-profile"
       }
     },
@@ -200,7 +200,7 @@
       "lr": "c2sp-tlog:public:https://log.knownsystems.ai#EREREREREREREREREREREQ",
       "expected": {
         "accepted": true,
-        "catalogEntry": "known-production",
+        "catalogEntry": "identity-digital-known-production",
         "trustMode": "trust-profile"
       }
     },
