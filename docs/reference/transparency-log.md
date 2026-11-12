@@ -1671,6 +1671,23 @@ normalized_origin_policy(policy: C2spTlogPolicy, origin: str) -> NormalizedOrigi
 
 Resolve, validate, and normalize the policy for *origin*.
 
+## `owner_issuance_bytes`
+
+```python
+from dnsid.c2sp_tlog import owner_issuance_bytes
+```
+
+```python
+owner_issuance_bytes(prepared: PreparedC2spTlogEvent) -> bytes
+```
+
+Serialize an entity-only genesis for Identity Digital's custody flow.
+
+Validates the canonical context, all key material and the entity signature.
+This partial envelope is not a complete entry and cannot use safe append.
+Persist these exact bytes and the identity-scoped idempotency key before
+calling RegistryClient.submit_owner_issuance.
+
 ## `parse_c2sp_event_entry`
 
 ```python

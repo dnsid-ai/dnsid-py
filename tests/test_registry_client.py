@@ -24,9 +24,6 @@ from dnsid.interfaces import AbstractRegistryClient
 from dnsid.models import (
     AgentRegistration,
     AgentRegistrationInput,
-    LiveProofReissueRequest,
-    LiveProofRequest,
-    LiveProvisioningResponse,
     RegistryAgentStatus,
 )
 from dnsid.registry_client import RegistryClient
@@ -81,7 +78,7 @@ def _post_capturing(response: dict):
     """Patch _post to capture the request body and return a fixed response."""
     captured: list[dict] = []
 
-    def _post(self, path: str, body=None, extra_headers=None, expected_status=None):
+    def _post(self, path: str, body=None, extra_headers=None, expected_status=None, **kwargs):
         captured.append(
             {"path": path, "body": body or {}, "headers": extra_headers}
         )
@@ -101,33 +98,6 @@ def _live_key(**changes: str) -> JWK:
     raw["kid"] = compute_thumbprint(raw)
     raw.update(changes)
     return jwk_from_dict(raw)
-
-
-def _live_challenge_response(
-    key: JWK,
-    *,
-    domain: str = "live.example",
-    challenge: str = "proof-challenge",
-    agent_id: str = "agent-123",
-) -> dict:
-    transcript = {
-        "protocol": "dnsid-live-provisioning-pop/v1",
-        "org_id": "org-123",
-        "agent_id": agent_id,
-        "fqdn": domain,
-        "key_id": key.thumbprint(),
-        "nonce": challenge,
-        "expires_at": "2026-09-03T14:00:00Z",
-    }
-    return {
-        "request_id": "live-1",
-        "agent_id": agent_id,
-        "status": "challenge_pending",
-        "challenge": challenge,
-        "challenge_message": b64url_encode(
-            json.dumps(transcript, separators=(",", ":")).encode()
-        ),
-    }
 
 
 class TestRegisterAgent:
@@ -179,63 +149,20 @@ class TestRegisterAgent:
             )
         assert "capabilities_url" not in captured[0]["body"]
 
-    @pytest.mark.parametrize("domain_member", [{}, {"domain": None}, {"domain": ""}])
-    def test_live_registration_uses_dedicated_operation_and_derives_domain(self, domain_member):
+    def test_live_registration_uses_creation_snapshot_and_detail(self):
         key = _live_key()
-        response = _live_challenge_response(key)
-        response.update(domain_member)
-        ctx, captured = _post_capturing(response)
-        with ctx:
+        ctx, captured = _post_capturing(_REGISTER_RESPONSE)
+        with ctx, patch.object(RegistryClient, "get_agent_detail", return_value=_registration(authority="registry")):
             result = _make_client().register_live_agent(
                 LiveAgentRegistrationInput(public_key_jwk=key), "live-1"
             )
-
-        assert isinstance(result, LiveProvisioningResponse)
-        assert result.domain == "live.example"
-        assert result.challenge_transcript is not None
-        assert result.challenge_transcript.nonce == "proof-challenge"
-        assert captured[0] == {
-            "path": "/api/v1/agent",
-            "body": {
-                "public_key": key.to_dict(),
-                "environment": "production",
-                "tier": "live",
-                "managed": True,
-            },
-            "headers": {"Idempotency-Key": "live-1"},
+        assert isinstance(result, AgentRegistration)
+        assert result.domain == _DOMAIN and result.id == "agent-123"
+        assert result.publication_config.log_ref == _PUBLICATION_CONFIG["log_ref"]
+        assert captured[0]["body"] == {
+            "public_key": key.to_dict(), "environment": "production", "tier": "live", "managed": True,
         }
-
-    @pytest.mark.parametrize("domain_member", [{}, {"domain": None}, {"domain": ""}])
-    def test_live_registration_replay_allows_empty_challenge_fields(self, domain_member):
-        key = _live_key()
-        response = {
-            "request_id": "live-1",
-            "agent_id": "agent-123",
-            "status": "provider_deferred",
-            "challenge": "",
-            "challenge_message": "",
-        }
-        response.update(domain_member)
-        ctx, _ = _post_capturing(response)
-        with ctx:
-            result = _make_client().register_live_agent(
-                LiveAgentRegistrationInput(public_key_jwk=key), "live-1"
-            )
-
-        assert result.challenge == ""
-        assert result.domain == ""
-        assert result.challenge_transcript is None
-
-    def test_live_registration_rejects_mismatched_challenge_transcript(self):
-        key = _live_key()
-        response = _live_challenge_response(key)
-        response["challenge"] = "different"
-        ctx, _ = _post_capturing(response)
-        with ctx:
-            with pytest.raises(VerificationError, match="challenge transcript"):
-                _make_client().register_live_agent(
-                    LiveAgentRegistrationInput(public_key_jwk=key), "live-1"
-                )
+        assert captured[0]["headers"] == {"Idempotency-Key": "live-1"}
 
     @pytest.mark.parametrize(
         "key",
@@ -838,144 +765,17 @@ class TestPublishedRecordModel:
         assert result.protocol_status.state == "ACTIVE"
 
 
-class TestLiveProof:
-    def test_submits_proof_with_matching_idempotency_key(self):
-        key = _live_key()
-        ctx, captured = _post_capturing(
-            {"request_id": "live-1", "agent_id": "agent-123", "status": "provider_deferred"}
-        )
-        with ctx:
-            result = _make_client().submit_live_proof(
-                _DOMAIN,
-                LiveProofRequest(
-                    request_id="live-1",
-                    challenge="challenge",
-                    public_key_jwk=key,
-                    signature="c2ln",
-                ),
-            )
-
-        assert captured[0] == {
-            "path": f"/api/v1/agent/{_DOMAIN}/proof",
-            "body": {
-                "request_id": "live-1",
-                "challenge": "challenge",
-                "public_key": key.to_dict(),
-                "signature": "c2ln",
-            },
-            "headers": {"Idempotency-Key": "live-1"},
-        }
-        assert result.status == "provider_deferred"
-
-    def test_reissues_proof_with_matching_key_and_idempotency_key(self):
-        key = _live_key()
-        response = _live_challenge_response(
-            key, domain=_DOMAIN, challenge="replacement"
-        )
-        ctx, captured = _post_capturing(response)
-        with ctx:
-            result = _make_client().reissue_live_proof(
-                _DOMAIN,
-                LiveProofReissueRequest(request_id="live-1", public_key_jwk=key),
-            )
-
-        assert captured[0] == {
-            "path": f"/api/v1/agent/{_DOMAIN}/proof/reissue",
-            "body": {"request_id": "live-1"},
-            "headers": {"Idempotency-Key": "live-1"},
-        }
-        assert "public_key" not in captured[0]["body"]
-        assert result.challenge == "replacement"
-        assert result.domain == _DOMAIN
-        assert result.challenge_transcript.nonce == "replacement"
-
-    def test_reissue_rejects_transcript_for_another_key(self):
-        other_key = _live_key()
-        other_key._raw["x"] = b64url_encode(bytes(range(1, 33)))
-        response = _live_challenge_response(
-            other_key, domain=_DOMAIN, challenge="replacement"
-        )
-        ctx, _ = _post_capturing(response)
-        with ctx, pytest.raises(VerificationError, match="challenge transcript"):
-            _make_client().reissue_live_proof(
-                _DOMAIN,
-                LiveProofReissueRequest(request_id="live-1", public_key_jwk=_live_key()),
-            )
-
-    @pytest.mark.parametrize("key", [_live_key(x="abc"), _live_key(d="private")])
-    def test_reissue_rejects_invalid_or_private_key_before_post(self, key):
-        client = _make_client()
-        with patch.object(client, "_post") as post:
-            with pytest.raises(ArgumentError, match="public|Ed25519"):
-                client.reissue_live_proof(
-                    _DOMAIN,
-                    LiveProofReissueRequest(
-                        request_id="live-1", public_key_jwk=key
-                    ),
-                )
-        post.assert_not_called()
-
-    def test_proof_rejects_private_key_material(self):
-        client = _make_client()
-        request = LiveProofRequest(
-            request_id="live-1",
-            challenge="challenge",
-            public_key_jwk=_live_key(d="private"),
-            signature="c2ln",
-        )
-        with patch.object(client, "_post") as post:
-            with pytest.raises(ArgumentError, match="private JWK"):
-                client.submit_live_proof(_DOMAIN, request)
-        post.assert_not_called()
-
-
 class TestExactRegistrationStatuses:
-    @pytest.mark.parametrize(
-        ("status", "call", "expected"),
-        [
-            (
-                202,
-                lambda client: client.register_agent(
-                    AgentRegistrationInput(domain=_DOMAIN, environment="production")
-                ),
-                201,
-            ),
-            (
-                200,
-                lambda client: client.register_live_agent(
-                    LiveAgentRegistrationInput(public_key_jwk=_live_key()), "live-1"
-                ),
-                202,
-            ),
-            (
-                200,
-                lambda client: client.submit_live_proof(
-                    _DOMAIN,
-                    LiveProofRequest(
-                        request_id="live-1",
-                        challenge="challenge",
-                        public_key_jwk=_live_key(),
-                        signature="c2ln",
-                    ),
-                ),
-                202,
-            ),
-            (
-                200,
-                lambda client: client.reissue_live_proof(
-                    _DOMAIN,
-                    LiveProofReissueRequest(
-                        request_id="live-1", public_key_jwk=_live_key()
-                    ),
-                ),
-                202,
-            ),
-        ],
-    )
-    def test_rejects_unexpected_success_status(self, status, call, expected):
+    @pytest.mark.parametrize("status", [200, 202])
+    @pytest.mark.parametrize("live", [False, True])
+    def test_rejects_unexpected_success_status(self, status, live):
         with patch_registry_http("httpx.post", return_value=_http_response(status, json_body={})):
-            with pytest.raises(VerificationError, match=f"expected HTTP {expected}"):
-                call(_make_client())
+            with pytest.raises(VerificationError, match="expected HTTP 201"):
+                client = _make_client()
+                if live:
+                    client.register_live_agent(LiveAgentRegistrationInput(_live_key()), "live-1")
+                else:
+                    client.register_agent(AgentRegistrationInput(domain=_DOMAIN))
 
 
 class TestVerifyAgent:
@@ -1008,9 +808,6 @@ class TestVerifyAgent:
         assert result.domain == "other.example.com"
 
 
-_CHALLENGE_RESPONSE = {"id": "ag-123", "status": "VERIFICATION"}
-
-
 def _http_response(status_code: int = 202, json_body: dict | None = None) -> MagicMock:
     """Build a mock httpx response; json_body=None simulates an empty 202 body."""
     resp = MagicMock()
@@ -1021,52 +818,6 @@ def _http_response(status_code: int = 202, json_body: dict | None = None) -> Mag
     else:
         resp.json.return_value = json_body
     return resp
-
-
-class TestSubmitChallengeSignature:
-    def _submit(self, resp: MagicMock, signature: bytes | str = "c2lnbmF0dXJl"):
-        with patch_registry_http("httpx.post", return_value=resp) as mock_post:
-            result = _make_client().submit_challenge_signature(_DOMAIN, "bm9uY2U", signature)
-        return result, mock_post
-
-    def test_posts_nonce_and_signature_to_challenge_endpoint(self):
-        _, mock_post = self._submit(_http_response(json_body=_CHALLENGE_RESPONSE))
-        url = mock_post.call_args.args[0]
-        assert url.endswith(f"/api/v1/agent/{_DOMAIN}/challenge")
-        assert mock_post.call_args.kwargs["json"] == {
-            "nonce": "bm9uY2U",
-            "signature": "c2lnbmF0dXJl",
-        }
-
-    def test_bytes_signature_is_base64url_encoded(self):
-        _, mock_post = self._submit(
-            _http_response(json_body=_CHALLENGE_RESPONSE), signature=b"\xfb\xef\xbe"
-        )
-        # base64url alphabet, unpadded — not standard base64 ("++++" / trailing "=").
-        assert mock_post.call_args.kwargs["json"]["signature"] == "----"
-
-    def test_returns_lifecycle_result_with_mapped_state(self):
-        result, _ = self._submit(_http_response(json_body=_CHALLENGE_RESPONSE))
-        assert result.id == "ag-123"
-        assert result.state == "VERIFICATION"
-        assert result.raw == _CHALLENGE_RESPONSE
-
-    def test_status_note_captured_when_present(self):
-        result, _ = self._submit(
-            _http_response(json_body={**_CHALLENGE_RESPONSE, "status_note": "checking DNS"})
-        )
-        assert result.status_note == "checking DNS"
-
-    def test_empty_202_body_returns_minimal_result(self):
-        # The registry may accept the challenge with 202 and no body.
-        result, _ = self._submit(_http_response(202, json_body=None))
-        assert result.id == ""
-        assert result.state == ""
-        assert result.raw == {}
-
-    def test_http_error_raises(self):
-        with pytest.raises(VerificationError, match="HTTP 409"):
-            self._submit(_http_response(409, json_body=None))
 
 
 # ---------------------------------------------------------------------------
@@ -1278,20 +1029,6 @@ _MUTATION_CALLS = [
         _DOMAIN, "agent-123", RegistryRevocationReason.KEY_COMPROMISE
     ),
     lambda c: c.retire_agent(_DOMAIN, "agent-123"),
-    lambda c: c.submit_challenge_signature(_DOMAIN, "bm9uY2U", "c2ln"),
-    lambda c: c.submit_live_proof(
-        _DOMAIN,
-        LiveProofRequest(
-            request_id="live-1",
-            challenge="challenge",
-            public_key_jwk=_live_key(),
-            signature="c2ln",
-        ),
-    ),
-    lambda c: c.reissue_live_proof(
-        _DOMAIN,
-        LiveProofReissueRequest(request_id="live-1", public_key_jwk=_live_key()),
-    ),
     lambda c: c.unregister_agent(_DOMAIN),
     lambda c: c.publish_signature(_DOMAIN, "EdDSA:sig"),
     lambda c: c.canonical_record_content(_DOMAIN, "kid-1"),
@@ -1598,6 +1335,6 @@ class TestRegistrationCarriesAgentId:
     def test_registration_from_status_reads_id(self):
         from dnsid.registry_client import _registration_from_response
 
-        data = {"domain": _DOMAIN, "status": "READY", "id": "agent-456", "managed": "dnsid"}
+        data = {"domain": _DOMAIN, "status": "READY", "id": "agent-456", "managed": "dnsid", "dns_published": True}
         reg = _registration_from_response(_DOMAIN, "https://registry.example.com", data)
         assert reg.id == "agent-456"

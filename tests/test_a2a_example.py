@@ -1,17 +1,15 @@
 """A2A example boundaries and cleanup; requires the optional example packages."""
 
 import asyncio
-import base64
 import importlib
 import importlib.util
-import threading
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from dnsid import ParseError, RegistryClient, VerificationCode, VerificationError
+from dnsid import ParseError, VerificationCode, VerificationError
 
 
 @pytest.fixture
@@ -119,92 +117,7 @@ async def test_unexpected_errors_are_not_reported_as_authentication_failures(exa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fails", [False, True])
-async def test_challenge_signing_is_offloaded(example, fails):
-    startup = example.startup
-    started, release = threading.Event(), threading.Event()
-    loop_thread = threading.get_ident()
-    key_provider, registry = MagicMock(), MagicMock()
-    registry.async_get_agent_status = AsyncMock(side_effect=[
-        SimpleNamespace(failed=False, terminal=False, raw={"challenge": base64.urlsafe_b64encode(b"nonce").decode()}),
-        SimpleNamespace(failed=False, terminal=False, ready_for_publication=True),
-    ])
-    registry.async_submit_challenge_signature = AsyncMock()
-
-    def sign(payload):
-        assert threading.get_ident() != loop_thread
-        assert payload == b"nonce"
-        started.set()
-        assert release.wait(2)
-        if fails:
-            raise RuntimeError("KMS failed")
-        return b"signature"
-
-    key_provider.sign.side_effect = sign
-    task = asyncio.create_task(startup._verify_with_challenge(
-        key_provider, registry, "bob.test", SimpleNamespace(registry_status="VERIFICATION")
-    ))
-    try:
-        async with asyncio.timeout(2):
-            while not started.is_set():
-                await asyncio.sleep(0)
-        assert not task.done()
-    finally:
-        release.set()
-    if fails:
-        with pytest.raises(RuntimeError, match="KMS failed"):
-            await task
-        registry.async_submit_challenge_signature.assert_not_awaited()
-    else:
-        await task
-        assert registry.async_submit_challenge_signature.await_args.args[2] == b"signature"
-
-
-@pytest.mark.asyncio
-async def test_registration_uses_native_registry_calls(example):
-    registry = MagicMock(spec=RegistryClient)
-    registry.async_get_agent_status.side_effect = [
-        None, SimpleNamespace(published=True, ready_for_publication=False, registry_status="ACTIVE"),
-    ]
-    manager = MagicMock()
-    manager.local_domain = "bob.test"
-    manager.config.identity.capabilities_url = "https://bob.test/card"
-    with patch.object(asyncio.get_running_loop(), "run_in_executor",
-                      side_effect=AssertionError("unexpected worker")):
-        await example.startup._register_and_publish(manager, MagicMock(), registry)
-    registry.async_register_agent.assert_awaited_once()
-    assert registry.async_register_agent.await_args.args[0].domain == "bob.test"
-    registry.register_agent.assert_not_called()
-    registry.get_agent_status.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("fails", [False, True])
-async def test_cancelled_startup_operation_is_drained_before_cleanup(example, fails):
-    started, release = threading.Event(), threading.Event()
-
-    def blocking():
-        started.set()
-        assert release.wait(2)
-        if fails:
-            raise RuntimeError("late failure")
-
-    task = asyncio.create_task(example.startup._run_blocking(blocking))
-    try:
-        async with asyncio.timeout(2):
-            while not started.is_set():
-                await asyncio.sleep(0)
-        task.cancel()
-        await asyncio.sleep(0)
-        assert not task.done()
-    finally:
-        release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("stage", ["create", "start", "registration", "self_verify", "success"])
+@pytest.mark.parametrize("stage", ["create", "start", "self_verify", "success"])
 async def test_startup_resources_are_closed_on_failure_and_shutdown(example, monkeypatch, stage):
     startup, calls = example.startup, []
     manager = MagicMock()
@@ -215,17 +128,12 @@ async def test_startup_resources_are_closed_on_failure_and_shutdown(example, mon
         url="https://bob.test", start=AsyncMock(),
         stop=AsyncMock(side_effect=lambda: calls.append("agent")),
     )
-    registry = MagicMock()
-    registry.__aenter__ = AsyncMock(return_value=registry)
-    registry.__aexit__ = AsyncMock(side_effect=lambda *args: calls.append("registry"))
-    create, register, poll = AsyncMock(return_value=agent), AsyncMock(), AsyncMock()
+    create, poll = AsyncMock(return_value=agent), AsyncMock()
     failure = RuntimeError(stage)
     if stage == "create":
         create.side_effect = failure
     elif stage == "start":
         agent.start.side_effect = failure
-    elif stage == "registration":
-        register.side_effect = failure
     elif stage == "self_verify":
         poll.side_effect = failure
     monkeypatch.setenv("DNSID_AGENT_PORT", "3002")
@@ -236,14 +144,12 @@ async def test_startup_resources_are_closed_on_failure_and_shutdown(example, mon
     monkeypatch.setattr(startup, "construct_identity_manager", lambda *args: manager)
     monkeypatch.setattr(startup.EchoAgent, "create", create)
     monkeypatch.setattr(startup, "echo_executor", lambda *args: None)
-    monkeypatch.setattr(startup, "registry_client_from_environment", lambda: registry)
-    monkeypatch.setattr(startup, "_register_and_publish", register)
     monkeypatch.setattr(startup, "poll", poll)
     monkeypatch.setattr(startup, "asyncio", SimpleNamespace(sleep=AsyncMock()))
     if stage == "success":
         idm, returned_agent, stop = await startup.start_echo_agent()
         assert idm is manager and returned_agent is agent
-        assert calls == ["registry"]
+        assert calls == []
         await stop()
         await stop()
     else:
@@ -252,7 +158,6 @@ async def test_startup_resources_are_closed_on_failure_and_shutdown(example, mon
     assert calls[-1] == "manager"
     assert calls.count("manager") == 1
     assert calls.count("agent") == (stage != "create")
-    assert calls.count("registry") == (stage not in ("create", "start"))
 
 
 @pytest.mark.asyncio

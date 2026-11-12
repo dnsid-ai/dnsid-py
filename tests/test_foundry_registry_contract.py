@@ -5,44 +5,10 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
-from dnsid import LocalKeyProvider, RegistryClient, SubmissionResult
-from dnsid.exceptions import RegistryRequestError, ValidationError
+from dnsid import RegistryClient, SubmissionResult
+from dnsid.exceptions import RegistryRequestError
 from dnsid.foundry._issuance import IssuanceRegistry
-from dnsid.registry_client import _live_provisioning_from_response
-from tests.test_foundry import DOMAIN, FoundryServer
-
-
-def test_challenge_free_replay_domain_present_absent_or_invalid():
-    provider = LocalKeyProvider.generate()
-    raw = {
-        "request_id": "request-1",
-        "agent_id": "id-1",
-        "status": "PROVISIONING",
-        "challenge": "",
-        "challenge_message": "",
-    }
-    assert _live_provisioning_from_response(raw, provider.signing_key()).domain == ""
-    assert (
-        _live_provisioning_from_response(
-            dict(raw, domain="Agent.Example.COM."), provider.signing_key()
-        ).domain
-        == DOMAIN
-    )
-    with pytest.raises(ValidationError):
-        _live_provisioning_from_response(
-            dict(raw, domain="https://invalid"), provider.signing_key()
-        )
-
-
-def test_wire_domain_must_match_challenge_after_normalization():
-    provider = LocalKeyProvider.generate()
-    server = FoundryServer(provider)
-    raw = server.challenge(provider.signing_key(), "request-1")
-    raw["domain"] = "Agent.Example.COM."
-    assert _live_provisioning_from_response(raw, provider.signing_key()).domain == DOMAIN
-    raw["domain"] = "other.example.com"
-    with pytest.raises(ValidationError):
-        _live_provisioning_from_response(raw, provider.signing_key())
+from tests.test_foundry import DOMAIN
 
 
 def test_onboarding_without_governance_domain_keeps_proof_but_is_not_ready():

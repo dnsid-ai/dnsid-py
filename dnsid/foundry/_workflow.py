@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, fields, replace
 from typing import Any
 
-from .._utils import b64url_decode_strict, b64url_encode, normalize_fqdn
+from .._utils import b64url_encode, normalize_fqdn
 from .._verification_budget import (
     BudgetExhausted,
     detached_budget,
@@ -42,7 +42,9 @@ from ..config_loading import (
 from ..enums import VerificationCode
 from ..exceptions import (
     ArgumentError,
+    DNSidError,
     RegistryRequestError,
+    UnsupportedRegistryResponse,
     ValidationError,
     VerificationError,
 )
@@ -55,15 +57,12 @@ from ..models import (
     IdentityConfig,
     IssuanceEvent,
     LiveAgentRegistrationInput,
-    LiveProofReissueRequest,
-    LiveProofRequest,
     PublicationConfig,
     SubmissionResult,
 )
 from ..registry import LogRegistry
 from ..registry_client import (
     RegistryClient,
-    _live_challenge_from_response,
     _live_public_jwk_dict,
     _validate_publication_config,
 )
@@ -147,7 +146,7 @@ def create(
                 if not operation:
                     public = _live_key(selected)
                     operation.update(
-                        schemaVersion=1,
+                        schemaVersion=2,
                         phase="creation-pending",
                         registryUrl=key[0],
                         organizationId=org,
@@ -155,6 +154,10 @@ def create(
                         name=name,
                         keySource=facade.key_source(public),
                         initialPublicKey=public,
+                        registrationKey=registration_key(org, name, selected.thumbprint()),
+                        issuanceKey=issuance_key(
+                            registration_key(org, name, selected.thumbprint())
+                        ),
                         creationInput={
                             "tier": "live",
                             "managed": True,
@@ -170,58 +173,45 @@ def create(
                 if not (operation.get("identityId") and operation.get("domain")):
                     frozen = operation["creationInput"]
                     creation_key = JWK.from_dict(frozen["public_key"])
-                    request_id = registration_key(org, name, creation_key.thumbprint())
-                    response = facade.registry.register_live_agent(
-                        LiveAgentRegistrationInput(
-                            public_key_jwk=creation_key,
-                            name=frozen["name"],
-                            environment=frozen.get("environment", ""),
-                            capabilities_url=frozen.get("capabilities_url", ""),
-                        ),
-                        request_id,
-                    )
+                    try:
+                        response = facade.registry.register_live_agent(
+                            LiveAgentRegistrationInput(
+                                public_key_jwk=creation_key,
+                                name=frozen["name"],
+                                environment=frozen.get("environment", ""),
+                                capabilities_url=frozen.get("capabilities_url", ""),
+                            ),
+                            operation["registrationKey"],
+                        )
+                    except DNSidError as cause:
+                        if cause.registration_response:
+                            operation["creationFacts"] = copy.deepcopy(cause.registration_response)
+                            with detached_budget(5.0):
+                                facade.save(key, operation)
+                        raise
                     remaining_seconds()
                     if (
-                        response.request_id != request_id
-                        or (
-                            operation.get("identityId")
-                            and operation["identityId"] != response.agent_id
-                        )
-                        or (
-                            operation.get("domain")
-                            and response.domain
-                            and operation["domain"] != response.domain
-                        )
+                        operation.get("identityId") not in {None, response.id}
+                        or operation.get("domain") not in {None, response.domain}
                     ):
-                        raise _BindingMismatch("Live replay changed its request or identity ID")
+                        raise _BindingMismatch("Live replay changed its identity binding")
                     operation.update(
-                        identityId=response.agent_id,
-                        requestId=response.request_id,
-                        registryStatus=response.status,
+                        identityId=response.id,
+                        registryStatus=response.registry_status,
                     )
                     if response.domain:
                         operation["domain"] = response.domain
-                    if operation.get("domain"):
+                    if response.id and response.domain:
                         operation["phase"] = "identity-known"
-                    if response.challenge_transcript is not None:
-                        if response.challenge_transcript.org_id != org:
-                            raise _BindingMismatch(
-                                "Live challenge belongs to another organization"
-                            )
-                        operation["proof"] = {
-                            "challenge": response.challenge,
-                            "challengeMessage": response.challenge_message,
-                            "submissionState": "prepared",
-                        }
-                        operation["phase"] = "proof-pending"
                     facade.save(key, operation)
                     _registry_outcome(operation)
-                    if not operation.get("domain"):
+                    if not (response.id and response.domain):
                         raise FoundryError(
-                            "registry accepted creation without a domain; rerun create",
+                            "registry accepted incomplete creation facts; rerun create",
                             operation=operation,
                             resumable=True,
                         )
+                    facade.publication(key, operation, response)
                 else:
                     registration = facade.registration(operation)
                     facade.remember_registration(key, operation, registration)
@@ -308,14 +298,15 @@ class FoundryIdentity:
                     selected = facade.signing_key(operation)
                     registration = facade.registration(operation)
                     facade.remember_registration(key, operation, registration)
-                    self._proof(operation, registration)
                     delay = 1.0
-                    while registration.registry_status not in {"VERIFIED", "READY"}:
+                    while True:
+                        if registration.dns_published and registration.registry_status in {
+                            "PROVISIONING", "READY",
+                        }:
+                            break
                         delay = _sleep(delay)
                         registration = facade.registration(operation)
                         facade.remember_registration(key, operation, registration)
-                    # A used proof can settle only after the registry advances.
-                    self._proof(operation, registration)
                     facade.publication(key, operation, registration)
                     # A new manager isolates readiness from application caches and acceptance.
                     with facade.manager(operation) as verifier:
@@ -325,6 +316,13 @@ class FoundryIdentity:
                         self._issuance(operation, entity, issuance_store)
                         delay = 1.0
                         while True:
+                            registration = facade.registration(operation)
+                            facade.remember_registration(key, operation, registration)
+                            if registration.registry_status != "READY" or (
+                                registration.dns_published is not True
+                            ):
+                                delay = _sleep(delay)
+                                continue
                             try:
                                 observed = verifier.verify_local_publication()
                                 self.state = observed.registry_status.state
@@ -388,84 +386,6 @@ class FoundryIdentity:
                 raise
             raise error from cause
 
-    def _proof(self, operation: dict[str, Any], registration: AgentRegistration) -> None:
-        proof = operation.get("proof")
-        if not proof:
-            return
-        facade = self._facade
-        if proof.get("submissionState") == "accepted" or (
-            registration.registry_status in {"VERIFIED", "READY"}
-        ):
-            if operation["phase"] == "proof-pending":
-                proof.setdefault("outcome", registration.registry_status)
-                operation["phase"] = "identity-known"
-                facade.save(self._key, operation)
-            return
-        initial = JWK.from_dict(operation["initialPublicKey"])
-        _, transcript = _live_challenge_from_response(
-            label="saved Foundry proof",
-            agent_id=operation["identityId"],
-            challenge=proof["challenge"],
-            challenge_message=proof["challengeMessage"],
-            expected_key_id=initial.thumbprint(),
-            expected_domain=self.domain,
-        )
-        if transcript.org_id != operation["organizationId"]:
-            raise FoundryStateError("saved proof organization mismatch")
-        if transcript.expires_at <= datetime.datetime.now(datetime.UTC):
-            try:
-                response = facade.registry.reissue_live_proof(
-                    self.domain,
-                    LiveProofReissueRequest(operation["requestId"], initial),
-                )
-            except RegistryRequestError as cause:
-                if cause.status_code == 409:
-                    return
-                raise
-            if response.request_id != operation["requestId"] or (
-                response.agent_id != operation["identityId"]
-                or response.challenge_transcript.org_id != operation["organizationId"]
-            ):
-                raise _BindingMismatch("replacement proof changed identity bindings")
-            proof.update(
-                challenge=response.challenge,
-                challengeMessage=response.challenge_message,
-                submissionState="prepared",
-            )
-            proof.pop("signature", None)
-            facade.save(self._key, operation)
-        message = b64url_decode_strict(proof["challengeMessage"])
-        if "signature" not in proof:
-            proof["signature"] = b64url_encode(
-                provider_call(
-                    facade.provider.sign_key,
-                    initial.kid,
-                    message,
-                )
-            )
-            facade.save(self._key, operation)
-        if not initial.verify(message, b64url_decode_strict(proof["signature"])):
-            raise FoundryStateError("saved proof signature does not match the frozen key")
-        proof["submissionState"] = "submitting"
-        facade.save(self._key, operation)
-        response_proof = facade.registry.submit_live_proof(
-            self.domain,
-            LiveProofRequest(
-                operation["requestId"],
-                proof["challenge"],
-                initial,
-                proof["signature"],
-            ),
-        )
-        if response_proof.request_id != operation["requestId"] or (
-            response_proof.agent_id != operation["identityId"]
-        ):
-            raise _BindingMismatch("proof receipt changed identity bindings")
-        proof.update(submissionState="accepted", outcome=response_proof.status)
-        operation["phase"] = "identity-known"
-        operation["registryStatus"] = response_proof.status
-        facade.save(self._key, operation)
-
     def _issuance(
         self,
         operation: dict[str, Any],
@@ -473,28 +393,6 @@ class FoundryIdentity:
         store: IssuanceStore,
     ) -> None:
         facade = self._facade
-        existing = store.load_managed_issuance(self.domain)
-        if (
-            existing is not None
-            and existing.submission is not None
-            and existing.submission.accepted
-        ) or (existing is None and operation.get("registryStatus") == "READY"):
-            try:
-                recovered = facade.recover_issuance(operation, entity, store, expected=existing)
-            except (C2spTlogError, VerificationError) as cause:
-                raise FoundryError(
-                    "accepted issuance cannot yet be reconciled with verified log evidence",
-                    operation=operation,
-                    resumable=True,
-                    cause=cause,
-                ) from cause
-            if not recovered:
-                raise FoundryError(
-                    "accepted issuance is not visible in the log yet",
-                    operation=operation,
-                    resumable=True,
-                )
-            return
         arguments = dict(
             domain=self.domain,
             log_reference=operation["publicationConfig"]["logRef"],
@@ -506,12 +404,44 @@ class FoundryIdentity:
         )
         delay = 1.0
         while True:
+            registration = facade.registration(operation)
+            facade.remember_registration(self._key, operation, registration)
+            existing = store.load_managed_issuance(self.domain)
+            accepted = (
+                existing is not None
+                and existing.submission is not None
+                and existing.submission.accepted
+            )
+            if accepted or registration.registry_status == "READY":
+                try:
+                    recovered = facade.recover_issuance(
+                        operation, entity, store, expected=existing if accepted else None,
+                    )
+                except (C2spTlogError, VerificationError) as cause:
+                    raise FoundryError(
+                        "accepted issuance cannot yet be reconciled with verified log evidence",
+                        operation=operation,
+                        resumable=True,
+                        cause=cause,
+                    ) from cause
+                if not recovered:
+                    raise FoundryError(
+                        "accepted issuance is not visible in the log yet",
+                        operation=operation,
+                        resumable=True,
+                    )
+                return
+            if registration.registry_status != "PROVISIONING" or (
+                registration.dns_published is not True
+            ):
+                delay = _sleep(delay)
+                continue
             try:
-                if store.load_managed_issuance(self.domain) is None:
+                if existing is None:
                     state = begin_managed_issuance(
                         **arguments,
                         governance_id=operation["governanceId"],
-                        idempotency_key=issuance_key(operation["requestId"]),
+                        idempotency_key=operation["issuanceKey"],
                     )
                 else:
                     state = resume_managed_issuance(**arguments)
@@ -843,12 +773,26 @@ class _Foundry:
         remaining_seconds()
 
     def registration(self, operation: dict[str, Any]) -> AgentRegistration:
-        result = self.registry.get_registration(operation["domain"])
+        delay = 1.0
+        while True:
+            try:
+                result = self.registry.get_registration(operation["domain"])
+                break
+            except VerificationError as cause:
+                if not cause.transient:
+                    raise
+                delay = _sleep(delay)
         remaining_seconds()
         if result is None:
             raise FoundryError("registry identity is not available", resumable=True)
         if result.id != operation["identityId"] or result.domain != operation["domain"]:
             raise _BindingMismatch("registry read changed the saved identity binding")
+        if result.publication_authority != "registry":
+            raise UnsupportedContract("Foundry requires registry-managed publication")
+        if type(result.dns_published) is not bool:
+            raise UnsupportedRegistryResponse(
+                "registry-managed detail requires boolean dns_published"
+            )
         return result
 
     def remember_registration(
@@ -1001,7 +945,7 @@ class _Foundry:
                 log_reference=reference,
                 entity_public_key=entity,
                 operational_public_key=initial,
-                idempotency_key=issuance_key(operation["requestId"]),
+                idempotency_key=operation["issuanceKey"],
                 entry_bytes=event.data,
                 entry_hash=hashlib.sha256(event.data).hexdigest(),
                 submission=SubmissionResult(
@@ -1082,6 +1026,11 @@ def _error(cause: Exception, operation: dict[str, Any]) -> FoundryError:
             if not getattr(cause, field):
                 setattr(cause, field, value)
         return cause
+    if isinstance(cause, UnsupportedRegistryResponse):
+        return UnsupportedRegistry(
+            "registry-managed detail requires boolean dns_published",
+            operation=operation, cause=cause,
+        )
     if isinstance(cause, BudgetExhausted):
         return FoundryDeadline(
             "Foundry deadline exceeded or cancelled",

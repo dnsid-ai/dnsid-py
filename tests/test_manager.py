@@ -24,7 +24,6 @@ from dnsid.models import (
     AgentRegistration,
     CanonicalRecordContentResponse,
     PublishedRecord,
-    RegistryAgentStatus,
 )
 from dnsid.registry_client import RegistryClient
 from tests._config import make_config
@@ -532,16 +531,9 @@ class TestAwaitRegistryManagedPublication:
             dns_published=True,
             raw={"managed": "dnsid"},
         )
-        registry.get_registration.return_value = registration
-        registry.wait_for_status.return_value = RegistryAgentStatus(
-            registry_status="READY",
-            dns_published=True,
-            protocol_status=None,
-            ready_for_publication=False,
-            published=True,
-            failed=False,
-            terminal=False,
-        )
+        registry.get_registration.side_effect = [
+            replace(registration, registry_status="PROVISIONING"), registration,
+        ]
         verified = MagicMock()
         verified.domain = "agent.example.com"
         verified.record.v = "dnsid-draft-01"
@@ -552,8 +544,11 @@ class TestAwaitRegistryManagedPublication:
         with (
             patch.object(manager, "_verify_publication_evidence", return_value=verified) as verify,
             patch.object(manager, "verify_domain") as public_verify,
+            patch("time.sleep") as sleep,
         ):
             result = manager.await_registry_managed_publication(registry)
+        sleep.assert_called_once()
+        assert registry.get_registration.call_count == 2
 
         # Protocol-only internal path; public verify_domain (with acceptance) is not used.
         verify.assert_called_once_with("agent.example.com")

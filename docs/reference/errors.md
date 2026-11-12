@@ -44,6 +44,19 @@ Data parses correctly but violates semantic constraints.
 Examples: malformed gi; ku host mismatch; bad ka value.
 Never transient.
 
+## `UnsupportedRegistryResponse`
+
+```python
+from dnsid import UnsupportedRegistryResponse
+```
+
+*Bases:* `ValidationError`
+
+Authenticated registry-managed detail lacks a boolean dns_published.
+
+Known identity facts remain in registration_response. No preparation or
+replacement is safe until the registry supplies the required contract.
+
 ## `VerificationError`
 
 ```python

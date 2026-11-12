@@ -752,24 +752,26 @@ loopback registry does not require a credential. An agent
 bearer token is not sufficient. This also applies to `prepare_key_rotation()`
 and the other transparency-log preparation operations.
 
-Self-managed agents prove key possession through a challenge handshake: after
-`verify_agent()`, the status document exposes a single-use nonce
-(`get_agent_status(domain).raw["challenge"]`); sign the base64url-decoded nonce
-bytes with the active key and submit via
-`submit_challenge_signature(domain, nonce, signature)`, then poll with
-`wait_for_status(domain, target_state="VERIFIED")`. See
-[examples/a2a/startup.py](https://github.com/dnsid-ai/dnsid-py/blob/main/examples/a2a/startup.py) for the complete
-register → verify → challenge → publish sequence.
+Registration stays `PROVISIONING` through signed publication and bilateral
+ISSUANCE. The operational ISSUANCE signature proves possession; registration
+nonce and Live proof APIs are removed. `VERIFICATION` and `VERIFIED` remain
+readable management values, but do not establish completion.
 
-Managed Live uses the separate `register_live_agent()` operation. Sign the exact
-bytes obtained by base64url-decoding its `challenge_message`, and send proof to
-its derived `domain`. A successful `reissue_live_proof()` response supersedes all
-older challenges: only the latest challenge and message may be signed or submitted.
+`register_live_agent(input, idempotency_key)` returns `AgentRegistration` from
+HTTP 201 creation or replay and checks the response `Idempotency-Key` header.
+For registry-managed publication, authenticated detail must contain boolean
+`dns_published`. Missing or invalid values raise `UnsupportedRegistryResponse`
+with known identity facts. When it is true during `PROVISIONING`, prepare and
+complete ISSUANCE without waiting for `READY` or public `ACTIVE`.
 
-Live status requires owner/session/API-key authentication because it can expose
-its proof challenge; only legacy status is public. Calling a hosted mutation without
-`api_key` raises `ArgumentError` before any request is sent. The credential never
-appears in `repr()`/`str()`, exceptions, or logs. See the
+Self-managed owners can explicitly call `verify_agent()` to advance registration
+or retry `ERROR`; the SDK does not restart errors automatically. Live returns
+HTTP 409 `INVALID_TRANSITION`. Protocol activation still requires accepted
+bilateral ISSUANCE and verified public evidence.
+
+Hosted management detail reads and mutations require owner credentials.
+Calling without `api_key` raises `ArgumentError` before network I/O.
+The credential never appears in `repr()`/`str()`, exceptions, or logs. See the
 [registry reference](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/registry.md) for the full method list and how to
 inspect the registry-managed signed record (effective `ku`/`su`).
 
@@ -794,6 +796,21 @@ Initial issuance uses the shared durable coordinator in `dnsid.c2sp_tlog`:
 `complete_managed_issuance`. The caller supplies exclusive durable storage, owns
 publication and retries, and verifies public ACTIVE before completion. See
 [integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
+
+For client-controlled publication with a registry-custodied operational key,
+`dnsid.c2sp_tlog.owner_issuance_bytes(prepared)` serializes an entity-only
+genesis for `RegistryClient.submit_owner_issuance()`. Save the exact envelope
+and identity-scoped idempotency key before submission. The receipt hash identifies
+the server-completed entry. Before recording completion, fetch that entry and
+verify inclusion, both signatures, expected bindings, unchanged signed payload
+and entity signature, and its exact hash. Missing evidence permits the same-byte
+retry, including after private-key claim. Partial envelopes cannot use
+`entry_bytes()` or safe append.
+
+Foundry recovery documents use schema version 2, with persisted
+`registrationKey` and `issuanceKey`. Version 1 and `proof-pending` documents are
+rejected without overwriting state or creating a replacement. Foundry remains
+excluded from distributions pending server acceptance.
 
 To move an established signer, use explicit `rotate_operational_key()` with a
 `target_key_provider` and stable old/target provider references. To change the signing

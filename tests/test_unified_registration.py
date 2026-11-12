@@ -186,7 +186,7 @@ def test_creation_timeout_does_not_retry_without_key():
 
 @pytest.mark.parametrize("managed", ["dnsid", "self", "unknown"])
 def test_creation_uses_authenticated_detail_and_preserves_snapshot_on_failure(managed):
-    detail = {"id": "agent-123", "domain": _DOMAIN, "status": "READY", "managed": managed}
+    detail = {"id": "agent-123", "domain": _DOMAIN, "status": "READY", "managed": managed, "dns_published": True}
     with (
         patch_registry_http("httpx.post", return_value=_FakeResponse(201, _REGISTER_RESPONSE)),
         patch_registry_http("httpx.get", return_value=_FakeResponse(200, detail)) as get,

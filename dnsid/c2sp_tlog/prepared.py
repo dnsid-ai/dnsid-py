@@ -320,6 +320,59 @@ def entry_bytes(
     return data
 
 
+def owner_issuance_bytes(prepared: PreparedC2spTlogEvent) -> bytes:
+    """Serialize an entity-only genesis for Identity Digital's custody flow.
+
+    Validates the canonical context, all key material and the entity signature.
+    This partial envelope is not a complete entry and cannot use safe append.
+    Persist these exact bytes and the identity-scoped idempotency key before
+    calling RegistryClient.submit_owner_issuance.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from .._crypto import valid_ed25519_public_key
+    from .._utils import b64url_decode_strict
+    from ..models import _PRIVATE_JWK_MEMBERS, JWKS
+
+    _assert_prepared_integrity(prepared)
+    envelope = prepared.envelope
+    if envelope.get("type") != "ISSUANCE" or envelope.get("seq") != 0:
+        raise C2spTlogVerificationError("owner issuance requires ISSUANCE genesis")
+    if set(envelope.get("sigs", {})) != {"ae"}:
+        raise C2spTlogVerificationError("owner issuance requires only the entity signature")
+    _reject_bare_fqdn_writer_stream(prepared.reference, str(envelope["fqdn"]))
+    gi = envelope.get("gi")
+    if not isinstance(gi, str) or normalize_fqdn(gi) != gi:
+        raise C2spTlogVerificationError("owner issuance requires a normalized governance ID")
+    keys = [_as_jwk(envelope.get(name), name) for name in ("ek", "ku")]
+    for key in keys:
+        if _PRIVATE_JWK_MEMBERS.intersection(key._raw):
+            raise C2spTlogVerificationError("owner issuance requires public keys")
+        JWKS([key]).validate_operational()
+        try:
+            x = b64url_decode_strict(key._raw["x"])
+            if b64url_encode(x) != key._raw["x"]:
+                raise ValueError("noncanonical public key coordinate")
+            if key.kty == "OKP":
+                if not valid_ed25519_public_key(x):
+                    raise ValueError("invalid Ed25519 point")
+            else:
+                y = b64url_decode_strict(key._raw["y"])
+                if len(x) != 32 or len(y) != 32 or b64url_encode(y) != key._raw["y"]:
+                    raise ValueError("invalid EC coordinates")
+                ec.EllipticCurvePublicNumbers(
+                    int.from_bytes(x, "big"), int.from_bytes(y, "big"), ec.SECP256R1(),
+                ).public_key()
+        except (KeyError, TypeError, ValueError) as cause:
+            raise C2spTlogVerificationError("invalid owner issuance public key") from cause
+    if keys[0].thumbprint() == keys[1].thumbprint():
+        raise C2spTlogVerificationError("entity and operational keys must be distinct")
+    _verify_existing_signatures(prepared, C2spVerificationContext())
+    data = canonical_bytes(envelope)
+    _assert_entry_size(data)
+    return data
+
+
 def write_prepared_event(
     prepared: PreparedC2spTlogEvent,
     *,
