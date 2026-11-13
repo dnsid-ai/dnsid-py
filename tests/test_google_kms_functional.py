@@ -211,13 +211,23 @@ def test_unsupported_settings_rejected_before_rpc(tmp_path, official_rpc):
     assert evidence.calls == [] and evidence.resources.calls == []
 
 
+@pytest.mark.parametrize("fault", ["denied", "disabled", "missing-version"])
 @pytest.mark.parametrize("operation", ["get_public_key", "asymmetric_sign"])
-def test_external_open_or_sign_failure_propagates_without_substitution(tmp_path, official_rpc, operation):
+def test_external_open_or_sign_failure_propagates_without_substitution(tmp_path, official_rpc, operation, fault):
     """**Mode**: fake-only KMS. Exact external failure reaches public caller."""
-    from google.api_core.exceptions import PermissionDenied
+    from google.api_core.exceptions import PermissionDenied, FailedPrecondition, NotFound
 
     evidence = publication(tmp_path, key_source={"provider": "google-kms", "keyRef": VERSION})
-    failure = PermissionDenied("fixture denies selected version")
+    failure_type = {"denied": PermissionDenied, "disabled": FailedPrecondition, "missing-version": NotFound}[fault]
+    failure = failure_type(f"{fault} selected {VERSION}")
+    before = evidence.path.read_bytes()
+    forbidden = []
+
+    def forbidden_create(request):
+        forbidden.append(request)
+        raise AssertionError("forbidden create_crypto_key_version")
+
+    official_rpc.create_crypto_key_version = forbidden_create
     attempted = []
 
     def denied(request):
@@ -226,18 +236,27 @@ def test_external_open_or_sign_failure_propagates_without_substitution(tmp_path,
 
     if operation == "get_public_key":
         official_rpc.get_public_key = denied
-        with pytest.raises(PermissionDenied) as caught:
+        with pytest.raises(Exception) as caught:
             identity_manager_from_file(evidence.path, deps=evidence.deps)
         assert evidence.calls == [] and evidence.resources.calls == []
     else:
         with identity_manager_from_file(evidence.path, deps=evidence.deps) as manager:
             profile = JoseProfile.from_identity_manager(manager)
             checked_profile(manager, profile=profile)
+            public = manager.key_provider.signing_key().to_dict()
+            ids = manager.key_provider.list_key_ids()
+            healthy_count = len(official_rpc.calls)
             official_rpc.asymmetric_sign = denied
-            with pytest.raises(PermissionDenied) as caught:
+            with pytest.raises(Exception) as caught:
                 profile.create_jws(b"must not return substitute signature")
-            assert manager.key_provider.signing_key().to_dict() == evidence.key.to_dict()
+            assert manager.key_provider.signing_key().to_dict() == public
+            assert manager.key_provider.list_key_ids() == ids
+            assert len(official_rpc.calls) == healthy_count
     assert caught.value is failure
+    assert forbidden == []
+    assert evidence.path.read_bytes() == before
+    assert all(name in {"get_public_key", "asymmetric_sign"} and request["name"] == VERSION
+               for name, request in official_rpc.calls)
     assert attempted == [VERSION]
     assert all(name != "create_crypto_key_version" for name, _ in official_rpc.calls)
 

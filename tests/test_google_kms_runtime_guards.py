@@ -24,24 +24,43 @@ from tests.test_google_kms_runtime_contract import (
 )
 
 
-class ServiceUnavailable(Exception):
-    """Independent service failure, not a provider exception type."""
-
-
 @pytest.mark.parametrize("operation", ["get_public_key", "asymmetric_sign"])
 def test_given_service_failure_when_opening_or_signing_then_no_result_or_substitute(operation):
-    """**Mode**: fake-only (KMS service exceptions). Given/When/Then: fail closed."""
+    """**Mode**: fake-only. Service code 14, distinct from missing version (5)."""
+    from google.api_core.exceptions import ServiceUnavailable
+
     client = FakeKms()
     attempted = []
+    forbidden = []
+
+    def mutation(request):
+        forbidden.append(request)
+        raise AssertionError("forbidden create_crypto_key_version")
+
+    client.create_crypto_key_version = mutation
 
     def unavailable(request):
         attempted.append(request["name"])
-        raise ServiceUnavailable("fixture KMS unavailable")
+        raise ServiceUnavailable(f"service failure for {VERSION}")
 
-    setattr(client, operation, unavailable)
-    with pytest.raises((ServiceUnavailable, ArgumentError, ValueError)):
-        provider(client).sign(b"must not return a substitute signature")
+    if operation == "get_public_key":
+        client.get_public_key = unavailable
+        with pytest.raises(Exception):
+            provider(client)
+        assert client.calls == []
+    else:
+        signer = provider(client)
+        public = signer.signing_key().to_dict()
+        ids = signer.list_key_ids()
+        assert public["crv"] == "Ed25519" and ids == [public["kid"]]
+        client.asymmetric_sign = unavailable
+        with pytest.raises(Exception):
+            signer.sign(b"must not return substitute signature")
+        assert signer.signing_key().to_dict() == public
+        assert signer.list_key_ids() == ids
+        assert [name for name, _ in client.calls] == ["get_public_key"]
     assert attempted == [VERSION]
+    assert forbidden == []
     assert all(request["name"] == VERSION for _, request in client.calls)
 
 

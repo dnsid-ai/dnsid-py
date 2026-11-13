@@ -112,3 +112,59 @@ def test_aws_config_open_functional(tmp_path, monkeypatch, mode):
     assert sum(operation == "CreateKey" for operation, _ in calls) == 0
     assert {params["KeyId"] for _, params in calls} == {selected}
     assert evidence.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("fault,boundary", [
+    (fault, boundary)
+    for fault in ("AccessDeniedException", "DisabledException", "NotFoundException", "KMSInternalException")
+    for boundary in ("open", "sign")
+    if (fault, boundary) != ("AccessDeniedException", "open")  # existing config-open denial
+])
+def test_existing_key_faults_fail_closed(tmp_path, monkeypatch, fault, boundary):
+    """**Mode**: fake-only. Given exact ARN, When RPC fails, Then no result/replacement."""
+    import boto3
+    from dnsid import AwsKmsConfig, AwsKmsKeyProvider
+    from dnsid.aws_kms_key_provider import BotoKmsFacade
+
+    key = Ed25519PrivateKey.from_private_bytes(SEED)
+    calls = []
+    failure = ClientError({"Error": {"Code": fault, "Message": f"{fault} selected {A}"}},
+                          "GetPublicKey" if boundary == "open" else "Sign")
+
+    def rpc(client, operation, params):
+        # Record BEFORE raising, including every forbidden native operation.
+        calls.append((operation, params.copy()))
+        if operation == "GetPublicKey":
+            if boundary == "open":
+                raise failure
+            return {"KeyId": A, "PublicKey": key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo),
+                    "KeySpec": "ECC_NIST_EDWARDS25519", "KeyUsage": "SIGN_VERIFY", "SigningAlgorithms": ["ED25519_SHA_512"]}
+        if operation == "Sign":
+            raise failure
+        raise AssertionError(f"forbidden AWS operation {operation}")
+
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setattr(BaseClient, "_make_api_call", rpc)
+    native = boto3.client("kms", region_name="us-east-1", aws_access_key_id="fixture", aws_secret_access_key="fixture")
+    before = list(tmp_path.iterdir())
+    try:
+        def load():
+            return AwsKmsKeyProvider.load(BotoKmsFacade(native), AwsKmsConfig(active_key_id=A, algorithm="ED25519_SHA_512"))
+        if boundary == "open":
+            with pytest.raises(Exception):
+                load()
+        else:
+            signer = load()
+            public = signer.signing_key().to_dict()
+            ids = signer.list_key_ids()
+            assert public["crv"] == "Ed25519" and ids == [public["kid"]]
+            with pytest.raises(Exception):
+                signer.sign(b"must not return a signature")
+            assert signer.signing_key().to_dict() == public
+            assert signer.list_key_ids() == ids
+        assert [operation for operation, _ in calls] == (["GetPublicKey"] if boundary == "open" else ["GetPublicKey", "Sign"])
+        assert all(params["KeyId"] == A for _, params in calls)
+        assert sum(operation not in {"GetPublicKey", "Sign"} for operation, _ in calls) == 0
+        assert list(tmp_path.iterdir()) == before
+    finally:
+        native.close()
