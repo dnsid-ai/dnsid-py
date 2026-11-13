@@ -24,6 +24,24 @@
       "scope": "public",
       "logPrefix": "https://log.stg.dnsid.ai",
       "trustMode": "trust-profile"
+    },
+    {
+      "id": "identity-digital-known-development",
+      "scope": "public",
+      "logPrefix": "https://log.dev.knownsystems.ai",
+      "trustMode": "trust-profile"
+    },
+    {
+      "id": "identity-digital-known-staging",
+      "scope": "public",
+      "logPrefix": "https://log.stg.knownsystems.ai",
+      "trustMode": "trust-profile"
+    },
+    {
+      "id": "identity-digital-known-production",
+      "scope": "public",
+      "logPrefix": "https://log.knownsystems.ai",
+      "trustMode": "trust-profile"
     }
   ],
   "cases": [
@@ -122,6 +140,81 @@
     {
       "id": "deceptive-staging-hostname-fails-closed",
       "lr": "c2sp-tlog:public:https://log.stg.dnsid.ai.attacker.example#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "exact-known-development-selector",
+      "lr": "c2sp-tlog:public:https://log.dev.knownsystems.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": true,
+        "catalogEntry": "identity-digital-known-development",
+        "trustMode": "trust-profile"
+      }
+    },
+    {
+      "id": "known-development-wrong-scope-fails-closed",
+      "lr": "c2sp-tlog:testnet:https://log.dev.knownsystems.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "deceptive-known-development-hostname-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.dev.knownsystems.ai.attacker.example#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "exact-known-staging-selector",
+      "lr": "c2sp-tlog:public:https://log.stg.knownsystems.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": true,
+        "catalogEntry": "identity-digital-known-staging",
+        "trustMode": "trust-profile"
+      }
+    },
+    {
+      "id": "known-staging-wrong-scope-fails-closed",
+      "lr": "c2sp-tlog:testnet:https://log.stg.knownsystems.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "deceptive-known-staging-hostname-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.stg.knownsystems.ai.attacker.example#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "exact-known-production-selector",
+      "lr": "c2sp-tlog:public:https://log.knownsystems.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": true,
+        "catalogEntry": "identity-digital-known-production",
+        "trustMode": "trust-profile"
+      }
+    },
+    {
+      "id": "known-production-wrong-scope-fails-closed",
+      "lr": "c2sp-tlog:testnet:https://log.knownsystems.ai#EREREREREREREREREREREQ",
+      "expected": {
+        "accepted": false,
+        "reason": "unknown managed selector"
+      }
+    },
+    {
+      "id": "deceptive-known-production-hostname-fails-closed",
+      "lr": "c2sp-tlog:public:https://log.knownsystems.ai.attacker.example#EREREREREREREREREREREQ",
       "expected": {
         "accepted": false,
         "reason": "unknown managed selector"

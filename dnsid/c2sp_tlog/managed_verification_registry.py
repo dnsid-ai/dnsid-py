@@ -78,6 +78,54 @@ _STAGING_TRUST_PROFILE = (
 )
 
 
+# Matches the reviewed service profile internal/c2sptrust/profiles/known-dev.json in
+# Identity-Digital/dnsid; the log's discovery endpoints are not trust anchors.
+_KNOWN_DEVELOPMENT_TRUST_PROFILE = (
+    b'{\n  "version": 1,\n  "scope": "public",\n'
+    b'  "log_prefix": "https://log.dev.knownsystems.ai",\n  "tlog_policy": "'
+    b"log log.dev.knownsystems.ai+78742e4f+AWJIIC/ZPaSwAprXLHT+JZ7lbTipE3MciQOdUGqG1T3j\\n"
+    b"witness dnsid-witness-1 "
+    b"witness.dev.knownsystems.ai/w1+21be2f43+BLsio+pQhADB8grceyZnOVERcoq+V6oJuUNy/IEfhsgt\\n"
+    b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
+    b'    "dnsid-stream-bundle+138e0d41+'
+    b'AXy9jwvH7hY3LgjqoZn3GmNllKTj2TyNApRLKbt/2WSU",\n'
+    b'    "dnsid-stream-bundle+ad87852b+'
+    b'AWWyHhKGf9oKqaRCQfrk9kixjuz4fmhI5P08W5bsYxzj"\n  ]\n}'
+)
+
+
+# Matches the reviewed service profile internal/c2sptrust/profiles/known-staging.json in
+# Identity-Digital/dnsid; the log's discovery endpoints are not trust anchors.
+_KNOWN_STAGING_TRUST_PROFILE = (
+    b'{\n  "version": 1,\n  "scope": "public",\n'
+    b'  "log_prefix": "https://log.stg.knownsystems.ai",\n  "tlog_policy": "'
+    b"log log.stg.knownsystems.ai+d3504618+AaUJP26XksZKcjmWHs7Cyq244q2efKUH1geUNb6bK5G7\\n"
+    b"witness dnsid-witness-1 "
+    b"witness.stg.knownsystems.ai/w1+e3954927+BA8QcWZ+kIuuakqhAbltJ1lFAYeuEqE98AYWyG9eKTil\\n"
+    b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
+    b'    "dnsid-stream-bundle+85bbbf6c+'
+    b'AQEr6kb1rP1ZUJxEUl5ai5KxD86uHDRhHoF9rGewVgvC",\n'
+    b'    "dnsid-stream-bundle+64bf74b3+'
+    b'Aa0M4XaiO7BzP4fn7gLnWOw570/ml9x8xnEiv5fUqIW1"\n  ]\n}'
+)
+
+
+# Matches the reviewed service profile internal/c2sptrust/profiles/known-production.json in
+# Identity-Digital/dnsid; the log's discovery endpoints are not trust anchors.
+_KNOWN_PRODUCTION_TRUST_PROFILE = (
+    b'{\n  "version": 1,\n  "scope": "public",\n'
+    b'  "log_prefix": "https://log.knownsystems.ai",\n  "tlog_policy": "'
+    b"log log.knownsystems.ai+ffa9d1c9+Ad/NRlpkBsb9RjFstpUI2V38LF0G9DaJgHWtx5UtS6a7\\n"
+    b"witness dnsid-witness-1 "
+    b"witness.knownsystems.ai/w1+f726713e+BPq3DkSLKz0bMwDnwhwb9yhsGKT/0g0iPKZYekuumLfV\\n"
+    b'quorum dnsid-witness-1\\n",\n  "bundle_verifier_keys": [\n'
+    b'    "dnsid-stream-bundle+4c5de6cf+'
+    b'AeoiHt6HX3fniAPFeNMerJ52HKAlfLxbwFnxvyVM8GPj",\n'
+    b'    "dnsid-stream-bundle+4296adc5+'
+    b'AX8gHt0vQT0mICUKU2svFWcdcIhcQmGHYuR2kk/EsXex"\n  ]\n}'
+)
+
+
 @dataclass
 class DnsidManagedVerificationOptions:
     """Shared infrastructure for managed DNSid log verification.
@@ -120,6 +168,21 @@ _MANAGED_CATALOG = (
         "https://log.stg.dnsid.ai",
         trust_profile_document=_STAGING_TRUST_PROFILE,
     ),
+    _ManagedTrustEntry(
+        "public",
+        "https://log.dev.knownsystems.ai",
+        trust_profile_document=_KNOWN_DEVELOPMENT_TRUST_PROFILE,
+    ),
+    _ManagedTrustEntry(
+        "public",
+        "https://log.stg.knownsystems.ai",
+        trust_profile_document=_KNOWN_STAGING_TRUST_PROFILE,
+    ),
+    _ManagedTrustEntry(
+        "public",
+        "https://log.knownsystems.ai",
+        trust_profile_document=_KNOWN_PRODUCTION_TRUST_PROFILE,
+    ),
 )
 
 
@@ -133,8 +196,11 @@ def create_dnsid_managed_verification_registry(
     snapshots are bundled with the SDK and selected only for an exact canonical
     ``(scope, log_prefix)`` pair. The catalog covers the development,
     production, partner (``https://log.partners.dnsid.ai``), and staging
-    (``https://log.stg.dnsid.ai``) logs, each preferring signed stream bundles
-    with safe raw-scan fallback.
+    (``https://log.stg.dnsid.ai``) logs, and the Known development
+    (``https://log.dev.knownsystems.ai``), staging
+    (``https://log.stg.knownsystems.ai``), and production
+    (``https://log.knownsystems.ai``) logs, each preferring signed stream
+    bundles with safe raw-scan fallback.
     """
     if options is None:
         options = DnsidManagedVerificationOptions()
