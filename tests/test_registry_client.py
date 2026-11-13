@@ -433,6 +433,7 @@ class TestRegisterAgent:
         [
             (RegistryRevocationReason.OWNER_REQUEST, "owner_request"),
             (RegistryRevocationReason.KEY_COMPROMISE, "key_compromise"),
+            (RegistryRevocationReason.POLICY_VIOLATION, "policy_violation"),
         ],
     )
     def test_revoke_agent_sends_typed_reason_to_registry(self, reason, wire_value):
