@@ -84,23 +84,6 @@ for i in $(seq 1 60); do
 done
 echo " ready"
 
-# Wait until Bob has published its identity (logged "published" or "already published").
-echo -n "    waiting for Bob to publish identity"
-for i in $(seq 1 90); do
-    if ! kill -0 "${BOB_PID}" 2>/dev/null; then
-        echo ""
-        echo "ERROR: Bob exited early. Log:" >&2
-        cat "${BOB_LOG}" >&2
-        exit 1
-    fi
-    if grep -qE "published|already published" "${BOB_LOG}" 2>/dev/null; then
-        break
-    fi
-    echo -n "."
-    sleep 1
-done
-echo " done"
-
 # ---------------------------------------------------------------------------
 # 3. Run Alice — sends one message to Bob then exits
 # ---------------------------------------------------------------------------

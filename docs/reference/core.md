@@ -298,7 +298,7 @@ published record's version against the configured publish profile.
 **Arguments:**
 
 - `registry_client` (`AbstractRegistryClient`): Client for the registry publication API.
-- `timeout` (`float`): Maximum seconds to wait for the registry to report publication. — default `120.0`
+- `timeout` (`float`): Maximum seconds for registry polling and public verification. — default `120.0`
 - `interval` (`float`): Seconds between registry status polls. — default `5.0`
 
 **Returns:**
@@ -307,8 +307,8 @@ published record's version against the configured publish profile.
 
 **Raises:**
 
-- `ValidationError`: If the identity is not registered, the client controls publication, the registry fails or never confirms DNS publication, or the published record uses an unexpected version.
-- `VerificationError`: If verification of the published identity fails; carries a VerificationCode.
+- `ValidationError`: If the identity is not registered, the client controls publication, the registry reports failure or a terminal state, or the published record uses an unexpected version.
+- `VerificationError`: If public verification fails or the call deadline expires; carries a VerificationCode.
 
 ### `rotate_operational_key`
 

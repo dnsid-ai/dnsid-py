@@ -1,9 +1,8 @@
-"""Agent startup: load config from env, build IdentityManager, register with registry."""
+"""Start an agent using the identity published and issued by the local CLI."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
@@ -14,29 +13,11 @@ from server import EchoAgent, EchoAgentOptions
 from dnsid import (
     IdentityConfig,
     IdentityManager,
-    KeyProvider,
     LoadedConfig,
-    RegistryClient,
     construct_identity_manager,
     load_environment,
     merge_loaded_config,
-    registry_client_from_environment,
 )
-from dnsid.models import AgentRegistrationInput, RegistryAgentStatus
-
-
-class PollAbortError(RuntimeError):
-    """Raised inside a poll callback to stop retrying immediately."""
-
-
-async def _run_blocking(fn, *args):
-    """Keep resources open until an offloaded operation ends, even on cancellation."""
-    task = asyncio.create_task(asyncio.to_thread(fn, *args))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await asyncio.gather(task, return_exceptions=True)
-        raise
 
 
 async def poll(label: str, fn) -> None:
@@ -46,105 +27,20 @@ async def poll(label: str, fn) -> None:
         try:
             await fn()
             return
-        except PollAbortError:
-            raise
         except Exception as exc:
             last_exc = exc
             await asyncio.sleep(0.5)
     raise RuntimeError(f"{label} failed: {last_exc}")
 
 
-async def _verify_with_challenge(
-    key_provider: KeyProvider,
-    registry: RegistryClient,
-    domain: str,
-    status: RegistryAgentStatus,
-) -> None:
-    """Drive the registry VERIFICATION handshake.
-
-    Request verification, wait for the challenge nonce on the status document,
-    sign the decoded nonce bytes with the active key, submit the signature,
-    then wait for the agent to reach VERIFIED.
-    """
-    if status.registry_status != "VERIFICATION":
-        await registry.async_verify_agent(domain)
-
-    nonce = ""
-
-    async def _await_challenge() -> None:
-        nonlocal nonce
-        current = await registry.async_get_agent_status(domain)
-        if current is None:
-            raise RuntimeError("agent not found in registry")
-        if current.failed or current.terminal:
-            raise PollAbortError(f"registry status is {current.registry_status}")
-        raw_nonce = current.raw.get("challenge")
-        if not isinstance(raw_nonce, str) or not raw_nonce:
-            raise RuntimeError(f"no challenge yet (status {current.registry_status})")
-        nonce = raw_nonce
-
-    await poll(f"registry challenge {domain}", _await_challenge)
-
-    padding = "=" * (-len(nonce) % 4)
-    signature = await _run_blocking(key_provider.sign, base64.urlsafe_b64decode(nonce + padding))
-    await registry.async_submit_challenge_signature(domain, nonce, signature)
-
-    async def _await_verified() -> None:
-        current = await registry.async_get_agent_status(domain)
-        if current is None:
-            raise RuntimeError("agent not found in registry")
-        if current.failed or current.terminal:
-            raise PollAbortError(f"registry status is {current.registry_status}")
-        if not current.ready_for_publication and not current.published:
-            raise RuntimeError(f"still {current.registry_status}")
-
-    await poll(f"registry verified {domain}", _await_verified)
-
-
-async def _register_and_publish(
-    idm: IdentityManager, key_provider: KeyProvider, registry: RegistryClient
-) -> None:
-    domain = idm.local_domain
-    status = await registry.async_get_agent_status(domain)
-
-    if status is None:
-        print(f"{domain} registering with registry")
-        await registry.async_register_agent(
-            AgentRegistrationInput(
-                domain=domain,
-                capabilities_url=idm.config.identity.capabilities_url or "",
-            ),
-        )
-        status = await registry.async_get_agent_status(domain)
-        if status is None:
-            raise RuntimeError("agent not found in registry after registration")
-
-    if not status.published and not status.ready_for_publication:
-        await _verify_with_challenge(key_provider, registry, domain, status)
-        status = await registry.async_get_agent_status(domain)
-
-    if status is not None and status.ready_for_publication:
-        published = await _run_blocking(idm.publish_to_registry, registry)
-        print(f"{domain} published {published.owner_name}")
-    else:
-        print(f"{domain} already published ({status.registry_status if status else 'unknown'})")
-
-
 async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, Callable[[], Awaitable[None]]]:
     # `dnsid local run` exports the SDK environment: identity fields, DNS
     # routing (DNSID_DNS_SERVER), TLS trust (DNSID_CA_BUNDLE), the trusted C2SP
-    # policy (DNSID_LOG_POLICY_URL), the key directory (DNSID_CONFIG_DIR), and
-    # the registry credential (DNSID_API_KEY). The registry client reads the
-    # credential separately; the example adds the agent-card URL as a code overlay.
+    # policy (DNSID_LOG_POLICY_URL), and the key directory (DNSID_CONFIG_DIR).
+    # The CLI already owns registration and issuance; startup only verifies.
+    # The example adds the agent-card URL as a code overlay.
     public_url = os.environ.get("DNSID_PUBLIC_URL", "").strip() or None
     agent_port = int(os.environ["DNSID_AGENT_PORT"])
-    if not os.environ.get("DNSID_API_KEY", "").strip():
-        raise SystemExit(
-            "DNSID_API_KEY is required to register with the registry. Run via "
-            "`dnsid local run` or export it before starting the agent "
-            "(see examples/a2a/README.md)."
-        )
-
     # Load → Merge → Construct: point `cu` at the agent card unless the
     # environment already names a capabilities URL.
     loaded = load_environment()
@@ -174,9 +70,6 @@ async def start_echo_agent() -> tuple[IdentityManager, EchoAgent, Callable[[], A
 
         print(f"{os.environ.get('DNSID_AGENT_NAME') or idm.local_domain} -> {agent.url}")
         await asyncio.sleep(1.0)
-
-        async with registry_client_from_environment() as registry:
-            await _register_and_publish(idm, key_provider, registry)
 
         # CoreDNS reloads the generated zone every two seconds. Wait for that
         # reload before the first self-check so an initial NXDOMAIN isn't cached,

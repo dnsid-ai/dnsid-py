@@ -755,3 +755,9 @@ class AbstractRegistryClient(ABC):
         idempotency_key: str,
     ) -> SubmissionResult:
         """Submit exact prepared-event bytes under a durable idempotency key."""
+
+    def submit_owner_issuance(
+        self, domain: str, owner_entry_bytes: bytes, idempotency_key: str,
+    ) -> SubmissionResult:
+        """Submit an entity-only genesis; verify completed log evidence before activation."""
+        raise NotImplementedError("registry does not support owner-only custody issuance")

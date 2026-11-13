@@ -105,9 +105,6 @@ The primary contract is the DNSid registry API under ``/api/v1``:
 
 * ``POST /api/v1/agent`` — register an agent
 * ``POST /api/v1/agent/{fqdn}/verify`` — request verification
-* ``POST /api/v1/agent/{fqdn}/challenge`` — submit the signed challenge nonce
-* ``POST /api/v1/agent/{fqdn}/proof`` — submit managed Live proof
-* ``POST /api/v1/agent/{fqdn}/proof/reissue`` — reissue managed Live proof
 * ``GET  /api/v1/agent/{fqdn}/status`` — fetch lifecycle state
 * ``POST /api/v1/agent/{fqdn}/record`` — fetch canonical record content
 * ``POST /api/v1/agent/{fqdn}/signature`` — submit signature for publication
@@ -119,9 +116,8 @@ NOT used by VerifyDomain; protocol verification always fetches the signed su end
 Hosted mutation calls require owner credentials (an organization session or
 API key), supplied as ``api_key`` and sent as an ``Authorization: Bearer``
 header. Loopback registry calls do not require credentials. An agent bearer
-token is not sufficient. Legacy status reads are public, but Live status
-requires the same owner authentication because it
-may expose a proof challenge. A configured credential is sent on all reads.
+token is not sufficient. Management detail reads require owner authentication.
+A configured credential is sent on all reads.
 The credential is never included in ``repr()``/``str()``, exceptions, or logs.
 Requests share a protected connection pool, including when transport settings
 are omitted. Every registry operation has an ``async_`` variant using
@@ -203,20 +199,19 @@ Async variant of `register_agent` with the same validation and errors.
 ### `register_live_agent`
 
 ```python
-RegistryClient.register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str) -> LiveProvisioningResponse
+RegistryClient.register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str) -> AgentRegistration
 ```
 
-Start managed Live registration and return its validated proof challenge.
+Create or replay managed Live registration with HTTP 201.
 
-``POST /api/v1/agent`` sends fixed ``tier="live"`` and ``managed=true``
-discriminators. Sign the exact base64url-decoded ``challenge_message``
-bytes; use the derived `LiveProvisioningResponse.domain` for the
-proof route.
+The response Idempotency-Key must match the supplied key. Creation facts
+and the publication snapshot are retained before authenticated detail reads.
+Operational consent is supplied through bilateral ISSUANCE, not a nonce.
 
 ### `async_register_live_agent`
 
 ```python
-RegistryClient.async async_register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str) -> LiveProvisioningResponse
+RegistryClient.async async_register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str) -> AgentRegistration
 ```
 
 Async variant of `register_live_agent` with the same validation and errors.
@@ -227,8 +222,12 @@ Async variant of `register_live_agent` with the same validation and errors.
 RegistryClient.verify_agent(domain: str) -> AgentRegistration
 ```
 
-Request registry verification for a registered self-managed agent.
+Explicitly advance or retry self-managed registration, including ERROR.
 
+Ordinary self-managed registration needs one call after the record,
+JWKS, and TLS are served; otherwise it stays PROVISIONING until it times
+out. Live returns HTTP 409 INVALID_TRANSITION. This never runs
+automatically. Success is workflow progress, not publication or protocol ACTIVE.
 ``POST /api/v1/agent/{domain}/verify``
 
 ### `async_verify_agent`
@@ -312,81 +311,6 @@ RegistryClient.async async_cancel_agent(domain: str) -> LifecycleResult
 ```
 
 Async variant of `cancel_agent` with the same validation and errors.
-
-### `submit_challenge_signature`
-
-```python
-RegistryClient.submit_challenge_signature(domain: str, nonce: str, signature: bytes | str) -> LifecycleResult
-```
-
-Submit the signed verification challenge to prove key possession.
-
-``POST /api/v1/agent/{domain}/challenge``
-
-During the ``VERIFICATION`` lifecycle state the registry exposes a
-challenge nonce on the status document (``raw["challenge"]``).  The
-agent signs the base64url-decoded nonce bytes with its active signing
-key and submits the signature here.  The registry accepts the
-challenge and completes verification asynchronously; use
-`wait_for_status` with ``target_state="VERIFIED"`` afterwards.
-The nonce is single-use — a fresh one must be fetched before retrying.
-
-**Arguments:**
-
-- `domain` (`str`): Agent FQDN.
-- `nonce` (`str`): Challenge nonce exactly as returned by the status endpoint.
-- `signature` (`bytes | str`): Raw signature bytes (base64url-encoded automatically), or an already base64url-encoded signature string.
-
-### `async_submit_challenge_signature`
-
-```python
-RegistryClient.async async_submit_challenge_signature(domain: str, nonce: str, signature: bytes | str) -> LifecycleResult
-```
-
-Async variant of `submit_challenge_signature`.
-
-### `submit_live_proof`
-
-```python
-RegistryClient.submit_live_proof(domain: str, request: LiveProofRequest) -> LiveProofResponse
-```
-
-Submit signed proof for managed Live provisioning.
-
-``POST /api/v1/agent/{domain}/proof`` requires owner/session/API-key
-credentials, not an agent bearer token. ``request.request_id`` is sent
-as the required ``Idempotency-Key`` header.
-
-### `async_submit_live_proof`
-
-```python
-RegistryClient.async async_submit_live_proof(domain: str, request: LiveProofRequest) -> LiveProofResponse
-```
-
-Async variant of `submit_live_proof` with the same validation and errors.
-
-### `reissue_live_proof`
-
-```python
-RegistryClient.reissue_live_proof(domain: str, request: LiveProofReissueRequest) -> LiveProofReissueResponse
-```
-
-Request a replacement challenge for an expired managed Live proof.
-
-``POST /api/v1/agent/{domain}/proof/reissue`` requires owner/session/API-key
-credentials, not an agent bearer token. ``request.request_id`` is sent
-as the required ``Idempotency-Key`` header. The original public key is
-validated locally and binds the replacement transcript, but is not sent.
-The replacement challenge supersedes every earlier challenge; only the
-latest message may be signed.
-
-### `async_reissue_live_proof`
-
-```python
-RegistryClient.async async_reissue_live_proof(domain: str, request: LiveProofReissueRequest) -> LiveProofReissueResponse
-```
-
-Async variant of `reissue_live_proof` with the same validation and errors.
 
 ### `get_status`
 
@@ -662,6 +586,35 @@ RegistryClient.async async_submit_prepared_event(domain: str, entry_bytes: bytes
 
 Async variant of `submit_prepared_event` with the same validation and errors.
 
+### `submit_owner_issuance`
+
+```python
+RegistryClient.submit_owner_issuance(domain: str, owner_entry_bytes: bytes, idempotency_key: str) -> SubmissionResult
+```
+
+Submit a persisted entity-only ISSUANCE for registry custody completion.
+
+Not supported yet: the registry exposes no custodied operational public
+key before READY-only claim, so the owner cannot build this envelope.
+
+Send bytes from dnsid.c2sp_tlog.owner_issuance_bytes unchanged. Retry the
+identical envelope and key, including after private-key claim. The receipt
+hash identifies the completed bilateral entry, not this uploaded envelope.
+
+Acceptance alone does not permit local completion or activation. Fetch
+the completed entry through the receipt log reference; verify inclusion,
+both signatures, expected identity/key bindings, unchanged signed bytes
+and entity signature, and its exact hash against entry_hash. Missing
+evidence is resumable; invalid evidence fails closed.
+
+### `async_submit_owner_issuance`
+
+```python
+RegistryClient.async async_submit_owner_issuance(domain: str, owner_entry_bytes: bytes, idempotency_key: str) -> SubmissionResult
+```
+
+Async variant of `submit_owner_issuance` with the same evidence duties.
+
 ## `AgentRegistrationInput`
 
 ```python
@@ -694,57 +647,6 @@ from dnsid import LiveAgentRegistrationInput
 
 Input for the dedicated managed Live registration operation.
 
-## `LiveChallengeTranscript`
-
-```python
-from dnsid import LiveChallengeTranscript
-```
-
-Validated transcript encoded by a managed Live proof challenge.
-
-## `LiveProvisioningResponse`
-
-```python
-from dnsid import LiveProvisioningResponse
-```
-
-Proof challenge returned when managed Live provisioning starts.
-
-## `LiveProofRequest`
-
-```python
-from dnsid import LiveProofRequest
-```
-
-Signed proof submitted after managed Live registration.
-
-## `LiveProofResponse`
-
-```python
-from dnsid import LiveProofResponse
-```
-
-Durable handoff status returned after managed Live proof.
-
-## `LiveProofReissueRequest`
-
-```python
-from dnsid import LiveProofReissueRequest
-```
-
-Request for a replacement managed Live proof challenge.
-
-The original public key is local validation context and is not sent to the
-registry.
-
-## `LiveProofReissueResponse`
-
-```python
-from dnsid import LiveProofReissueResponse
-```
-
-Replacement challenge returned for an expired managed Live proof.
-
 ## `LifecycleResult`
 
 ```python
@@ -753,7 +655,7 @@ from dnsid import LifecycleResult
 
 Lifecycle transition result.
 
-Returned by registry mutation endpoints such as ``submit_challenge_signature``.
+Returned by registry lifecycle mutation endpoints.
 
 ## `RegistryAgentStatus`
 
