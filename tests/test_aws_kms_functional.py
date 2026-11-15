@@ -123,6 +123,7 @@ def test_aws_config_open_functional(tmp_path, monkeypatch, mode):
 def test_existing_key_faults_fail_closed(tmp_path, monkeypatch, fault, boundary):
     """**Mode**: fake-only. Given exact ARN, When RPC fails, Then no result/replacement."""
     import boto3
+
     from dnsid import AwsKmsConfig, AwsKmsKeyProvider
     from dnsid.aws_kms_key_provider import BotoKmsFacade
 

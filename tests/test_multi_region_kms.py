@@ -11,7 +11,12 @@ import pytest
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-from google.cloud.kms_v1.types import AsymmetricSignResponse, CryptoKeyVersion, ProtectionLevel, PublicKey
+from google.cloud.kms_v1.types import (
+    AsymmetricSignResponse,
+    CryptoKeyVersion,
+    ProtectionLevel,
+    PublicKey,
+)
 
 from dnsid import AwsKmsConfig, AwsKmsKeyProvider, GoogleKmsKeyProvider
 
@@ -125,6 +130,7 @@ def test_given_same_key_clients_when_reopened_then_native_kids_and_cross_signatu
 def test_given_regional_config_when_reopened_then_exact_region_and_arn_remain_selected(tmp_path, monkeypatch):
     """A2 real-capable (AWS=fake); wrong-response variant fake-only."""
     from botocore.client import BaseClient
+
     from dnsid import identity_manager_from_file
     from tests._kms_publication import publication
 

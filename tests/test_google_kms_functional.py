@@ -215,7 +215,7 @@ def test_unsupported_settings_rejected_before_rpc(tmp_path, official_rpc):
 @pytest.mark.parametrize("operation", ["get_public_key", "asymmetric_sign"])
 def test_external_open_or_sign_failure_propagates_without_substitution(tmp_path, official_rpc, operation, fault):
     """**Mode**: fake-only KMS. Exact external failure reaches public caller."""
-    from google.api_core.exceptions import PermissionDenied, FailedPrecondition, NotFound
+    from google.api_core.exceptions import FailedPrecondition, NotFound, PermissionDenied
 
     evidence = publication(tmp_path, key_source={"provider": "google-kms", "keyRef": VERSION})
     failure_type = {"denied": PermissionDenied, "disabled": FailedPrecondition, "missing-version": NotFound}[fault]
