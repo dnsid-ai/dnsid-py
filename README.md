@@ -740,6 +740,14 @@ Python AWS public JWK kids are thumbprints; saved KMS references remain
 regional. Go/TypeScript AWS providers instead retain native canonical identifiers
 as kids, which can differ between related regional keys.
 
+Go/TypeScript identity-bound configuration also compares the selected kid with
+the verified publication, so a region-B ARN cannot use region A's unchanged
+publication even when their public material matches. The publication must match
+the selected regional kid through the applicable authorized publication/key-rotation
+process. Python's thumbprint kids avoid that specific regional-ARN kid mismatch,
+but do not bypass native-reference or publication/signing-key binding checks or
+establish that a shared-publication deployment has been verified.
+
 For cryptographic equality, require public JWK `kty=OKP`, `crv=Ed25519`,
 `alg=EdDSA`, equal `x`, and no private `d`. Independently compute RFC 7638 SHA-256
 thumbprints over canonical JSON containing only `crv`, `kty`, `x`; compare those,
