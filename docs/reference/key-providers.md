@@ -506,7 +506,7 @@ Fetch public key info for *key_id* via KMS ``GetPublicKey``.
 
 **Raises:**
 
-- `ArgumentError`: If the KMS response includes no public key bytes.
+- `ArgumentError`: If the KMS response includes no public key bytes, or a request using a full immutable key ARN receives a present ``KeyId`` that differs from the requested ARN.
 
 ### `sign`
 

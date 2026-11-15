@@ -24,24 +24,60 @@ from tests.test_google_kms_runtime_contract import (
 )
 
 
-class ServiceUnavailable(Exception):
-    """Independent service failure, not a provider exception type."""
-
-
 @pytest.mark.parametrize("operation", ["get_public_key", "asymmetric_sign"])
 def test_given_service_failure_when_opening_or_signing_then_no_result_or_substitute(operation):
-    """**Mode**: fake-only (KMS service exceptions). Given/When/Then: fail closed."""
+    """**Mode**: fake-only. Service code 14, distinct from missing version (5)."""
+    from google.api_core.exceptions import ServiceUnavailable
+
     client = FakeKms()
     attempted = []
+    forbidden = []
+    failure = ServiceUnavailable(f"service failure for {VERSION}")
+    payload = b"must not return substitute signature"
+    assert VERSION.rsplit("/", 1)[1].isdigit()
+
+    def mutation(*args, **kwargs):
+        forbidden.append((args, kwargs))
+        raise AssertionError("forbidden native RPC")
+
+    for name in (
+        "create_crypto_key", "create_crypto_key_version", "import_crypto_key_version",
+        "update_crypto_key_primary_version", "destroy_crypto_key_version",
+        "get_crypto_key", "get_crypto_key_version", "list_crypto_key_versions",
+    ):
+        setattr(client, name, mutation)
 
     def unavailable(request):
-        attempted.append(request["name"])
-        raise ServiceUnavailable("fixture KMS unavailable")
+        attempted.append(dict(request))
+        raise failure
 
-    setattr(client, operation, unavailable)
-    with pytest.raises((ServiceUnavailable, ArgumentError, ValueError)):
-        provider(client).sign(b"must not return a substitute signature")
-    assert attempted == [VERSION]
+    if operation == "get_public_key":
+        client.get_public_key = unavailable
+        client.asymmetric_sign = mutation
+        with pytest.raises(ServiceUnavailable) as caught:
+            provider(client)
+        assert caught.value is failure
+        assert client.calls == []
+        assert attempted == [{"name": VERSION}]
+    else:
+        signer = provider(client)
+        public = signer.signing_key().to_dict()
+        ids = signer.list_key_ids()
+        assert public["kty"] == "OKP" and public["crv"] == "Ed25519"
+        assert public["alg"] == "EdDSA" and "d" not in public
+        assert public["x"] == base64.urlsafe_b64encode(PUBLIC).rstrip(b"=").decode("ascii")
+        assert ids == [public["kid"]]
+        assert client.calls == [("get_public_key", {"name": VERSION})]
+        client.get_public_key = mutation
+        client.asymmetric_sign = unavailable
+        with pytest.raises(ServiceUnavailable) as caught:
+            signer.sign(payload)
+        assert caught.value is failure
+        assert signer.signing_key().to_dict() == public
+        assert signer.list_key_ids() == ids
+        assert client.calls == [("get_public_key", {"name": VERSION})]
+        assert attempted == [{"name": VERSION, "data": payload, "data_crc32c": crc32c(payload)}]
+    assert forbidden == []
     assert all(request["name"] == VERSION for _, request in client.calls)
 
 
