@@ -132,19 +132,24 @@ def test_given_regional_config_when_reopened_then_exact_region_and_arn_remain_se
     from botocore.client import BaseClient
 
     from dnsid import identity_manager_from_file
+    from dnsid.exceptions import ArgumentError
     from tests._kms_publication import publication
 
     calls = []
     wrong_binding = False
+    requests = []
+    other_ref = "arn:aws:kms:us-west-2:123456789012:key/mrk-fedcba9876543210fedcba9876543210"
 
     def api_call(client, operation, params):
         region = client.meta.region_name
+        # Account for every attempted RPC before any fixture assertion can fail.
+        calls.append(operation)
+        requests.append((region, operation, params.copy()))
         ref = f"arn:aws:kms:{region}:123456789012:key/mrk-0123456789abcdef0123456789abcdef"
         assert params["KeyId"] == ref
         assert region in ("us-east-1", "us-west-2")
-        calls.append(operation)
         if operation == "GetPublicKey":
-            return dict(KeyId=ref + "-wrong" if wrong_binding else ref,
+            return dict(KeyId=other_ref if wrong_binding else ref,
                         PublicKey=PRIVATE.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo),
                         KeySpec="ECC_NIST_EDWARDS25519", KeyUsage="SIGN_VERIFY", SigningAlgorithms=["ED25519_SHA_512"])
         assert operation == "Sign", "no provisioning/fallback RPC"
@@ -168,11 +173,25 @@ def test_given_regional_config_when_reopened_then_exact_region_and_arn_remain_se
         assert evidence.path.read_bytes() == before
     assert calls == ["GetPublicKey", "Sign"] * 4
     wrong_binding = True
-    with pytest.raises(Exception) as caught:
-        identity_manager_from_file(evidence.path, deps=evidence.deps)
-    # The exact error class is not broadened into a new contract; no signer/result.
-    assert caught.value is not None
+    assert ref != other_ref
+    result = None
+    with pytest.raises(ArgumentError) as caught:
+        result = identity_manager_from_file(evidence.path, deps=evidence.deps)
+    assert result is None
+    # Require reference-mismatch meaning, not exact wording or both ARN strings.
+    message = str(caught.value).lower()
+    assert any(term in message for term in ("key", "reference", "arn"))
+    assert any(term in message for term in ("mismatch", "does not match", "different", "unexpected"))
     assert calls == ["GetPublicKey", "Sign"] * 4 + ["GetPublicKey"]
+    assert [(region, operation, params["KeyId"]) for region, operation, params in requests] == [
+        (region, operation,
+         f"arn:aws:kms:{region}:123456789012:key/mrk-0123456789abcdef0123456789abcdef")
+        for region in ("us-east-1", "us-west-2")
+        for _reopen in range(2)
+        for operation in ("GetPublicKey", "Sign")
+    ] + [("us-west-2", "GetPublicKey", ref)]
+    assert requests[-1][2] == {"KeyId": ref}
+    assert evidence.path.read_bytes() == before
 
 
 @pytest.mark.parametrize("size", [4096, 4097])

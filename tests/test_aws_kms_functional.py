@@ -152,15 +152,23 @@ def test_existing_key_faults_fail_closed(tmp_path, monkeypatch, fault, boundary)
         def load():
             return AwsKmsKeyProvider.load(BotoKmsFacade(native), AwsKmsConfig(active_key_id=A, algorithm="ED25519_SHA_512"))
         if boundary == "open":
-            with pytest.raises(Exception):
-                load()
+            result = None
+            with pytest.raises(ClientError) as caught:
+                result = load()
+            assert result is None
+            # Narrow characterization of this native seam, not a universal
+            # public promise about how all provider failures are represented.
+            assert caught.value is failure
         else:
             signer = load()
             public = signer.signing_key().to_dict()
             ids = signer.list_key_ids()
             assert public["crv"] == "Ed25519" and ids == [public["kid"]]
-            with pytest.raises(Exception):
-                signer.sign(b"must not return a signature")
+            signature = None
+            with pytest.raises(ClientError) as caught:
+                signature = signer.sign(b"must not return a signature")
+            assert signature is None
+            assert caught.value is failure
             assert signer.signing_key().to_dict() == public
             assert signer.list_key_ids() == ids
         assert [operation for operation, _ in calls] == (["GetPublicKey"] if boundary == "open" else ["GetPublicKey", "Sign"])
