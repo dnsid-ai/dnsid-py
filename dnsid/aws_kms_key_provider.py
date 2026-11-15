@@ -203,7 +203,9 @@ class BotoKmsFacade(AwsKmsFacade):
             ``key_usage``, and ``signing_algorithms``.
 
         Raises:
-            ArgumentError: If the KMS response includes no public key bytes.
+            ArgumentError: If the KMS response includes no public key bytes, or
+                a request using a full immutable key ARN receives a present
+                ``KeyId`` that differs from the requested ARN.
         """
         response = self._client.get_public_key(KeyId=key_id)
         pub = response.get("PublicKey")
