@@ -1877,83 +1877,10 @@ class AgentRegistration:
 
 
 @dataclass
-class LiveChallengeTranscript:
-    """Validated transcript encoded by a managed Live proof challenge."""
-
-    protocol: str
-    org_id: str
-    agent_id: str
-    fqdn: str
-    key_id: str
-    nonce: str
-    expires_at: datetime.datetime
-
-
-@dataclass
-class LiveProvisioningResponse:
-    """Proof challenge returned when managed Live provisioning starts."""
-
-    request_id: str
-    agent_id: str
-    status: str
-    challenge: str
-    challenge_message: str
-    domain: str = ""
-    challenge_transcript: LiveChallengeTranscript | None = None
-    raw: dict[str, Any] = field(default_factory=dict, repr=False)
-
-
-@dataclass
-class LiveProofRequest:
-    """Signed proof submitted after managed Live registration."""
-
-    request_id: str
-    challenge: str
-    public_key_jwk: JWK
-    signature: str
-
-
-@dataclass
-class LiveProofResponse:
-    """Durable handoff status returned after managed Live proof."""
-
-    request_id: str
-    agent_id: str
-    status: str
-    raw: dict[str, Any] = field(default_factory=dict, repr=False)
-
-
-@dataclass
-class LiveProofReissueRequest:
-    """Request for a replacement managed Live proof challenge.
-
-    The original public key is local validation context and is not sent to the
-    registry.
-    """
-
-    request_id: str
-    public_key_jwk: JWK
-
-
-@dataclass
-class LiveProofReissueResponse:
-    """Replacement challenge returned for an expired managed Live proof."""
-
-    request_id: str
-    agent_id: str
-    status: str
-    challenge: str
-    challenge_message: str
-    domain: str
-    challenge_transcript: LiveChallengeTranscript
-    raw: dict[str, Any] = field(default_factory=dict, repr=False)
-
-
-@dataclass
 class LifecycleResult:
     """Lifecycle transition result.
 
-    Returned by registry mutation endpoints such as ``submit_challenge_signature``.
+    Returned by registry lifecycle mutation endpoints.
     """
 
     id: str

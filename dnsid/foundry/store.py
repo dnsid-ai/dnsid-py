@@ -30,7 +30,6 @@ OperationKey = tuple[str, str, str]
 _PHASES = {
     "creation-pending",
     "identity-known",
-    "proof-pending",
     "issuance-accepted",
     "complete",
 }
@@ -91,7 +90,7 @@ def validate_operation(document: dict[str, Any], key: OperationKey | None = None
     """Validate phase requirements before a write or any registry mutation."""
     try:
         canonical_bytes(document)  # Also rejects invalid Unicode in unknown members.
-        if type(document.get("schemaVersion")) is not int or document["schemaVersion"] != 1:
+        if type(document.get("schemaVersion")) is not int or document["schemaVersion"] != 2:
             raise ValueError("unsupported recovery schemaVersion")
         phase = document.get("phase")
         if phase not in _PHASES:
@@ -154,8 +153,10 @@ def validate_operation(document: dict[str, Any], key: OperationKey | None = None
         expected_request = registration_key(
             document["organizationId"], document["name"], creation_key.thumbprint()
         )
-        if "requestId" in document and document["requestId"] != expected_request:
-            raise ValueError("requestId mismatch")
+        if document.get("registrationKey") != expected_request or (
+            document.get("issuanceKey") != issuance_key(expected_request)
+        ):
+            raise ValueError("registrationKey or issuanceKey mismatch")
         if (
             "domain" in document
             and normalize_fqdn(
@@ -166,10 +167,8 @@ def validate_operation(document: dict[str, Any], key: OperationKey | None = None
         ):
             raise ValueError("domain must be normalized")
         if phase != "creation-pending":
-            if any(not document.get(f) for f in ("identityId", "domain", "requestId")):
+            if any(not document.get(f) for f in ("identityId", "domain")):
                 raise ValueError("phase requires identity facts")
-        if phase == "proof-pending" and not isinstance(document.get("proof"), dict):
-            raise ValueError("phase requires proof")
         if phase in {"issuance-accepted", "complete"}:
             if any(
                 not document.get(f)

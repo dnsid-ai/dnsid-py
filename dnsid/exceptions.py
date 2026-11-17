@@ -45,6 +45,14 @@ class ValidationError(DNSidError):
     """
 
 
+class UnsupportedRegistryResponse(ValidationError):
+    """Authenticated registry-managed detail lacks a boolean dns_published.
+
+    Known identity facts remain in registration_response. No preparation or
+    replacement is safe until the registry supplies the required contract.
+    """
+
+
 class ArgumentError(DNSidError):
     """Caller-supplied argument is invalid (wrong format, reserved field override, etc.)."""
 

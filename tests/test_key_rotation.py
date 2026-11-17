@@ -807,7 +807,7 @@ class TestRegistryRotationEndpoints:
 
     @pytest.mark.parametrize(
         "code",
-        ["TLOG_SUBMISSION_BUSY", "TLOG_SUBMISSION_INDETERMINATE"],
+        ["TLOG_SUBMISSION_BUSY", "TLOG_SUBMISSION_INDETERMINATE", "TLOG_PUBLICATION_REQUIRED"],
     )
     def test_submit_preserves_retryable_non_success(self, code):
         response = MagicMock()

@@ -59,12 +59,10 @@ from dnsid.models import (
     AgentRegistration,
     DnsIdTxtRecord,
     IssuanceEvent,
-    LiveProofResponse,
     PublicationConfig,
     TLSCertificate,
     TXTRecord,
 )
-from dnsid.registry_client import _live_provisioning_from_response
 
 ORG = "11111111-1111-4111-8111-111111111111"
 DOMAIN = "agent.example.com"
@@ -129,14 +127,13 @@ class FoundryServer:
         self.provider = provider
         self.public_provider = provider
         self.entity = LocalKeyProvider.generate()
-        self.status = "VERIFIED"
+        self.status = "PROVISIONING"
+        self.dns_published = True
         self.replay_status = None
         self.public_status = "ACTIVE"
         self.public_gi = GI
         self.public_lr = LR
-        self.proof_required = False
         self.omit_domain = False
-        self.proof_expired = False
         self.onboarding_error = None
         self.onboarding = {
             "org_id": ORG,
@@ -148,13 +145,10 @@ class FoundryServer:
         self.prepared = None
         self.created = []
         self.submitted = []
-        self.proofs = []
-        self.reissues = []
         self.prepare_calls = 0
         self.submit_error = None
         self.lose_create = False
         self.competitor = False
-        self.lose_proof = False
         self.reader = Mock(spec=C2spTlogReader)
         self.reader._load_complete_history.side_effect = self.load_history
         self.reader.verify_non_revocation.return_value = SimpleNamespace(logged_state="ACTIVE")
@@ -185,27 +179,6 @@ class FoundryServer:
             raise self.onboarding_error
         return copy.deepcopy(self.onboarding)
 
-    def challenge(self, key, request_id, *, challenge="proof-nonce"):
-        expiry = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
-            seconds=-60 if self.proof_expired else 3600,
-        )
-        transcript = {
-            "protocol": "dnsid-live-provisioning-pop/v1",
-            "org_id": ORG,
-            "agent_id": "id-1",
-            "fqdn": DOMAIN,
-            "key_id": key.thumbprint(),
-            "nonce": challenge,
-            "expires_at": expiry.isoformat(),
-        }
-        return {
-            "request_id": request_id,
-            "agent_id": "id-1",
-            "status": "challenge_pending",
-            "challenge": challenge,
-            "challenge_message": b64url_encode(canonical_bytes(transcript)),
-        }
-
     def register_live_agent(self, request, idempotency_key):
         self.created.append((request, idempotency_key))
         if request.public_key_jwk.thumbprint() != self.provider.signing_key().thumbprint():
@@ -213,19 +186,11 @@ class FoundryServer:
         if self.lose_create:
             self.lose_create = False
             raise TimeoutError("lost create response")
-        if self.proof_required:
-            raw = self.challenge(request.public_key_jwk, idempotency_key)
-        else:
-            raw = {
-                "request_id": idempotency_key,
-                "agent_id": "id-1",
-                "status": self.replay_status or self.status,
-                "challenge": "",
-                "challenge_message": "",
-            }
-            if not self.omit_domain:
-                raw["domain"] = DOMAIN
-        return _live_provisioning_from_response(raw, request.public_key_jwk)
+        result = FoundryServer.get_registration(self, DOMAIN)
+        result.registry_status = self.replay_status or self.status
+        if self.omit_domain:
+            result.domain = ""
+        return result
 
     def get_registration(self, domain):
         assert domain == DOMAIN
@@ -235,26 +200,9 @@ class FoundryServer:
             self.status,
             self._base_url,
             publication_config=self.publication,
+            dns_published=self.dns_published,
             id="id-1",
         )
-
-    def submit_live_proof(self, domain, request):
-        self.proofs.append(request)
-        self.status = "VERIFIED"
-        if self.lose_proof:
-            raise TimeoutError("lost proof response")
-        return LiveProofResponse(request.request_id, "id-1", "PROVISIONING")
-
-    def reissue_live_proof(self, domain, request):
-        self.reissues.append(request)
-        self.proof_expired = False
-        response = _live_provisioning_from_response(
-            self.challenge(
-                request.public_key_jwk, request.request_id, challenge="replacement-nonce"
-            ),
-            request.public_key_jwk,
-        )
-        return response
 
     def prepare_issuance(self, domain, idempotency_key):
         self.prepare_calls += 1
@@ -379,8 +327,7 @@ def test_create_then_public_active_and_profile_signing(setup):
         assert identity.domain == DOMAIN and identity.state is None
         with pytest.raises(SigningPaused):
             identity.sign(b"message")
-        with pytest.raises(SigningPaused):
-            identity.identity_manager()
+        assert identity.identity_manager().local_domain == DOMAIN
         assert identity.active() is identity
         assert identity.state == "ACTIVE"
         assert arguments["key_provider"].signing_key().verify(b"message", identity.sign(b"message"))
@@ -726,6 +673,7 @@ def test_rejection_before_log_visibility_resumes_on_next_active(setup, stage, em
                 server.history.append(
                     SimpleNamespace(index=0, data=data, event=parse_c2sp_event_entry(data))
                 )
+                server.status = "READY"
                 raise RegistryRequestError("/prepare", 409, "TLOG_PREPARATION_MISMATCH")
 
             server.prepare_issuance = reject_prepare
@@ -826,7 +774,7 @@ def test_polling_backoff_doubles_from_one_second_and_caps_at_fifteen(setup, monk
         def registration(domain):
             nonlocal attempts
             attempts += 1
-            server.status = "PROVISIONING" if attempts <= 6 else "VERIFIED"
+            server.dns_published = attempts > 6
             return original(domain)
 
         server.get_registration = registration
@@ -856,7 +804,7 @@ def test_polling_backoff_doubles_from_one_second_and_caps_at_fifteen(setup, monk
         server.https.fetch_strict_json = fetch
     with create("billing-agent", **arguments) as identity:
         identity.active()
-    assert attempts == 7
+    assert attempts == (9 if phase == "registry" else 7)
     assert delays == [1.0, 2.0, 4.0, 8.0, 15.0, 15.0]
 
 
@@ -996,75 +944,6 @@ def test_interrupted_issuance_retries_identical_bytes_after_restart(setup):
     assert server.submitted[-1] == original and server.prepare_calls == 1
 
 
-def test_expired_unused_proof_reissued_and_exact_bytes_signed(setup):
-    server, store, arguments = setup
-    server.proof_required = server.proof_expired = True
-    server.status = "VERIFICATION"
-    with create("billing-agent", **arguments) as identity:
-        initial = saved(store)
-        assert not server.proofs
-        identity.active()
-        proof = saved(store)["proof"]
-        request = server.proofs[0]
-        assert request.public_key_jwk.verify(
-            b64url_decode_strict(proof["challengeMessage"]),
-            b64url_decode_strict(request.signature),
-        )
-        assert proof["challengeMessage"] != initial["proof"]["challengeMessage"]
-        assert request.request_id == initial["requestId"]
-        assert len(server.created) == len(server.reissues) == 1
-
-
-def test_proof_lost_response_resumes_from_registry_state(setup):
-    server, store, arguments = setup
-    server.proof_required = server.lose_proof = True
-    server.status = "VERIFICATION"
-    with create("billing-agent", **arguments) as identity:
-        with pytest.raises(FoundryError):
-            identity.active()
-    with create("billing-agent", **arguments) as identity:
-        identity.active()
-    assert len(server.proofs) == len(server.created) == 1 and not server.reissues
-
-
-@pytest.mark.parametrize("lost_response", [False, True])
-def test_proof_outcome_moves_to_identity_known_before_issuance(setup, lost_response):
-    server, store, arguments = setup
-    server.proof_required = True
-    server.status = "VERIFICATION"
-    server.lose_proof = lost_response
-    transitions = []
-    original_save = store.save
-
-    def save_transition(key, document):
-        transitions.append(copy.deepcopy(document))
-        original_save(key, document)
-
-    store.save = save_transition
-    with create("billing-agent", **arguments) as identity:
-        assert saved(store)["phase"] == "proof-pending"
-        if lost_response:
-            with pytest.raises(FoundryError):
-                identity.active()
-            assert saved(store)["phase"] == "proof-pending"
-        identity.active()
-    assert any(item["phase"] == "proof-pending" for item in transitions)
-    pending_issuance = [
-        item
-        for item in transitions
-        if "issuance" in item
-        and (item["issuance"].get("submission", {}).get("state") != "accepted")
-    ]
-    assert pending_issuance
-    for item in pending_issuance:
-        assert item["phase"] == "identity-known"
-        assert "outcome" in item["proof"]
-    for item in transitions:
-        if item.get("proof", {}).get("outcome") is not None:
-            assert item["phase"] != "proof-pending"
-    assert len(server.proofs) == 1
-
-
 @pytest.mark.parametrize("evidence", ["valid", "missing-rotation", "wrong-ku"])
 def test_stateless_replica_after_rotation_recovers_initial_issuance(setup, evidence):
     from dnsid.c2sp_tlog import C2spChain, parse_prepared_issuance
@@ -1119,7 +998,7 @@ def test_stateless_replica_after_rotation_recovers_initial_issuance(setup, evide
             assert document["initialPublicKey"] == previous.to_dict()
             assert document["currentPublicKey"] == current.to_dict()
             assert document["creationInput"]["public_key"] == current.to_dict()
-            assert document["requestId"] == registration_key(ORG, "billing-agent", current.thumbprint())
+            assert document["registrationKey"] == registration_key(ORG, "billing-agent", current.thumbprint())
             assert b64url_decode_strict(document["issuance"]["entryBytes"]) == server.history[0].data
         else:
             with pytest.raises(FoundryError):
@@ -1373,7 +1252,7 @@ def test_portable_roundtrip_unknown_members_private_files_and_id_lookup(setup):
 @pytest.mark.parametrize(
     "change",
     [
-        lambda raw: dict(raw, schemaVersion=2),
+        lambda raw: dict(raw, schemaVersion=1),
         lambda raw: dict(raw, phase="future"),
         lambda raw: dict(raw, name="\ud800"),
         lambda raw: dict(raw, creationInput={}),
@@ -1466,8 +1345,6 @@ def test_core_does_not_reexport_foundry_create():
     [
         "creation-intent",
         "identity-known",
-        "proof-signature",
-        "proof-submitting",
         "publication",
         "entity",
         "issuance-intent",
@@ -1481,19 +1358,14 @@ def test_core_does_not_reexport_foundry_create():
 )
 def test_interruption_at_each_durable_boundary(setup, boundary):
     server, store, arguments = setup
-    server.proof_required = True
-    server.status = "VERIFICATION"
     save = store.save
     failures = []
 
     def interrupted(key, document):
         issuance = document.get("issuance", {})
-        proof = document.get("proof", {})
         conditions = {
             "creation-intent": "identityId" not in document,
             "identity-known": "identityId" in document,
-            "proof-signature": "signature" in proof and proof.get("submissionState") == "prepared",
-            "proof-submitting": proof.get("submissionState") == "submitting",
             "publication": "publicationConfig" in document,
             "entity": "entityPublicKey" in document,
             "issuance-intent": bool(issuance),
@@ -1621,69 +1493,6 @@ def test_provider_without_cancellation_checked_after_call(setup):
     with pytest.raises(FoundryDeadline):
         create("billing-agent", **arguments, timeout=0.005)
     assert not server.created
-
-
-@pytest.mark.parametrize("used", [False, True])
-def test_expired_unknown_proof_outcome_reissues_or_waits(setup, monkeypatch, used):
-    server, store, arguments = setup
-    server.proof_required = server.proof_expired = True
-    server.status = "VERIFICATION"
-    monkeypatch.setattr("dnsid.foundry._workflow.time.sleep", lambda delay: None)
-    status_reads = []
-    if used:
-        def reject_reissue(domain, request):
-            server.reissues.append(request)
-            raise RegistryRequestError("/proof/reissue", 409, "INVALID_TRANSITION")
-
-        registration = server.get_registration
-
-        def advance_status(domain):
-            result = registration(domain)
-            status_reads.append(result.registry_status)
-            if server.reissues:
-                server.status = "VERIFIED"
-            return result
-
-        server.reissue_live_proof = reject_reissue
-        server.get_registration = advance_status
-
-    with create("billing-agent", **arguments) as identity:
-        key = (server._base_url, ORG, "billing-agent")
-        with store.lock(key):
-            document = store.load(key)
-            proof = document["proof"]
-            proof["signature"] = b64url_encode(
-                arguments["key_provider"].sign(
-                    b64url_decode_strict(proof["challengeMessage"]),
-                )
-            )
-            proof["submissionState"] = "submitting"
-            original = copy.deepcopy(proof)
-            store.save(key, document)
-        identity.active()
-        record = saved(store)
-        proof = record["proof"]
-        assert record["phase"] == "complete"
-        assert proof["outcome"] in {"VERIFIED", "PROVISIONING"}
-        assert len(server.created) == len(server.reissues) == 1
-        assert server.reissues[0].request_id == document["requestId"]
-        assert server.reissues[0].public_key_jwk.to_dict() == document["initialPublicKey"]
-        if used:
-            assert status_reads == ["VERIFICATION", "VERIFICATION", "VERIFIED"]
-            assert not server.proofs
-            assert proof["challengeMessage"] == original["challengeMessage"]
-            assert proof["signature"] == original["signature"]
-        else:
-            assert len(server.proofs) == 1
-            assert proof["challenge"] != original["challenge"]
-            assert proof["challengeMessage"] != original["challengeMessage"]
-            assert proof["signature"] != original["signature"]
-            assert server.proofs[0].challenge == proof["challenge"]
-            assert server.proofs[0].signature == proof["signature"]
-            assert server.proofs[0].public_key_jwk.verify(
-                b64url_decode_strict(proof["challengeMessage"]),
-                b64url_decode_strict(proof["signature"]),
-            )
 
 
 @pytest.mark.parametrize("status", ["RETIRED", "REVOKED", "ERROR", "CANCELLED", "REJECTED"])

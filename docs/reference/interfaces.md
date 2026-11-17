@@ -803,6 +803,14 @@ AbstractRegistryClient.submit_prepared_event(domain: str, entry_bytes: bytes, id
 
 Submit exact prepared-event bytes under a durable idempotency key.
 
+### `submit_owner_issuance`
+
+```python
+AbstractRegistryClient.submit_owner_issuance(domain: str, owner_entry_bytes: bytes, idempotency_key: str) -> SubmissionResult
+```
+
+Submit an entity-only genesis; verify completed log evidence before activation.
+
 ## `retry_transient`
 
 ```python
