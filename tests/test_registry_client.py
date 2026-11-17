@@ -766,8 +766,7 @@ class TestPublishedRecordModel:
 
 
 class TestExactRegistrationStatuses:
-    @pytest.mark.parametrize("status", [200, 202])
-    @pytest.mark.parametrize("live", [False, True])
+    @pytest.mark.parametrize("status,live", [(200, False), (202, False), (200, True), (204, True)])
     def test_rejects_unexpected_success_status(self, status, live):
         with patch_registry_http("httpx.post", return_value=_http_response(status, json_body={})):
             with pytest.raises(VerificationError, match="expected HTTP 201"):

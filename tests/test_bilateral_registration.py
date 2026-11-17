@@ -9,6 +9,7 @@ import pytest
 
 from dnsid import (
     AgentRegistrationInput,
+    DNSidError,
     LiveAgentRegistrationInput,
     LocalKeyProvider,
     RegistryClient,
@@ -33,13 +34,18 @@ LR = "c2sp-tlog:testnet:https://log.example#instance_AAAAAAAAAAAAAAAAAAAAAA"
 
 @pytest.mark.parametrize("echo", [None, "other-key", "live-1"])
 @pytest.mark.parametrize("detail_status", [200, 503])
-def test_live_creation_echo_and_failed_detail_preserve_creation(echo, detail_status):
+@pytest.mark.parametrize("creation_status", [201, 202])
+def test_live_creation_echo_and_failed_detail_preserve_creation(echo, detail_status, creation_status):
     calls = []
+    response = dict(_REGISTER_RESPONSE)
+    if creation_status == 202:
+        response.update(status="challenge_pending", challenge="deprecated-nonce",
+                        challenge_message="ignored-compatibility-transcript")
 
     def request(method, url, **kwargs):
         calls.append((method, kwargs))
         if method == "POST":
-            return httpx.Response(201, json=_REGISTER_RESPONSE,
+            return httpx.Response(creation_status, json=response,
                                   headers={"Idempotency-Key": echo} if echo else {})
         return httpx.Response(detail_status, json={
             **_REGISTER_RESPONSE, "managed": "dnsid", "dns_published": True,
@@ -53,9 +59,55 @@ def test_live_creation_echo_and_failed_detail_preserve_creation(echo, detail_sta
             with pytest.raises(VerificationError) as caught:
                 client.register_live_agent(LiveAgentRegistrationInput(_live_key()), "live-1")
     assert caught.value.registration_idempotency_key == "live-1"
-    assert caught.value.registration_response == _REGISTER_RESPONSE
+    expected_facts = response if echo == "live-1" else {
+        key: value for key, value in response.items() if key in _REGISTER_RESPONSE
+    }
+    assert caught.value.registration_response == expected_facts
     assert caught.value.registration_request["tier"] == "live"
     assert len(calls) == (2 if echo == "live-1" else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("creation_status", [201, 202])
+async def test_async_live_creation_accepts_agent_fields_without_proof(creation_status):
+    calls = []
+
+    def handle(request):
+        calls.append((request.method, request.url.path))
+        if request.method == "POST":
+            assert request.url.path == "/api/v1/agent"
+            return httpx.Response(creation_status, json={
+                **_REGISTER_RESPONSE, "status": "challenge_pending",
+                "challenge": "deprecated-nonce", "challenge_message": "ignored-transcript",
+            }, headers={"Idempotency-Key": "live-1"})
+        return httpx.Response(200, json={
+            **_REGISTER_RESPONSE, "managed": "dnsid", "dns_published": True,
+        })
+
+    async with RegistryClient("https://registry.example", api_key="test-placeholder") as client:
+        client._async_http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        registration = await client.async_register_live_agent(
+            LiveAgentRegistrationInput(_live_key()), "live-1",
+        )
+    assert registration.id == "agent-123"
+    assert registration.registry_status == _REGISTER_RESPONSE["status"]
+    assert calls == [("POST", "/api/v1/agent"), ("GET", f"/api/v1/agent/{_DOMAIN}/status")]
+
+
+@pytest.mark.parametrize("missing", ["id", "domain", "publication_config"])
+def test_live_202_still_requires_agent_creation_fields(missing):
+    response = {**_REGISTER_RESPONSE, "status": "challenge_pending",
+                "challenge": "nonce", "challenge_message": "deprecated-transcript"}
+    response.pop(missing)
+    with RegistryClient("https://registry.example", api_key="test-placeholder") as client:
+        with patch.object(client, "_http_request", return_value=httpx.Response(
+            202, json=response, headers={"Idempotency-Key": "live-1"},
+        )) as request:
+            with pytest.raises(DNSidError) as caught:
+                client.register_live_agent(LiveAgentRegistrationInput(_live_key()), "live-1")
+    assert request.call_count == 1
+    assert caught.value.registration_response == response
+    assert caught.value.registration_idempotency_key == "live-1"
 
 
 @pytest.mark.parametrize("published", [None, "true", 0, 1, [], {}])

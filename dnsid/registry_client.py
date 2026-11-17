@@ -449,7 +449,7 @@ class RegistryClient(AbstractRegistryClient):
                 "/api/v1/agent",
                 body,
                 extra_headers={"Idempotency-Key": key} if key else None,
-                expected_status=201,
+                expected_status=(201, 202) if live else 201,
                 response_idempotency_key=key if live else None,
             )
             created_id = _require_str(data, "id", "registry register response")
@@ -506,9 +506,10 @@ class RegistryClient(AbstractRegistryClient):
     def register_live_agent(
         self, input: LiveAgentRegistrationInput, idempotency_key: str
     ) -> AgentRegistration:
-        """Create or replay managed Live registration with HTTP 201.
+        """Create or replay managed Live registration with HTTP 201 or 202.
 
-        The response Idempotency-Key must match the supplied key. Creation facts
+        Both responses must contain agent fields; deprecated challenge metadata
+        is ignored. The response Idempotency-Key must match the supplied key. Creation facts
         and the publication snapshot are retained before authenticated detail reads.
         Operational consent is supplied through bilateral ISSUANCE, not a nonce.
         """
@@ -1478,7 +1479,7 @@ class RegistryClient(AbstractRegistryClient):
         path: str,
         body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
-        expected_status: int | None = None,
+        expected_status: int | tuple[int, ...] | None = None,
         response_idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         return self._run_registry(
@@ -1490,7 +1491,7 @@ class RegistryClient(AbstractRegistryClient):
         path: str,
         body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
-        expected_status: int | None = None,
+        expected_status: int | tuple[int, ...] | None = None,
         response_idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         return await self._async_run_registry(
@@ -1502,7 +1503,7 @@ class RegistryClient(AbstractRegistryClient):
         path: str,
         body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
-        expected_status: int | None = None,
+        expected_status: int | tuple[int, ...] | None = None,
         response_idempotency_key: str | None = None,
     ) -> Generator[_RegistryCall, Any, dict[str, Any]]:
         import httpx
@@ -1546,10 +1547,14 @@ class RegistryClient(AbstractRegistryClient):
             if path == "/api/v1/agent":
                 error.registration_response = _creation_facts(resp)
             raise error
-        if expected_status is not None and resp.status_code != expected_status:
+        expected_statuses = (
+            (expected_status,) if isinstance(expected_status, int) else expected_status
+        )
+        if expected_statuses is not None and resp.status_code not in expected_statuses:
+            expected = " or ".join(str(status) for status in expected_statuses)
             status_error = VerificationError(
                 VerificationCode.RECORD_INVALID,
-                f"Registry request to {path!r} expected HTTP {expected_status}, "
+                f"Registry request to {path!r} expected HTTP {expected}, "
                 f"received {resp.status_code}",
             )
             status_error.status_code = resp.status_code

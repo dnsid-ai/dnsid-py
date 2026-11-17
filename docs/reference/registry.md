@@ -202,9 +202,10 @@ Async variant of `register_agent` with the same validation and errors.
 RegistryClient.register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str) -> AgentRegistration
 ```
 
-Create or replay managed Live registration with HTTP 201.
+Create or replay managed Live registration with HTTP 201 or 202.
 
-The response Idempotency-Key must match the supplied key. Creation facts
+Both responses must contain agent fields; deprecated challenge metadata
+is ignored. The response Idempotency-Key must match the supplied key. Creation facts
 and the publication snapshot are retained before authenticated detail reads.
 Operational consent is supplied through bilateral ISSUANCE, not a nonce.
 

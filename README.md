@@ -758,7 +758,9 @@ nonce and Live proof APIs are removed. `VERIFICATION` and `VERIFIED` remain
 readable management values, but do not establish completion.
 
 `register_live_agent(input, idempotency_key)` returns `AgentRegistration` from
-HTTP 201 creation or replay and checks the response `Idempotency-Key` header.
+HTTP 201 or 202 creation or replay and checks the response `Idempotency-Key`
+header. Both must include agent fields; deprecated challenge metadata in a 202
+response is ignored, and no proof request is sent.
 For registry-managed publication, authenticated detail must contain boolean
 `dns_published`. Missing or invalid values raise `UnsupportedRegistryResponse`
 with known identity facts. When it is true during `PROVISIONING`, prepare and
