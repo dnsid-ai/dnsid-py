@@ -450,7 +450,7 @@ class RegistryClient(AbstractRegistryClient):
                 body,
                 extra_headers={"Idempotency-Key": key} if key else None,
                 expected_status=(201, 202) if live else 201,
-                response_idempotency_key=key if live else None,
+                response_idempotency_key=key if live and key else None,
             )
             created_id = _require_str(data, "id", "registry register response")
             _require_str(data, "status", "registry register response")
@@ -504,19 +504,19 @@ class RegistryClient(AbstractRegistryClient):
             raise
 
     def register_live_agent(
-        self, input: LiveAgentRegistrationInput, idempotency_key: str
+        self, input: LiveAgentRegistrationInput, idempotency_key: str | None = None
     ) -> AgentRegistration:
         """Create or replay managed Live registration with HTTP 201 or 202.
 
         Both responses must contain agent fields; deprecated challenge metadata
-        is ignored. The response Idempotency-Key must match the supplied key. Creation facts
+        is ignored. The retry key is optional; supplied keys must match the response header. Creation facts
         and the publication snapshot are retained before authenticated detail reads.
         Operational consent is supplied through bilateral ISSUANCE, not a nonce.
         """
         return self._run_registry(self._register_live_agent_steps(input, idempotency_key))
 
     async def async_register_live_agent(
-        self, input: LiveAgentRegistrationInput, idempotency_key: str
+        self, input: LiveAgentRegistrationInput, idempotency_key: str | None = None
     ) -> AgentRegistration:
         """Async variant of :meth:`register_live_agent` with the same validation and errors."""
         return await self._async_run_registry(
@@ -524,7 +524,7 @@ class RegistryClient(AbstractRegistryClient):
         )
 
     def _register_live_agent_steps(
-        self, input: LiveAgentRegistrationInput, idempotency_key: str
+        self, input: LiveAgentRegistrationInput, idempotency_key: str | None
     ) -> Generator[_RegistryCall, Any, AgentRegistration]:
         self._require_auth("register_live_agent")
         from .exceptions import ArgumentError
@@ -532,7 +532,8 @@ class RegistryClient(AbstractRegistryClient):
 
         if input.environment not in {"", "production"}:
             raise ArgumentError('live registration environment must be "production" or omitted')
-        _validate_tlog_idempotency_key(idempotency_key)
+        if idempotency_key is not None:
+            _validate_tlog_idempotency_key(idempotency_key)
         public_key = _live_public_jwk_dict(input.public_key_jwk)
         body: dict[str, Any] = {
             "public_key": public_key,
@@ -547,7 +548,7 @@ class RegistryClient(AbstractRegistryClient):
             if not isinstance(input.name, str) or len(input.name) > 255:
                 raise ArgumentError("name must contain at most 255 characters")
             body["name"] = input.name
-        return (yield from self._create_registration_steps(body, idempotency_key, live=True))
+        return (yield from self._create_registration_steps(body, idempotency_key or "", live=True))
 
     def verify_agent(self, domain: str) -> AgentRegistration:
         """Explicitly advance or retry self-managed registration, including ERROR.
@@ -1154,7 +1155,7 @@ class RegistryClient(AbstractRegistryClient):
     def prepare_issuance(self, domain: str, idempotency_key: str) -> PreparedRegistryEvent:
         """Fetch exact raw ISSUANCE bytes for operational countersigning.
 
-        ``POST /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
+        ``GET /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
         body. The response bytes are untrusted. Use
         ``dnsid.c2sp_tlog.parse_prepared_issuance`` with the expected identity
         and keys to validate them against the entry's signed ``lr`` before
@@ -1185,10 +1186,9 @@ class RegistryClient(AbstractRegistryClient):
         try:
             response = yield _RegistryCall(
                 "_http_request",
-                "POST", f"{self._base_url}{path}",
+                "GET", f"{self._base_url}{path}",
                 headers={
                     **self._auth_headers(),
-                    "Content-Type": "application/json",
                     "Idempotency-Key": idempotency_key,
                 },
                 timeout=10.0,

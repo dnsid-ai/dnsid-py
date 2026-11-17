@@ -757,9 +757,10 @@ ISSUANCE. The operational ISSUANCE signature proves possession; registration
 nonce and Live proof APIs are removed. `VERIFICATION` and `VERIFIED` remain
 readable management values, but do not establish completion.
 
-`register_live_agent(input, idempotency_key)` returns `AgentRegistration` from
-HTTP 201 or 202 creation or replay and checks the response `Idempotency-Key`
-header. Both must include agent fields; deprecated challenge metadata in a 202
+`register_live_agent(input, idempotency_key=None)` returns `AgentRegistration`
+from HTTP 201 or 202 creation. Omit the registration key for modern 201; supplied
+keys retain legacy caller-key 202 and require the matching response header.
+ISSUANCE preparation uses GET; its signing/submission key remains separate. Both must include agent fields; deprecated challenge metadata in a 202
 response is ignored, and no proof request is sent.
 For registry-managed publication, authenticated detail must contain boolean
 `dns_published`. Missing or invalid values raise `UnsupportedRegistryResponse`

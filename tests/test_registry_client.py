@@ -422,7 +422,7 @@ class TestPrepareIssuance:
         )
         return response
 
-    def test_posts_no_body_and_returns_exact_untrusted_transport_result(self):
+    def test_gets_no_body_and_returns_exact_untrusted_transport_result(self):
         entry = b' {"signed":"bytes are not reserialized"}\n'
         response = self._response(entry)
         captured: dict = {}
@@ -431,7 +431,7 @@ class TestPrepareIssuance:
             captured.update(url=url, headers=headers, timeout=timeout)
             return response
 
-        with patch_registry_http("httpx.post", fake_post):
+        with patch_registry_http("httpx.get", fake_post):
             result = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
 
         assert isinstance(result, PreparedRegistryEvent)
@@ -442,7 +442,6 @@ class TestPrepareIssuance:
         )
         assert captured["headers"] == {
             "Authorization": f"Bearer {_FAKE_API_KEY}",
-            "Content-Type": "application/json",
             "Idempotency-Key": "issuance-1",
         }
 
@@ -485,7 +484,7 @@ class TestPrepareIssuance:
         )
 
         wire, context, operational = self._signed_issuance()
-        with patch_registry_http("httpx.post", return_value=self._response(wire, header)):
+        with patch_registry_http("httpx.get", return_value=self._response(wire, header)):
             response = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
         assert response.entry_bytes == wire
         prepared = parse_prepared_issuance(response.entry_bytes, context)
@@ -531,7 +530,7 @@ class TestPrepareIssuance:
             wire = b"[]"
         else:
             wire = canonical_bytes(envelope)
-        with patch_registry_http("httpx.post", return_value=self._response(wire)):
+        with patch_registry_http("httpx.get", return_value=self._response(wire)):
             response = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
         assert response.entry_bytes == wire
         with pytest.raises(C2spTlogParseError):
@@ -539,7 +538,7 @@ class TestPrepareIssuance:
 
     def test_domain_is_path_escaped(self):
         response = self._response()
-        with patch_registry_http("httpx.post", return_value=response) as post:
+        with patch_registry_http("httpx.get", return_value=response) as post:
             _make_client().prepare_issuance("agent+dev.example.com", "issuance-1")
         assert "/agent/agent%2Bdev.example.com/tlog/issuance/prepare" in post.call_args.args[0]
 

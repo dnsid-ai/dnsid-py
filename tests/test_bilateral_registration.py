@@ -67,9 +67,22 @@ def test_live_creation_echo_and_failed_detail_preserve_creation(echo, detail_sta
     assert len(calls) == (2 if echo == "live-1" else 1)
 
 
+def test_headerless_live_creation_needs_no_response_retry_key():
+    def request(method, url, **kwargs):
+        assert "Idempotency-Key" not in kwargs.get("headers", {})
+        return httpx.Response(201 if method == "POST" else 200, json={
+            **_REGISTER_RESPONSE, "managed": "dnsid", "dns_published": True,
+        })
+
+    with RegistryClient("https://registry.example", api_key="test-placeholder") as client:
+        with patch.object(client, "_http_request", side_effect=request):
+            assert client.register_live_agent(LiveAgentRegistrationInput(_live_key())).id == "agent-123"
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("idempotency_key", [None, "live-1"])
 @pytest.mark.parametrize("creation_status", [201, 202])
-async def test_async_live_creation_accepts_agent_fields_without_proof(creation_status):
+async def test_async_live_creation_accepts_agent_fields_without_proof(creation_status, idempotency_key):
     calls = []
 
     def handle(request):
@@ -79,7 +92,7 @@ async def test_async_live_creation_accepts_agent_fields_without_proof(creation_s
             return httpx.Response(creation_status, json={
                 **_REGISTER_RESPONSE, "status": "challenge_pending",
                 "challenge": "deprecated-nonce", "challenge_message": "ignored-transcript",
-            }, headers={"Idempotency-Key": "live-1"})
+            }, headers={"Idempotency-Key": idempotency_key} if idempotency_key else {})
         return httpx.Response(200, json={
             **_REGISTER_RESPONSE, "managed": "dnsid", "dns_published": True,
         })
@@ -87,7 +100,7 @@ async def test_async_live_creation_accepts_agent_fields_without_proof(creation_s
     async with RegistryClient("https://registry.example", api_key="test-placeholder") as client:
         client._async_http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         registration = await client.async_register_live_agent(
-            LiveAgentRegistrationInput(_live_key()), "live-1",
+            LiveAgentRegistrationInput(_live_key()), idempotency_key,
         )
     assert registration.id == "agent-123"
     assert registration.registry_status == _REGISTER_RESPONSE["status"]
