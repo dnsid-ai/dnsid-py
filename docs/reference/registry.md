@@ -199,20 +199,20 @@ Async variant of `register_agent` with the same validation and errors.
 ### `register_live_agent`
 
 ```python
-RegistryClient.register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str) -> AgentRegistration
+RegistryClient.register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str | None = None) -> AgentRegistration
 ```
 
 Create or replay managed Live registration with HTTP 201 or 202.
 
 Both responses must contain agent fields; deprecated challenge metadata
-is ignored. The response Idempotency-Key must match the supplied key. Creation facts
+is ignored. The retry key is optional; supplied keys must match the response header. Creation facts
 and the publication snapshot are retained before authenticated detail reads.
 Operational consent is supplied through bilateral ISSUANCE, not a nonce.
 
 ### `async_register_live_agent`
 
 ```python
-RegistryClient.async async_register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str) -> AgentRegistration
+RegistryClient.async async_register_live_agent(input: LiveAgentRegistrationInput, idempotency_key: str | None = None) -> AgentRegistration
 ```
 
 Async variant of `register_live_agent` with the same validation and errors.
@@ -517,7 +517,7 @@ RegistryClient.prepare_issuance(domain: str, idempotency_key: str) -> PreparedRe
 
 Fetch exact raw ISSUANCE bytes for operational countersigning.
 
-``POST /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
+``GET /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
 body. The response bytes are untrusted. Use
 ``dnsid.c2sp_tlog.parse_prepared_issuance`` with the expected identity
 and keys to validate them against the entry's signed ``lr`` before
