@@ -1,6 +1,6 @@
 """Web Bot Auth (WBA) HTTP Message Signature signing and directory serving.
 
-Targets published draft-ietf-webbotauth-httpsig-protocol-00 (SDK design 10): RFC 9421
+Targets published draft-ietf-webbotauth-httpsig-protocol-01 (SDK design 10): RFC 9421
 request signing with the ``web-bot-auth`` tag, the ``Signature-Agent``
 Dictionary Structured Header (member ``sig1``, covered with ``key="sig1"``),
 64-byte nonces, Ed25519-only signing, and HTTP Message Signatures Directory
@@ -67,13 +67,8 @@ def _validate_ttl(ttl: int | float, name: str = "request TTL") -> None:
         raise ArgumentError(f"Web Bot Auth {name} must be an integer between 1 and 300 seconds")
 
 
-def _is_https_origin(uri: str) -> bool:
-    parsed = urlsplit(uri)
-    host = parsed.hostname or ""
-    if ":" in host:
-        host = f"[{host}]"
-    port = f":{parsed.port}" if parsed.port not in (None, 443) else ""
-    return bool(host) and uri.isascii() and uri == f"https://{host}{port}"
+def _is_direct_https_uri(uri: str) -> bool:
+    return uri.startswith("https://") and re.search(r"[^!-~]|[\\#]", uri) is None
 
 
 def _wba_identifier(uri: str) -> str:
@@ -96,16 +91,13 @@ class WebBotAuthConfig:
     TTLs require integral seconds from 1 through 300. Clock skew must be finite
     and non-negative. Boolean and non-numeric duration values are rejected.
     Signature-Agent is mandatory; its compatibility flag cannot disable it.
-    Directory discovery requires an ASCII HTTPS origin without a trailing slash.
+    Signature-Agent advertises the direct HTTPS URL of the signed key directory.
     """
 
     #: Back-compatible alias for the Signature-Agent URI.
     directory_url: str = ""
-    #: HTTPS origin for ``directory`` discovery or direct endpoint for
-    #: ``jwks_uri`` discovery. Empty defaults to ``https://{domain}``.
+    #: Direct HTTPS endpoint. Empty uses the well-known directory URL at the local domain.
     signature_agent_uri: str = ""
-    #: Discovery interpretation emitted as an RFC 8941 Token.
-    signature_agent_type: str = "directory"
     #: Request signature lifetime in seconds (sets ``expires``).
     signature_ttl: int | float = DEFAULT_SIGNATURE_TTL
     #: Compatibility flag; must be True because Signature-Agent is mandatory.
@@ -119,8 +111,6 @@ class WebBotAuthConfig:
         """Reject WBA configuration outside the DNSid profile limits."""
         if self.include_signature_agent is not True:
             raise ArgumentError("Web Bot Auth requires Signature-Agent")
-        if self.signature_agent_type not in {"directory", "jwks_uri"}:
-            raise ArgumentError("Web Bot Auth discovery type must be directory or jwks_uri")
         _validate_ttl(self.signature_ttl, "signature_ttl")
         _validate_ttl(self.directory_signature_ttl, "directory_signature_ttl")
         if not _finite_number(self.clock_skew) or self.clock_skew < 0:
@@ -179,7 +169,7 @@ class WBAHttpSigner:
                 at construction.
             signature_agent: Back-compat override for the directory URL placed
                 in Signature-Agent.
-            ku_url: Known local operational JWKS URL; rejects matching jwks_uri discovery.
+            ku_url: Known local operational JWKS URL; rejects matching directory URLs.
             label: Signature label and Signature-Agent dictionary member name
                 (profile default: ``sig1``).
             expires_in_seconds: Back-compat override for the request signature
@@ -198,29 +188,23 @@ class WBAHttpSigner:
             signature_agent or self._config.signature_agent_uri or self._config.directory_url
         )
         if not directory_url:
-            directory_url = f"https://{self._domain}"
+            directory_url = f"https://{self._domain}{WBA_DIRECTORY_WELL_KNOWN_PATH}"
         try:
             parsed_agent = urlsplit(directory_url)
             parsed_agent.port
-            if (
-                self._config.signature_agent_type == "jwks_uri" and ku_url
-                and _wba_identifier(directory_url) == _wba_identifier(ku_url)
-            ):
+            if ku_url and _wba_identifier(directory_url) == _wba_identifier(ku_url):
                 raise ArgumentError("Web Bot Auth discovery must not identify local ku")
         except (ValueError, httpx.InvalidURL) as exc:
             raise ArgumentError("invalid Web Bot Auth Signature-Agent URI") from exc
         if (
-            parsed_agent.scheme != "https" or not parsed_agent.hostname
+            not _is_direct_https_uri(directory_url)
+            or not parsed_agent.hostname
             or parsed_agent.username is not None or parsed_agent.password is not None
         ):
             raise ArgumentError(
-                f"Web Bot Auth Signature-Agent must be https; got {directory_url!r}"
+                "Web Bot Auth Signature-Agent requires an absolute https URI "
+                "without credentials or fragments"
             )
-        if self._config.signature_agent_type == "directory":
-            if not _is_https_origin(directory_url):
-                raise ArgumentError("Web Bot Auth directory URI must be an ASCII HTTPS origin")
-        elif parsed_agent.fragment:
-            raise ArgumentError("Web Bot Auth jwks_uri must not contain a fragment")
         self._directory_url = directory_url
         self._label = label
         self._expires_in = (
@@ -284,7 +268,6 @@ class WBAHttpSigner:
                 req.get_header("signature-agent"),
                 self._label,
                 self._directory_url,
-                self._config.signature_agent_type,
             ),
         )
         components.append(f'signature-agent;key="{self._label}"')
@@ -348,12 +331,11 @@ def _replace_signature_agent_member(
     header: str,
     label: str,
     uri: str,
-    discovery_type: str,
 ) -> str:
     """Replace one Signature-Agent dictionary member and preserve the others."""
     import http_sf
 
-    replacement_text = f"{label}={_serialize_sf_string(uri)};type={discovery_type}"
+    replacement_text = f"{label}={_serialize_sf_string(uri)}"
     try:
         members = _parse_sf_dictionary(header) if header else {}
         replacement = _parse_sf_dictionary(replacement_text)
@@ -375,9 +357,8 @@ class WBADirectoryResponse:
 def wba_directory_jwk(signing_key: JWK) -> dict[str, str]:
     """Convert a core public JWK into the WBA directory wire representation.
 
-    ``kid`` is the RFC 7638 thumbprint used as the Signature-Input ``keyid``;
-    ``alg`` uses the HTTP Message Signatures name (``ed25519``), not the JOSE
-    name.  Only public thumbprint members plus kid/alg are included.
+    ``kid`` is the RFC 7638 thumbprint used as the Signature-Input ``keyid``.
+    Only the public thumbprint members, ``kid``, and ``use`` are included.
 
     Args:
         signing_key: The public JWK to convert.
@@ -396,7 +377,6 @@ def wba_directory_jwk(signing_key: JWK) -> dict[str, str]:
         "crv": str(raw.get("crv", "")),
         "x": str(raw.get("x", "")),
         "kid": signing_key.thumbprint(),
-        "alg": jose_alg_to_http_sig_alg("EdDSA"),
         "use": "sig",
     }
 

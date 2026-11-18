@@ -219,7 +219,7 @@ Initialize the signer for a local DNSid identity.
 - `domain` (`str`): The DNSid FQDN, used to derive the default directory URL.
 - `config` (`WebBotAuthConfig | None`): Optional `WebBotAuthConfig`, copied and validated at construction. — default `None`
 - `signature_agent` (`str | None`): Back-compat override for the directory URL placed in Signature-Agent. — default `None`
-- `ku_url` (`str`): Known local operational JWKS URL; rejects matching jwks_uri discovery. — default `''`
+- `ku_url` (`str`): Known local operational JWKS URL; rejects matching directory URLs. — default `''`
 - `label` (`str`): Signature label and Signature-Agent dictionary member name (profile default: ``sig1``). — default `DEFAULT_LABEL`
 - `expires_in_seconds` (`int | float | None`): Back-compat override for the request signature TTL. — default `None`
 
@@ -385,7 +385,7 @@ WBA profile configuration (design doc 10 §Profile Configuration).
 TTLs require integral seconds from 1 through 300. Clock skew must be finite
 and non-negative. Boolean and non-numeric duration values are rejected.
 Signature-Agent is mandatory; its compatibility flag cannot disable it.
-Directory discovery requires an ASCII HTTPS origin without a trailing slash.
+Signature-Agent advertises the direct HTTPS URL of the signed key directory.
 
 ## `WebBotAuthSigningOptions`
 

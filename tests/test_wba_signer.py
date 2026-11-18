@@ -15,6 +15,7 @@ from dnsid.local_key_provider import LocalKeyProvider
 from dnsid.models import SignatureParams
 from dnsid.wba_signer import (
     WBA_DIRECTORY_MEDIA_TYPE,
+    WBA_DIRECTORY_WELL_KNOWN_PATH,
     WBA_TAG,
     WBAHttpSigner,
     WBAVariant,
@@ -86,7 +87,9 @@ def test_active_is_wba_compliant_and_valid():
     assert 'signature-agent;key="sig1"' in params.components
     # Signature-Agent is a Dictionary member pointing at the well-known
     # directory URL by default.
-    assert req.get_header("signature-agent") == (f'sig1="https://{DOMAIN}";type=directory')
+    assert req.get_header("signature-agent") == (
+        f'sig1="https://{DOMAIN}{WBA_DIRECTORY_WELL_KNOWN_PATH}"'
+    )
     assert "@authority" in params.components
     assert "content-digest" in params.components  # body present
     assert _sig_valid(signer, req)
@@ -153,13 +156,13 @@ def test_signature_agent_cannot_be_suppressed():
 
 def test_preserves_other_signature_agent_members():
     signer, req = _signer(), _req()
-    req.set_header("signature-agent", 'other="https://other.example";type=directory')
+    req.set_header("signature-agent", 'other="https://other.example/keys"')
 
     signer.sign(req)
 
     header = req.get_header("signature-agent")
-    assert 'other="https://other.example";type=directory' in header
-    assert f'sig1="https://{DOMAIN}";type=directory' in header
+    assert 'other="https://other.example/keys"' in header
+    assert f'sig1="https://{DOMAIN}{WBA_DIRECTORY_WELL_KNOWN_PATH}"' in header
     assert _sig_valid(signer, req)
 
 
@@ -208,7 +211,7 @@ def test_directory_response_is_signed_and_typed():
     # Directory JWKs use the RFC 7638 thumbprint as kid and the HTTP Message
     # Signatures algorithm name, not the JOSE name.
     assert key["kid"] == provider.signing_key().thumbprint()
-    assert key["alg"] == "ed25519"
+    assert "alg" not in key
     assert key["use"] == "sig"
     assert key["kty"] == "OKP" and key["crv"] == "Ed25519" and key["x"]
     assert "d" not in key
@@ -238,30 +241,29 @@ def test_signature_agent_must_be_https_uri():
 
 
 @pytest.mark.parametrize("origin", ["https://bots.example", "https://bots.example:8443"])
-def test_directory_discovery_emits_origin_and_explicit_type(origin):
+def test_directory_discovery_emits_direct_endpoint(origin):
     signer = WBAHttpSigner(
         LocalKeyProvider.generate(),
         DOMAIN,
-        config=WebBotAuthConfig(directory_url=origin),
+        config=WebBotAuthConfig(directory_url=origin + WBA_DIRECTORY_WELL_KNOWN_PATH),
     )
     req = _req()
     signer.sign(req)
-    assert req.get_header("signature-agent") == f'sig1="{origin}";type=directory'
+    assert req.get_header("signature-agent") == f'sig1="{origin}{WBA_DIRECTORY_WELL_KNOWN_PATH}"'
 
 
-def test_jwks_uri_discovery_keeps_direct_endpoint():
+def test_custom_discovery_keeps_direct_endpoint():
     signer = WBAHttpSigner(
         LocalKeyProvider.generate(),
         DOMAIN,
         config=WebBotAuthConfig(
             signature_agent_uri="https://bots.example/keys.json",
-            signature_agent_type="jwks_uri",
         ),
     )
     req = _req()
     signer.sign(req)
     assert req.get_header("signature-agent") == (
-        'sig1="https://bots.example/keys.json";type=jwks_uri'
+        'sig1="https://bots.example/keys.json"'
     )
 
 

@@ -81,7 +81,6 @@ set `DNSID_CLI=/path/to/dnsid`.
 **Bob's terminal** (stays running):
 ```
 bob -> https://bob.test
-bob.test published _dnsid.bob.test
 ```
 Then when Alice connects:
 ```
@@ -93,7 +92,6 @@ Then when Alice connects:
 **Alice's terminal** (exits after sending):
 ```
 alice -> https://alice.test
-alice.test published _dnsid.alice.test
 verified: alice.test -> bob.test
 
 response signed by: bob.test
@@ -106,24 +104,22 @@ is not signed by `bob.test`. Bob's server applies the response-signing
 middleware (`ResponseSigningMiddleware`) after restoring the public `https://bob.test` URL, because the
 signature covers the URL that Alice used.
 
-On subsequent runs (without a testnet reset), both agents show `already published (READY)`
-instead of `published identity record`.
+Startup verifies the existing identity. Registration, publication, and bilateral
+ISSUANCE belong to the CLI preparation commands above; startup does not repeat them.
 
 ## Async behavior and cleanup
 
 Inbound verification, peer verification, and self-verification use the async SDK
-methods. Synchronous registry operations and challenge signing (including KMS)
-run in workers. Cancelling startup waits for an offloaded operation before closing
-its resources. Configuration and trust-policy loading remain synchronous startup
-work; complete them before accepting traffic in production.
+methods. Configuration and trust-policy loading remain synchronous startup work;
+complete them before accepting traffic in production.
 
 Middleware limits request bodies to 8 MiB while reading. Invalid signatures return
 401, counterparty-policy denials return 403, and transient verification failures
 return 503. Unexpected errors are left to the web server as 500 responses.
 
 The returned stop callback drains the server, closes outbound clients, and awaits
-`IdentityManager.aclose()` to drain verification work. Registry clients close after
-registration. Startup and message-send failures also run cleanup. Reuse one manager
+`IdentityManager.aclose()` to drain verification work. Startup and message-send
+failures also run cleanup. Reuse one manager
 per application; do not construct one for each request.
 
 After installing the optional example packages, run its boundary and cleanup tests:
@@ -137,9 +133,7 @@ pytest -q tests/test_a2a_example.py
 | Step | What happens |
 |------|-------------|
 | Startup | `load_environment()` → `merge_loaded_config()` → `construct_identity_manager()` builds the `IdentityManager`: Ed25519 key from the `DNSID_CONFIG_DIR` identity directory, log trust from the independently supplied `DNSID_LOG_POLICY_URL` |
-| Registration | `RegistryClient.register_agent()` registers with the registry |
-| Verification | The agent requests verification, polls the status document for the challenge nonce, signs the decoded nonce with its active key, and submits it via `RegistryClient.submit_challenge_signature()`; the registry transitions `VERIFICATION → VERIFIED` |
-| Publish | `IdentityManager.publish_to_registry()` validates and signs the registry's canonical content, then submits the signature |
+| Identity setup | The CLI prepares publication and bilateral ISSUANCE before startup. The example does not request registration nonces. |
 | Self-verify | `await idm.async_verify_domain(own_domain)` confirms the published record is DNS-resolvable |
 | Send (Alice) | `agent.create_client()` returns an `A2AClient` that builds a signed A2A 1.0 `SendMessage` JSON-RPC request via `create_signed_async_http_client` (RFC 9421) |
 | Receive (Bob) | FastAPI middleware calls `await HttpSignatureProfile.async_verify_signed_http_request()` on every inbound POST and stores the verified sender as a `VerifiedSenderUser` on the request; the a2a-sdk `DefaultRequestHandler` dispatches the JSON-RPC method to the `AgentExecutor` |

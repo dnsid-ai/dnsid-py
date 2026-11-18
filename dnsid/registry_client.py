@@ -24,12 +24,6 @@ from .models import (
     KeyRotationPreparationRequest,
     LifecycleResult,
     LiveAgentRegistrationInput,
-    LiveChallengeTranscript,
-    LiveProofReissueRequest,
-    LiveProofReissueResponse,
-    LiveProofRequest,
-    LiveProofResponse,
-    LiveProvisioningResponse,
     PreparedRegistryEvent,
     PublicationConfig,
     PublishedRecord,
@@ -79,9 +73,6 @@ class RegistryClient(AbstractRegistryClient):
 
     * ``POST /api/v1/agent`` — register an agent
     * ``POST /api/v1/agent/{fqdn}/verify`` — request verification
-    * ``POST /api/v1/agent/{fqdn}/challenge`` — submit the signed challenge nonce
-    * ``POST /api/v1/agent/{fqdn}/proof`` — submit managed Live proof
-    * ``POST /api/v1/agent/{fqdn}/proof/reissue`` — reissue managed Live proof
     * ``GET  /api/v1/agent/{fqdn}/status`` — fetch lifecycle state
     * ``POST /api/v1/agent/{fqdn}/record`` — fetch canonical record content
     * ``POST /api/v1/agent/{fqdn}/signature`` — submit signature for publication
@@ -93,9 +84,8 @@ class RegistryClient(AbstractRegistryClient):
     Hosted mutation calls require owner credentials (an organization session or
     API key), supplied as ``api_key`` and sent as an ``Authorization: Bearer``
     header. Loopback registry calls do not require credentials. An agent bearer
-    token is not sufficient. Legacy status reads are public, but Live status
-    requires the same owner authentication because it
-    may expose a proof challenge. A configured credential is sent on all reads.
+    token is not sufficient. Management detail reads require owner authentication.
+    A configured credential is sent on all reads.
     The credential is never included in ``repr()``/``str()``, exceptions, or logs.
     Requests share a protected connection pool, including when transport settings
     are omitted. Every registry operation has an ``async_`` variant using
@@ -390,10 +380,8 @@ class RegistryClient(AbstractRegistryClient):
         self, input: AgentRegistrationInput, idempotency_key: str | None = None
     ) -> Generator[_RegistryCall, Any, AgentRegistration]:
         self._require_auth("register_agent")
-        from copy import deepcopy
-
         from ._utils import normalize_fqdn
-        from .exceptions import ArgumentError, DNSidError, ValidationError
+        from .exceptions import ArgumentError, ValidationError
         from .models import _parse_https_uri_host
 
         if input.environment and input.environment not in {"production", "sandbox"}:
@@ -443,6 +431,17 @@ class RegistryClient(AbstractRegistryClient):
                 raise ArgumentError("name must be at most 255 characters after trimming")
             body["name"] = name
 
+        return (yield from self._create_registration_steps(body, key))
+
+    def _create_registration_steps(
+        self, body: dict[str, Any], key: str, *, live: bool = False,
+    ) -> Generator[_RegistryCall, Any, AgentRegistration]:
+        from copy import deepcopy
+
+        from ._utils import normalize_fqdn
+        from .exceptions import DNSidError, ValidationError
+        from .models import _parse_https_uri_host
+
         data: dict[str, Any] | None = None
         try:
             data = yield _RegistryCall(
@@ -451,8 +450,10 @@ class RegistryClient(AbstractRegistryClient):
                 body,
                 extra_headers={"Idempotency-Key": key} if key else None,
                 expected_status=201,
+                response_idempotency_key=key if live else None,
             )
             created_id = _require_str(data, "id", "registry register response")
+            _require_str(data, "status", "registry register response")
             domain = normalize_fqdn(
                 _require_str(data, "domain", "registry register response"), agent_fqdn=True
             )
@@ -488,6 +489,8 @@ class RegistryClient(AbstractRegistryClient):
                 )
             if registration.publication_authority not in {"client", "registry"}:
                 raise ValidationError("registry registration has unknown publication authority")
+            if live and registration.publication_authority != "registry":
+                raise ValidationError("managed Live requires registry publication authority")
             return replace(
                 registration,
                 id=created_id,
@@ -502,19 +505,18 @@ class RegistryClient(AbstractRegistryClient):
 
     def register_live_agent(
         self, input: LiveAgentRegistrationInput, idempotency_key: str
-    ) -> LiveProvisioningResponse:
-        """Start managed Live registration and return its validated proof challenge.
+    ) -> AgentRegistration:
+        """Create or replay managed Live registration with HTTP 201.
 
-        ``POST /api/v1/agent`` sends fixed ``tier="live"`` and ``managed=true``
-        discriminators. Sign the exact base64url-decoded ``challenge_message``
-        bytes; use the derived :attr:`LiveProvisioningResponse.domain` for the
-        proof route.
+        The response Idempotency-Key must match the supplied key. Creation facts
+        and the publication snapshot are retained before authenticated detail reads.
+        Operational consent is supplied through bilateral ISSUANCE, not a nonce.
         """
         return self._run_registry(self._register_live_agent_steps(input, idempotency_key))
 
     async def async_register_live_agent(
         self, input: LiveAgentRegistrationInput, idempotency_key: str
-    ) -> LiveProvisioningResponse:
+    ) -> AgentRegistration:
         """Async variant of :meth:`register_live_agent` with the same validation and errors."""
         return await self._async_run_registry(
             self._register_live_agent_steps(input, idempotency_key),
@@ -522,11 +524,10 @@ class RegistryClient(AbstractRegistryClient):
 
     def _register_live_agent_steps(
         self, input: LiveAgentRegistrationInput, idempotency_key: str
-    ) -> Generator[_RegistryCall, Any, LiveProvisioningResponse]:
+    ) -> Generator[_RegistryCall, Any, AgentRegistration]:
         self._require_auth("register_live_agent")
-        from copy import deepcopy
-
-        from .exceptions import ArgumentError, DNSidError
+        from .exceptions import ArgumentError
+        from .models import _parse_https_uri_host
 
         if input.environment not in {"", "production"}:
             raise ArgumentError('live registration environment must be "production" or omitted')
@@ -539,28 +540,19 @@ class RegistryClient(AbstractRegistryClient):
             "managed": True,
         }
         if input.capabilities_url:
+            _parse_https_uri_host(input.capabilities_url, field_name="capabilities_url")
             body["capabilities_url"] = input.capabilities_url
         if input.name:
+            if not isinstance(input.name, str) or len(input.name) > 255:
+                raise ArgumentError("name must contain at most 255 characters")
             body["name"] = input.name
-        data: dict[str, Any] | None = None
-        try:
-            data = yield _RegistryCall(
-                "_post",
-                "/api/v1/agent",
-                body,
-                extra_headers={"Idempotency-Key": idempotency_key},
-                expected_status=202,
-            )
-            return _live_provisioning_from_response(data, input.public_key_jwk)
-        except DNSidError as exc:
-            exc.registration_request = deepcopy(body)
-            exc.registration_idempotency_key = idempotency_key
-            exc.registration_response = deepcopy(data or exc.registration_response)
-            raise
+        return (yield from self._create_registration_steps(body, idempotency_key, live=True))
 
     def verify_agent(self, domain: str) -> AgentRegistration:
-        """Request registry verification for a registered self-managed agent.
+        """Explicitly advance or retry self-managed registration, including ERROR.
 
+        Live returns HTTP 409 INVALID_TRANSITION. This never runs automatically.
+        Success is workflow progress, not publication or protocol ACTIVE.
         ``POST /api/v1/agent/{domain}/verify``
         """
         return self._run_registry(self._verify_agent_steps(domain))
@@ -685,179 +677,6 @@ class RegistryClient(AbstractRegistryClient):
 
         data = (yield _RegistryCall("_post", f"/api/v1/agent/{quote(domain, safe='')}/cancel"))
         return _lifecycle_result_from_response(data)
-
-    def submit_challenge_signature(
-        self, domain: str, nonce: str, signature: bytes | str
-    ) -> LifecycleResult:
-        """Submit the signed verification challenge to prove key possession.
-
-        ``POST /api/v1/agent/{domain}/challenge``
-
-        During the ``VERIFICATION`` lifecycle state the registry exposes a
-        challenge nonce on the status document (``raw["challenge"]``).  The
-        agent signs the base64url-decoded nonce bytes with its active signing
-        key and submits the signature here.  The registry accepts the
-        challenge and completes verification asynchronously; use
-        :meth:`wait_for_status` with ``target_state="VERIFIED"`` afterwards.
-        The nonce is single-use — a fresh one must be fetched before retrying.
-
-        Args:
-            domain: Agent FQDN.
-            nonce: Challenge nonce exactly as returned by the status endpoint.
-            signature: Raw signature bytes (base64url-encoded automatically),
-                or an already base64url-encoded signature string.
-        """
-        return self._run_registry(self._submit_challenge_signature_steps(domain, nonce, signature))
-
-    async def async_submit_challenge_signature(
-        self, domain: str, nonce: str, signature: bytes | str
-    ) -> LifecycleResult:
-        """Async variant of :meth:`submit_challenge_signature`."""
-        return await self._async_run_registry(
-            self._submit_challenge_signature_steps(domain, nonce, signature),
-        )
-
-    def _submit_challenge_signature_steps(
-        self, domain: str, nonce: str, signature: bytes | str
-    ) -> Generator[_RegistryCall, Any, LifecycleResult]:
-        self._require_auth("submit_challenge_signature")
-        from urllib.parse import quote
-
-        import httpx
-
-        from ._utils import b64url_encode
-
-        sig_text = signature if isinstance(signature, str) else b64url_encode(signature)
-        url = f"{self._base_url}/api/v1/agent/{quote(domain, safe='')}/challenge"
-        _transport_err: Exception | None = None
-        try:
-            resp = yield _RegistryCall(
-                "_http_request",
-                "POST", url,
-                json={"nonce": nonce, "signature": sig_text},
-                headers=self._auth_headers(),
-                timeout=10.0,
-            )
-        except httpx.TransportError as exc:
-            from .enums import VerificationCode
-            from .exceptions import VerificationError
-
-            _transport_err = VerificationError(
-                VerificationCode.LOG_ERROR,
-                f"Registry challenge request failed for {domain!r}: {self._transport_detail(exc)}",
-                transient=True,
-            )
-        if _transport_err is not None:
-            raise _transport_err from None
-        if not resp.is_success:
-            from .enums import VerificationCode
-            from .exceptions import VerificationError
-
-            raise VerificationError(
-                VerificationCode.LOG_ERROR,
-                f"Registry challenge returned HTTP {resp.status_code} for {domain!r}",
-                transient=resp.status_code >= 500,
-            )
-
-        # The registry may reply 202 with an empty body; a JSON body with
-        # id/status is optional and parsed when present.
-        try:
-            data = resp.json()
-        except Exception:
-            data = None
-        if not isinstance(data, dict):
-            data = {}
-        raw_status = data.get("status")
-        state = ""
-        if isinstance(raw_status, str) and raw_status:
-            state = str(raw_status).upper()
-        return LifecycleResult(
-            id=str(data.get("id") or ""),
-            state=state,
-            status_note=str(data.get("status_note") or ""),
-            raw=data,
-        )
-
-    def submit_live_proof(
-        self, domain: str, request: LiveProofRequest
-    ) -> LiveProofResponse:
-        """Submit signed proof for managed Live provisioning.
-
-        ``POST /api/v1/agent/{domain}/proof`` requires owner/session/API-key
-        credentials, not an agent bearer token. ``request.request_id`` is sent
-        as the required ``Idempotency-Key`` header.
-        """
-        return self._run_registry(self._submit_live_proof_steps(domain, request))
-
-    async def async_submit_live_proof(
-        self, domain: str, request: LiveProofRequest
-    ) -> LiveProofResponse:
-        """Async variant of :meth:`submit_live_proof` with the same validation and errors."""
-        return await self._async_run_registry(self._submit_live_proof_steps(domain, request))
-
-    def _submit_live_proof_steps(
-        self, domain: str, request: LiveProofRequest
-    ) -> Generator[_RegistryCall, Any, LiveProofResponse]:
-        self._require_auth("submit_live_proof")
-        _validate_tlog_idempotency_key(request.request_id)
-        from urllib.parse import quote
-
-        data = yield _RegistryCall(
-            "_post",
-            f"/api/v1/agent/{quote(domain, safe='')}/proof",
-            {
-                "request_id": request.request_id,
-                "challenge": request.challenge,
-                "public_key": _live_public_jwk_dict(request.public_key_jwk),
-                "signature": request.signature,
-            },
-            extra_headers={"Idempotency-Key": request.request_id},
-            expected_status=202,
-        )
-        return LiveProofResponse(
-            request_id=_require_str(data, "request_id", "registry Live proof response"),
-            agent_id=_require_str(data, "agent_id", "registry Live proof response"),
-            status=_require_str(data, "status", "registry Live proof response"),
-            raw=data,
-        )
-
-    def reissue_live_proof(
-        self, domain: str, request: LiveProofReissueRequest
-    ) -> LiveProofReissueResponse:
-        """Request a replacement challenge for an expired managed Live proof.
-
-        ``POST /api/v1/agent/{domain}/proof/reissue`` requires owner/session/API-key
-        credentials, not an agent bearer token. ``request.request_id`` is sent
-        as the required ``Idempotency-Key`` header. The original public key is
-        validated locally and binds the replacement transcript, but is not sent.
-        The replacement challenge supersedes every earlier challenge; only the
-        latest message may be signed.
-        """
-        return self._run_registry(self._reissue_live_proof_steps(domain, request))
-
-    async def async_reissue_live_proof(
-        self, domain: str, request: LiveProofReissueRequest
-    ) -> LiveProofReissueResponse:
-        """Async variant of :meth:`reissue_live_proof` with the same validation and errors."""
-        return await self._async_run_registry(self._reissue_live_proof_steps(domain, request))
-
-    def _reissue_live_proof_steps(
-        self, domain: str, request: LiveProofReissueRequest
-    ) -> Generator[_RegistryCall, Any, LiveProofReissueResponse]:
-        self._require_auth("reissue_live_proof")
-        _validate_tlog_idempotency_key(request.request_id)
-        _live_public_jwk_dict(request.public_key_jwk)
-        expected_key_id = request.public_key_jwk.thumbprint()
-        from urllib.parse import quote
-
-        data = yield _RegistryCall(
-            "_post",
-            f"/api/v1/agent/{quote(domain, safe='')}/proof/reissue",
-            {"request_id": request.request_id},
-            extra_headers={"Idempotency-Key": request.request_id},
-            expected_status=202,
-        )
-        return _live_proof_reissue_from_response(data, domain, expected_key_id)
 
     def get_status(self, domain: str) -> str | None:
         """Fetch the raw lifecycle status string from the registry.
@@ -1509,13 +1328,45 @@ class RegistryClient(AbstractRegistryClient):
             self._submit_prepared_event_steps(domain, entry_bytes, idempotency_key),
         )
 
+    def submit_owner_issuance(
+        self, domain: str, owner_entry_bytes: bytes, idempotency_key: str,
+    ) -> SubmissionResult:
+        """Submit a persisted entity-only ISSUANCE for registry custody completion.
+
+        Send bytes from dnsid.c2sp_tlog.owner_issuance_bytes unchanged. Retry the
+        identical envelope and key, including after private-key claim. The receipt
+        hash identifies the completed bilateral entry, not this uploaded envelope.
+
+        Acceptance alone does not permit local completion or activation. Fetch
+        the completed entry through the receipt log reference; verify inclusion,
+        both signatures, expected identity/key bindings, unchanged signed bytes
+        and entity signature, and its exact hash against entry_hash. Missing
+        evidence is resumable; invalid evidence fails closed.
+        """
+        return self._run_registry(
+            self._submit_prepared_event_steps(
+                domain, owner_entry_bytes, idempotency_key, owner_issuance=True,
+            ),
+        )
+
+    async def async_submit_owner_issuance(
+        self, domain: str, owner_entry_bytes: bytes, idempotency_key: str,
+    ) -> SubmissionResult:
+        """Async variant of :meth:`submit_owner_issuance` with the same evidence duties."""
+        return await self._async_run_registry(
+            self._submit_prepared_event_steps(
+                domain, owner_entry_bytes, idempotency_key, owner_issuance=True,
+            ),
+        )
+
     def _submit_prepared_event_steps(
         self,
         domain: str,
         entry_bytes: bytes,
         idempotency_key: str,
+        *, owner_issuance: bool = False,
     ) -> Generator[_RegistryCall, Any, SubmissionResult]:
-        self._require_auth("submit_prepared_event")
+        self._require_auth("submit_owner_issuance" if owner_issuance else "submit_prepared_event")
         from urllib.parse import quote
 
         from .exceptions import ArgumentError
@@ -1591,7 +1442,15 @@ class RegistryClient(AbstractRegistryClient):
                 )
 
         result.status_code = response.status_code
-        if result.accepted:
+        if result.accepted and owner_issuance and (
+            not re.fullmatch(r"[0-9a-f]{64}", result.entry_hash)
+            or result.log_ref is None or result.index is None or result.index < 0
+        ):
+            return SubmissionResult(
+                state="pending", error_code="TLOG_SUBMISSION_INVALID_RESPONSE",
+                raw=data, status_code=response.status_code,
+            )
+        if result.accepted and not owner_issuance:
             import hashlib
 
             expected_hash = hashlib.sha256(entry_bytes).hexdigest()
@@ -1612,8 +1471,11 @@ class RegistryClient(AbstractRegistryClient):
         body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         expected_status: int | None = None,
+        response_idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        return self._run_registry(self._post_steps(path, body, extra_headers, expected_status))
+        return self._run_registry(
+            self._post_steps(path, body, extra_headers, expected_status, response_idempotency_key)
+        )
 
     async def _async_post(
         self,
@@ -1621,9 +1483,10 @@ class RegistryClient(AbstractRegistryClient):
         body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         expected_status: int | None = None,
+        response_idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         return await self._async_run_registry(
-            self._post_steps(path, body, extra_headers, expected_status),
+            self._post_steps(path, body, extra_headers, expected_status, response_idempotency_key),
         )
 
     def _post_steps(
@@ -1632,6 +1495,7 @@ class RegistryClient(AbstractRegistryClient):
         body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         expected_status: int | None = None,
+        response_idempotency_key: str | None = None,
     ) -> Generator[_RegistryCall, Any, dict[str, Any]]:
         import httpx
 
@@ -1685,6 +1549,15 @@ class RegistryClient(AbstractRegistryClient):
             if path == "/api/v1/agent":
                 status_error.registration_response = _creation_facts(resp)
             raise status_error
+        if response_idempotency_key is not None and (
+            resp.headers.get("Idempotency-Key") != response_idempotency_key
+        ):
+            echo_error = VerificationError(
+                VerificationCode.RECORD_INVALID, "Live response Idempotency-Key mismatch",
+            )
+            echo_error.status_code = resp.status_code
+            echo_error.registration_response = _creation_facts(resp)
+            raise echo_error
         from .exceptions import DNSidError
 
         try:
@@ -1709,7 +1582,7 @@ def _creation_facts(resp: Any) -> dict[str, Any] | None:
     return {
         name: data[name]
         for name in (
-            "id", "agent_id", "request_id", "domain", "status",
+            "id", "domain", "status",
             "publication_config", "oidc_issuer_url",
         )
         if name in data
@@ -1863,141 +1736,6 @@ def _lifecycle_result_from_response(data: dict[str, Any]) -> LifecycleResult:
     )
 
 
-def _live_challenge_from_response(
-    *,
-    label: str,
-    agent_id: str,
-    challenge: str,
-    challenge_message: str,
-    expected_key_id: str | None = None,
-    expected_domain: str | None = None,
-) -> tuple[str, LiveChallengeTranscript]:
-    import datetime
-    import json
-
-    from ._utils import b64url_decode_strict, normalize_fqdn
-    from .enums import VerificationCode
-    from .exceptions import VerificationError
-
-    try:
-        raw = json.loads(b64url_decode_strict(challenge_message).decode("utf-8"))
-        if not isinstance(raw, dict):
-            raise ValueError
-
-        def text(name: str) -> str:
-            value = raw.get(name)
-            if not isinstance(value, str) or not value:
-                raise ValueError
-            return value
-
-        protocol = text("protocol")
-        org_id = text("org_id")
-        transcript_agent_id = text("agent_id")
-        fqdn = text("fqdn")
-        key_id = text("key_id")
-        nonce = text("nonce")
-        expires = text("expires_at")
-        if protocol != "dnsid-live-provisioning-pop/v1":
-            raise ValueError
-        if transcript_agent_id != agent_id or nonce != challenge:
-            raise ValueError
-        if expected_key_id is not None and key_id != expected_key_id:
-            raise ValueError
-        domain = normalize_fqdn(fqdn, agent_fqdn=True)
-        if expected_domain is not None and domain != normalize_fqdn(
-            expected_domain, agent_fqdn=True
-        ):
-            raise ValueError
-        expires_at = datetime.datetime.fromisoformat(expires.replace("Z", "+00:00"))
-        if expires_at.tzinfo is None:
-            raise ValueError
-    except Exception:
-        raise VerificationError(
-            VerificationCode.RECORD_INVALID,
-            f"{label}: invalid challenge transcript",
-        ) from None
-    return domain, LiveChallengeTranscript(
-        protocol=protocol,
-        org_id=org_id,
-        agent_id=transcript_agent_id,
-        fqdn=fqdn,
-        key_id=key_id,
-        nonce=nonce,
-        expires_at=expires_at,
-    )
-
-
-def _live_provisioning_from_response(
-    data: dict[str, Any], public_key: JWK
-) -> LiveProvisioningResponse:
-    label = "registry Live provisioning response"
-    request_id = _require_str(data, "request_id", label)
-    agent_id = _require_str(data, "agent_id", label)
-    status = _require_str(data, "status", label)
-    challenge = _require_string(data, "challenge", label)
-    challenge_message = _require_string(data, "challenge_message", label)
-    domain = ""
-    transcript = None
-    if status == "challenge_pending":
-        domain, transcript = _live_challenge_from_response(
-            label=label,
-            agent_id=agent_id,
-            challenge=challenge,
-            challenge_message=challenge_message,
-            expected_key_id=public_key.thumbprint(),
-        )
-    if data.get("domain") not in (None, ""):
-        from ._utils import normalize_fqdn
-        from .exceptions import ValidationError
-
-        wire_domain = data["domain"]
-        if not isinstance(wire_domain, str):
-            raise ValidationError("Live provisioning domain must be a valid agent domain")
-        wire_domain = normalize_fqdn(wire_domain, agent_fqdn=True)
-        if domain and domain != wire_domain:
-            raise ValidationError("Live provisioning domain differs from the proof transcript")
-        domain = wire_domain
-    return LiveProvisioningResponse(
-        request_id=request_id,
-        agent_id=agent_id,
-        status=status,
-        challenge=challenge,
-        challenge_message=challenge_message,
-        domain=domain,
-        challenge_transcript=transcript,
-        raw=data,
-    )
-
-
-def _live_proof_reissue_from_response(
-    data: dict[str, Any], expected_domain: str, expected_key_id: str
-) -> LiveProofReissueResponse:
-    label = "registry Live proof reissue response"
-    request_id = _require_str(data, "request_id", label)
-    agent_id = _require_str(data, "agent_id", label)
-    status = _require_str(data, "status", label)
-    challenge = _require_str(data, "challenge", label)
-    challenge_message = _require_str(data, "challenge_message", label)
-    domain, transcript = _live_challenge_from_response(
-        label=label,
-        agent_id=agent_id,
-        challenge=challenge,
-        challenge_message=challenge_message,
-        expected_key_id=expected_key_id,
-        expected_domain=expected_domain,
-    )
-    return LiveProofReissueResponse(
-        request_id=request_id,
-        agent_id=agent_id,
-        status=status,
-        challenge=challenge,
-        challenge_message=challenge_message,
-        domain=domain,
-        challenge_transcript=transcript,
-        raw=data,
-    )
-
-
 def _submission_result_from_response(data: dict[str, Any]) -> SubmissionResult:
     from .enums import VerificationCode
     from .exceptions import VerificationError
@@ -2109,6 +1847,16 @@ def _registration_from_response(
         raise ValidationError("registry registration is missing registry status")
     raw_dns_published = data.get("dns_published", data.get("dnsPublished"))
     dns_published = raw_dns_published if isinstance(raw_dns_published, bool) else None
+    if authority == "registry" and dns_published is None:
+        from copy import deepcopy
+
+        from .exceptions import UnsupportedRegistryResponse
+
+        error = UnsupportedRegistryResponse(
+            "registry-managed detail requires boolean dns_published"
+        )
+        error.registration_response = deepcopy(data)
+        raise error
     publication_config = _publication_config_from_response(data)
     if publication_config is not None:
         _validate_publication_config(publication_config, domain_value)

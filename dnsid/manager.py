@@ -672,8 +672,7 @@ class IdentityManager:
 
         Args:
             registry_client: Client for the registry publication API.
-            timeout: Maximum seconds to wait for the registry to report
-                publication.
+            timeout: Maximum seconds for registry polling and public verification.
             interval: Seconds between registry status polls.
 
         Returns:
@@ -681,55 +680,60 @@ class IdentityManager:
 
         Raises:
             ValidationError: If the identity is not registered, the client
-                controls publication, the registry fails or never confirms
-                DNS publication, or the published record uses an unexpected
-                version.
-            VerificationError: If verification of the published identity
-                fails; carries a VerificationCode.
+                controls publication, the registry reports failure or a terminal
+                state, or the published record uses an unexpected version.
+            VerificationError: If public verification fails or the call deadline
+                expires; carries a VerificationCode.
         """
         self._require_local_identity("await_registry_managed_publication")
+        import time
+
+        from ._verification_budget import verification_budget
         from .exceptions import ValidationError
         from .models import PublishedRecord
 
         domain = self._local_identity.domain
-        registration = registry_client.get_registration(domain)
-        if registration is None:
-            raise ValidationError("local identity is not registered")
-        if registration.publication_authority != "registry":
-            raise ValidationError("client controls accountable-entity publication")
+        with verification_budget(timeout):
+            while True:
+                try:
+                    registration = registry_client.get_registration(domain)
+                except VerificationError as cause:
+                    if not cause.transient:
+                        raise
+                    time.sleep(remaining_seconds(interval))
+                    continue
+                if registration is None:
+                    raise ValidationError("local identity is not registered")
+                if registration.publication_authority != "registry":
+                    raise ValidationError("client controls accountable-entity publication")
+                if registration.registry_status in {
+                    "REJECTED", "CANCELLED", "ERROR", "REVOKED", "RETIRED",
+                }:
+                    raise ValidationError(
+                        f"registry publication failed: {registration.registry_status}"
+                    )
+                if registration.registry_status == "READY" and registration.dns_published is True:
+                    break
+                time.sleep(remaining_seconds(interval))
 
-        status = registry_client.wait_for_status(domain, timeout=timeout, interval=interval)
-        if not status.published:
-            raise ValidationError("registry did not report DNS publication complete")
+            verified = self._verify_publication_evidence(domain)
+            from .models import IDENTITY_RECORD_VERSION
 
-        registration = registry_client.get_registration(domain)
-        if registration is None:
-            raise ValidationError("registry registration disappeared after publication")
-        if registration.publication_authority != "registry":
-            raise ValidationError("registry publication authority changed while waiting")
-        if registration.registry_status in {"REJECTED", "CANCELLED", "ERROR"}:
-            raise ValidationError(f"registry publication failed: {registration.registry_status}")
-        if registration.dns_published is not True:
-            raise ValidationError("registry did not confirm DNS publication")
-
-        verified = self._verify_publication_evidence(domain)
-        from .models import IDENTITY_RECORD_VERSION
-
-        expected_profile = self._local_identity.publish_profile or IDENTITY_RECORD_VERSION
-        if verified.record.v != expected_profile:
-            raise ValidationError(
-                "published DNSid record uses an unexpected version: "
-                f"{verified.record.v!r} != {expected_profile!r}"
+            expected_profile = self._local_identity.publish_profile or IDENTITY_RECORD_VERSION
+            if verified.record.v != expected_profile:
+                raise ValidationError(
+                    "published DNSid record uses an unexpected version: "
+                    f"{verified.record.v!r} != {expected_profile!r}"
+                )
+            return PublishedRecord(
+                domain=verified.domain,
+                owner_name=f"_dnsid.{verified.domain}",
+                txt_record=verified.record.serialize(),
+                ttl=verified.dns_ttl,
+                publication_status=registration.registry_status,
+                protocol_status=verified.registry_status,
+                raw=registration.raw,
             )
-        return PublishedRecord(
-            domain=verified.domain,
-            owner_name=f"_dnsid.{verified.domain}",
-            txt_record=verified.record.serialize(),
-            ttl=verified.dns_ttl,
-            publication_status=registration.registry_status,
-            protocol_status=verified.registry_status,
-            raw=registration.raw,
-        )
 
     def rotate_operational_key(
         self,

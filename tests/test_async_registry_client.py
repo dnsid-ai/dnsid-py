@@ -4,7 +4,6 @@ import asyncio
 import gzip
 import hashlib
 import inspect
-import json
 import threading
 from unittest.mock import AsyncMock, patch
 
@@ -17,8 +16,6 @@ from dnsid import (
     DNSidError,
     KeyRotationPreparationRequest,
     LiveAgentRegistrationInput,
-    LiveProofReissueRequest,
-    LiveProofRequest,
     RegistryClient,
     RegistryRevocationReason,
     VerificationCode,
@@ -31,7 +28,6 @@ from tests.test_registry_client import (
     _FAKE_API_KEY,
     _REGISTER_RESPONSE,
     _VALID_CANONICAL,
-    _live_challenge_response,
     _live_key,
 )
 
@@ -44,9 +40,6 @@ _OPERATIONS = [
     ("revoke_agent", (_DOMAIN, "agent-123", RegistryRevocationReason.KEY_COMPROMISE)),
     ("retire_agent", (_DOMAIN, "agent-123")),
     ("cancel_agent", (_DOMAIN,)),
-    ("submit_challenge_signature", (_DOMAIN, "nonce", b"signature")),
-    ("submit_live_proof", (_DOMAIN, LiveProofRequest("live-1", "challenge", _KEY, "sig"))),
-    ("reissue_live_proof", (_DOMAIN, LiveProofReissueRequest("live-1", _KEY))),
     ("get_status", (_DOMAIN,)),
     ("get_agent_status", (_DOMAIN,)),
     ("get_organization_onboarding", ()),
@@ -58,6 +51,7 @@ _OPERATIONS = [
     ("prepare_issuance", (_DOMAIN, "issue-1")),
     ("prepare_key_rotation", (_DOMAIN, KeyRotationPreparationRequest("old", _KEY), "rotate-1")),
     ("submit_prepared_event", (_DOMAIN, _ENTRY, "append-1")),
+    ("submit_owner_issuance", (_DOMAIN, _ENTRY, "owner-1")),
 ]
 
 
@@ -66,21 +60,18 @@ def _response(request):
     if path == "/api/v1/org/onboarding":
         return httpx.Response(200, json={"org_id": "org-1"})
     if request.method == "GET":
-        return httpx.Response(200, json={**_REGISTER_RESPONSE, "managed": "self", "dns_published": True})
+        return httpx.Response(200, json={**_REGISTER_RESPONSE, "managed": "dnsid", "dns_published": True})
     if path == "/api/v1/agent":
-        if json.loads(request.content).get("tier") == "live":
-            return httpx.Response(202, json=_live_challenge_response(_KEY))
-        return httpx.Response(201, json=_REGISTER_RESPONSE)
-    if path.endswith("/proof/reissue"):
-        return httpx.Response(202, json=_live_challenge_response(_KEY, domain=_DOMAIN))
-    if path.endswith("/proof"):
-        return httpx.Response(202, json={"request_id": "live-1", "agent_id": "agent-123", "status": "pending"})
+        return httpx.Response(201, json=_REGISTER_RESPONSE, headers={
+            "Idempotency-Key": request.headers.get("Idempotency-Key", ""),
+        })
     if path.endswith("/record"):
         return httpx.Response(200, json={"canonicalContent": _VALID_CANONICAL, "signingKid": "kid-1"})
     if path.endswith("/prepare"):
         return httpx.Response(200, content=_ENTRY)
     if path.endswith("/events"):
-        return httpx.Response(200, json={"state": "accepted", "entryHash": hashlib.sha256(_ENTRY).hexdigest()})
+        return httpx.Response(200, json={"state": "accepted", "entryHash": hashlib.sha256(_ENTRY).hexdigest(),
+                                         "index": 0, "lr": "c2sp-tlog:testnet:https://log.example#instance_AAAAAAAAAAAAAAAAAAAAAA@0"})
     return httpx.Response(200, json={"id": "agent-123", "status": "VERIFIED"})
 
 
