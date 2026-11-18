@@ -557,6 +557,44 @@ Public JWK `kid` values and the IDs used by `jwk()`, `list_key_ids()`,
 public-key thumbprints. The provider maps them to KMS references internally;
 configuration and saved `AwsKmsKeyState` still contain KMS key IDs, not thumbprints.
 
+### Explicit initial AWS key create/reuse
+
+Ordinary `load()` and key-source configuration only open existing keys. To
+explicitly obtain an initial key through a deterministic alias in your injected
+client's account and region:
+
+```python
+from dnsid import AwsKmsBootstrapConfig, create_or_reuse_aws_kms_key_provider
+
+result = create_or_reuse_aws_kms_key_provider(
+    facade,
+    AwsKmsBootstrapConfig(
+        alias_name="alias/dnsid/my-org/my-agent",
+        algorithm="ECDSA_SHA_256",  # or "ED25519_SHA_512"
+    ),
+)
+provider = result.key_provider
+key_ref = result.key_ref  # canonical UUID/mrk key ID or key ARN, not a JWK kid
+```
+
+The exact alias is not normalized. Only an initial native KMS NotFound permits
+one key creation and one CreateAlias attempt. Success or native AlreadyExists
+contention is followed by exactly one alias winner read; the canonical identity,
+metadata and public material must validate consistently before return. Other
+native errors propagate unchanged, including response loss and failed winner
+reads. There is no polling or presumed candidate success; a later explicit call
+may resolve the same alias again. Public JWK `kid` remains its RFC 7638 thumbprint.
+
+This is **nondestructive partial bootstrap**, not full lifecycle management.
+Bootstrap never retargets aliases, deletes or disables keys, or schedules
+retirement. Disposition/reconciliation of losing or ambiguous resources is
+**deferred**, not an accepted permanent-retention policy. It creates no agent ID
+and performs no registry, DNS, log publication or rotation; those remain separate
+explicit actions. The separate cloud identity/custody question (#63) is unresolved.
+Bootstrap needs `kms:GetPublicKey`, `kms:CreateKey`, and `kms:CreateAlias` as
+applicable; runtime signing needs `kms:Sign`. Existing rotation settings do not
+decide bootstrap resource disposition.
+
 **Upgrade note:** older versions published KMS references as JWK `kid` values.
 The same KMS key now publishes a different `kid`. For an existing identity that
 published the old value, arrange approved key-binding continuity before upgrading

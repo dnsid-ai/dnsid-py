@@ -34,6 +34,10 @@ Key management:
     AwsKmsKeyState             — mutable lifecycle state for AwsKmsKeyProvider
     BotoKmsFacade              — boto3 adapter for AwsKmsKeyProvider
     AwsKmsFacade               — abstract facade for testing without AWS
+    AwsKmsBootstrapFacade      — explicit alias acquisition and native exception types
+    AwsKmsBootstrapConfig      — exact alias and algorithm for explicit bootstrap
+    AwsKmsBootstrapResult      — canonical reference and locally active provider
+    create_or_reuse_aws_kms_key_provider — explicit nondestructive initial key bootstrap
 
 Configuration loading (loaders parse; constructors default):
     load_environment / load_file / load_cli_directory — one loader per source → LoadedConfig
@@ -67,6 +71,15 @@ from ._response_middleware import ResponseSigningMiddleware
 from ._verification_budget import remaining_seconds, verification_budget
 from .agent_status import active_status_document
 from .aws_kms_key_provider import (
+    AwsKmsBootstrapConfig as AwsKmsBootstrapConfig,
+)
+from .aws_kms_key_provider import (
+    AwsKmsBootstrapFacade as AwsKmsBootstrapFacade,
+)
+from .aws_kms_key_provider import (
+    AwsKmsBootstrapResult as AwsKmsBootstrapResult,
+)
+from .aws_kms_key_provider import (
     AwsKmsConfig as AwsKmsConfig,
 )
 from .aws_kms_key_provider import (
@@ -80,6 +93,9 @@ from .aws_kms_key_provider import (
 )
 from .aws_kms_key_provider import (
     BotoKmsFacade as BotoKmsFacade,
+)
+from .aws_kms_key_provider import (
+    create_or_reuse_aws_kms_key_provider as create_or_reuse_aws_kms_key_provider,
 )
 from .config_loading import (
     KeySource,
@@ -253,6 +269,10 @@ __all__ = [
     "DnsIdTxtRecord",
     "TXTRecord",
     # Keys
+    "AwsKmsBootstrapConfig",
+    "AwsKmsBootstrapFacade",
+    "AwsKmsBootstrapResult",
+    "create_or_reuse_aws_kms_key_provider",
     "JWK",
     "JWKS",
     "check_ek_ku_distinctness",

@@ -47,3 +47,34 @@ JWK IDs are RFC 7638 thumbprints and contain no private material.
 
 See the [SDK README](https://github.com/dnsid-ai/dnsid-py#google-cloud-kms-key-provider)
 and [API reference](https://docs.dnsid.ai/reference/py/key-providers/).
+
+## Explicit initial named-key bootstrap
+
+```python
+from dnsid_google_kms import create_or_reuse_google_kms_key_provider
+
+client = kms_v1.KeyManagementServiceClient()  # caller owns and closes this client
+result = create_or_reuse_google_kms_key_provider(
+    client,
+    parent="projects/my-project/locations/global/keyRings/agents",
+    crypto_key_id="stable-org-agent-name",
+)
+# Persist result.key_version_name; use result.provider for operational signing.
+# Only AFTER success, separately invoke your application's explicit agent-ID
+# create/reuse action. Bootstrap itself never performs that action.
+```
+
+Choose a stable collision-free ID per identity; no normalization is applied.
+The existing project/location/key ring and read/create/sign permissions are
+prerequisites. This opt-in operation reuses the exact named CryptoKey or creates
+it only after a typed NotFound, rereading a concurrent AlreadyExists winner once.
+All routes require enabled software Ed25519 version **1** and validated public
+material. No polling, extra version, ancestor creation, repair or fallback occurs;
+native failures propagate, including uncertain create outcomes. The SDK adds no
+retry policy. A separate explicit invocation can reuse a committed key later.
+The returned result is frozen, and the injected client remains caller-owned.
+
+For rotated identities, reopen the persisted authorized immutable version with
+`GoogleKmsKeyProvider`, not bootstrap. Construction, config loading and explicit
+pending-version generation remain unchanged. Keys come first; agent IDs are a
+separate explicit application step. The server never creates these keys.
