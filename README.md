@@ -324,22 +324,22 @@ Fresh `no-store`, `no-cache`, and `max-age=0` responses can serve their acquirin
 invocation; HTTP-stale evidence cannot.
 
 This is the narrower DNSid WBA profile targeting published
-`draft-ietf-webbotauth-httpsig-protocol-00`, including its directory format,
+`draft-ietf-webbotauth-httpsig-protocol-01`, including its directory format,
 not a claim of general WBA or partner interoperability. A covered `Signature-Agent`
 is mandatory, even with trusted caller discovery. Compatibility flags
 `include_signature_agent=False` and `signature_agent=False` now raise `ArgumentError`.
-For `directory`, configure an ASCII HTTPS origin without a path (including `/`),
-query, fragment, or credentials; use `jwks_uri` for a direct endpoint. Directory
-signatures cannot have future `created` timestamps, even within clock skew.
+The signed member contains the full HTTPS directory URL and no parameters. For a
+custom endpoint, set `signature_agent_uri` to the full URL. Directory signatures
+cannot have future `created` timestamps, even within clock skew.
 Nested signing is unsupported. Only the current DNSid operational key is accepted;
 rotation can invalidate outstanding old-key requests without an overlap period.
 After both signatures verify, a current-key mismatch permits one full identity
 refresh per domain per five seconds. Concurrent retries are suppressed; failed
 attempts consume the allowance. Refresh never bypasses acceptance or revocation.
 
-WBA discovery must not identify the live `ku` endpoint, including query/fragment
-variants. Supply `ku_url` to `WBAHttpSigner` when locally known to reject invalid
-`jwks_uri` configuration before signing. Verification checks authenticated `ku`.
+WBA discovery must not identify the live `ku` endpoint, including query variants.
+Supply `ku_url` to `WBAHttpSigner` when locally known to reject this configuration
+before signing. Verification checks authenticated `ku`.
 Directory serving backdates signatures by `min(5, ttl - 1)` seconds and emits signed
 `max-age=N, must-revalidate`, with at most 295 seconds at the default TTL. Disable
 all CDN stale-serving overrides, `stale-while-revalidate`, and `stale-if-error`.

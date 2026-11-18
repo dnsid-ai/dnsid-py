@@ -1,4 +1,4 @@
-"""DNSid WBA verification for draft-ietf-webbotauth-httpsig-protocol-00.
+"""DNSid WBA verification for draft-ietf-webbotauth-httpsig-protocol-01.
 
 Directory self-signatures are never a substitute for DNSid verification and
 configured entity acceptance. No directory evidence is cached. Without a replay
@@ -20,7 +20,6 @@ from email.utils import parsedate_to_datetime
 from typing import Any, NoReturn, cast
 from urllib.parse import urlsplit
 
-import http_sf
 import httpx
 
 from ._https_client import _assert_same_host_https_redirect, _read_limited
@@ -49,10 +48,9 @@ from .safe_transport import SSRF_BLOCK_MARKER, make_ssrf_safe_transport
 from .wba_signer import (
     WBA_DIRECTORY_MEDIA_TYPE,
     WBA_DIRECTORY_TAG,
-    WBA_DIRECTORY_WELL_KNOWN_PATH,
     WBA_TAG,
     WebBotAuthConfig,
-    _is_https_origin,
+    _is_direct_https_uri,
     _wba_identifier,
 )
 
@@ -79,7 +77,6 @@ class WebBotAuthVerificationOptions:
 
     signer_domain: str = ""
     discovery_uri: str = ""
-    discovery_type: str = "directory"
     allow_signature_agent_domain: bool = False
     peer_cert: TLSCertificate | None = None
     timeout: float = 30.0
@@ -130,19 +127,15 @@ def _check_time(params: SignatureParams, skew: int | float, *, directory: bool =
         _reject("invalid WBA timestamps, algorithm, or thumbprint")
 
 
-def _directory_url(uri: str, discovery_type: str) -> str:
+def _directory_url(uri: str) -> str:
     try:
         parsed = urlsplit(uri)
         parsed.port
         host = normalize_fqdn(parsed.hostname or "")
     except (ValueError, ValidationError) as exc:
         raise VerificationError(VerificationCode.TLS_ERROR, "invalid discovery URI") from exc
-    if discovery_type == "directory":
-        if not _is_https_origin(uri):
-            _reject("Signature-Agent directory URI must be an ASCII HTTPS origin")
-        uri += WBA_DIRECTORY_WELL_KNOWN_PATH
-    elif discovery_type != "jwks_uri":
-        _reject("unsupported Signature-Agent discovery type")
+    if not _is_direct_https_uri(uri):
+        _reject("Signature-Agent requires an absolute HTTPS URI without fragments")
     # Validate the original credentials too, including an empty username.
     if parsed.username is not None or parsed.password is not None:
         _reject("Signature-Agent credentials are forbidden")
@@ -351,18 +344,15 @@ class WBAHttpVerifier:
             _reject("Signature-Agent requires exactly one covered member")
         try:
             value, attributes = _parse_sf_dictionary(req.get_header("signature-agent"))[selected[0]]
-            if type(value) is not str:
-                raise ValueError("URI must be a String")
-            kind = attributes.get("type", http_sf.Token("directory"))
-            if not isinstance(kind, http_sf.Token):
-                raise ValueError("type must be a Token")
+            if type(value) is not str or attributes:
+                raise ValueError("URI must be a String without parameters")
         except (ValueError, KeyError, TypeError) as exc:
             raise VerificationError(
                 VerificationCode.RECORD_INVALID, "invalid Signature-Agent member"
             ) from exc
-        url = _directory_url(value, str(kind))
+        url = _directory_url(value)
         if opts.discovery_uri and _wba_identifier(url) != _wba_identifier(
-            _directory_url(opts.discovery_uri, opts.discovery_type)
+            _directory_url(opts.discovery_uri)
         ):
             _reject("Signature-Agent does not match trusted discovery URI")
         host = normalize_fqdn(urlsplit(url).hostname or "")
@@ -382,7 +372,7 @@ class WBAHttpVerifier:
             if (
                 not isinstance(raw, dict) or raw.get("kty") != "OKP"
                 or raw.get("crv") != "Ed25519" or "d" in raw
-                or raw.get("alg", "ed25519") != "ed25519"
+                or raw.get("alg", "Ed25519") != "Ed25519"
                 or raw.get("use", "sig") != "sig"
                 or not isinstance(raw.get("x"), str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]{43}", raw["x"])
