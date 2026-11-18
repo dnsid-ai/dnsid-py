@@ -65,7 +65,7 @@ def test_wba_identifier_preserves_reserved_path_escapes():
 ])
 def test_empty_https_path_is_equivalent_to_slash_for_ku_guard(setup, endpoint, ku):
     provider, resolver, verifier, req, opts, _, _ = setup
-    config = WebBotAuthConfig(signature_agent_uri=endpoint, signature_agent_type="jwks_uri")
+    config = WebBotAuthConfig(signature_agent_uri=endpoint)
     with pytest.raises(ArgumentError, match="local ku"):
         WBAHttpSigner(provider, DOMAIN, config=config, ku_url=ku)
     WBAHttpSigner(provider, DOMAIN, config=config).sign(req)
@@ -83,7 +83,6 @@ def test_ku_discovery_rejected_when_locally_known_and_after_authentication(setup
     provider, resolver, verifier, req, opts, _, _ = setup
     config = WebBotAuthConfig(
         signature_agent_uri=f"https://{DOMAIN}/jwks?discovery=1",
-        signature_agent_type="jwks_uri",
     )
     with pytest.raises(ArgumentError, match="local ku"):
         WBAHttpSigner(provider, DOMAIN, config=config, ku_url=ku)
@@ -152,7 +151,7 @@ def test_refresh_cooldown_covers_url_and_key_changes_and_failed_attempts(setup, 
         HttpRequest(method="GET", url=f"https://{DOMAIN}/other?key=2"), provider
     )
     WBAHttpSigner(provider, DOMAIN, config=WebBotAuthConfig(
-        signature_agent_uri=f"https://{DOMAIN}/other?key=2", signature_agent_type="jwks_uri",
+        signature_agent_uri=f"https://{DOMAIN}/other?key=2",
     )).sign(req)
     clock[0] += 4.9
     with pytest.raises(VerificationError, match="suppressed"):

@@ -74,11 +74,8 @@ def test_invalid_signing_overrides_leave_request_unchanged(setup, ttl):
 
 @pytest.mark.parametrize("uri", ["https://@agent.example", "https://user:pass@agent.example",
                                "https://agent.example:bad", "https://agent.example:99999",
-                               "https://[broken", "https://agent.example/",
-                               "https://agent.example/custom", "https://agent.example?keys=1",
-                               "https://agent.example#keys", "https://agent.example?",
-                               "https://agent.example#", "https://AGENT.example",
-                               "https://agent.example:443", "https://münchen.example",
+                               "https://[broken", "https://agent.example#keys",
+                               "https://agent.example#", "https://münchen.example",
                                " https://agent.example", "https://agent.example\n"])
 def test_invalid_signer_discovery_uri_is_argument_error(setup, uri):
     provider, _, _, _, _, _, _ = setup
@@ -114,16 +111,19 @@ def test_invalid_configuration_rejects_before_creating_default_pool(setup, monke
 
 def test_signer_snapshots_configuration_before_caller_mutation(setup):
     provider, _, verifier, req, opts, _, _ = setup
-    config = WebBotAuthConfig(signature_ttl=60, signature_agent_type="directory")
+    config = WebBotAuthConfig(signature_ttl=60)
     signer = WBAHttpSigner(provider, DOMAIN, config=config)
     config.clock_skew = float("nan")
     config.signature_ttl = 301
-    config.signature_agent_type = "invalid"
+    config.signature_agent_uri = "https://other.example/keys"
     config.include_signature_agent = False
     signer.sign(req)
     params = SignatureParams.parse(req.get_header("signature-input"))
     assert params.expires - params.created == 60
-    assert ";type=directory" in req.get_header("signature-agent")
+    assert (
+        f'sig1="https://{DOMAIN}/.well-known/http-message-signatures-directory"'
+        in req.get_header("signature-agent")
+    )
     verifier.verify_web_bot_auth_signed_request(req, opts)
 
 
