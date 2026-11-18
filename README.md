@@ -735,7 +735,7 @@ Bootstrap never retargets aliases, deletes or disables keys, or schedules
 retirement. Disposition/reconciliation of losing or ambiguous resources is
 **deferred**, not an accepted permanent-retention policy. It creates no agent ID
 and performs no registry, DNS, log publication or rotation; those remain separate
-explicit actions. The separate cloud identity/custody question (#63) is unresolved.
+explicit actions. The separate cloud identity/custody question is unresolved.
 Bootstrap needs `kms:GetPublicKey`, `kms:CreateKey`, and `kms:CreateAlias` as
 applicable; runtime signing needs `kms:Sign`. Existing rotation settings do not
 decide bootstrap resource disposition.
