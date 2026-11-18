@@ -156,3 +156,18 @@ class MockDNSResolver(DNSResolver):
 
     def fetch_txt(self, name: str) -> tuple[list[TXTRecord], DNSSECState]:
         return self._records.get(name, []), DNSSECState.UNSIGNED
+
+
+@pytest.fixture
+def no_local_key_warning():
+    """Diagnostic capture: cloud/injected selection must not warn about local custody."""
+    import warnings
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        yield
+    assert not [
+        str(item.message) for item in captured
+        if "local" in str(item.message).lower()
+        and "production" in str(item.message).lower()
+    ]

@@ -68,6 +68,16 @@ from .lr import (
     generate_c2sp_tlog_stream_id,
     parse_c2sp_tlog_lr,
 )
+from .managed_issuance import (
+    ManagedIssuanceInProgressError,
+    ManagedIssuanceOperationError,
+    ManagedIssuanceRegistry,
+    ManagedIssuanceState,
+    ManagedIssuanceStore,
+    begin_managed_issuance,
+    complete_managed_issuance,
+    resume_managed_issuance,
+)
 from .managed_verification_registry import (
     DnsidManagedVerificationOptions,
     create_dnsid_managed_verification_registry,
@@ -192,6 +202,14 @@ DNSID_C2SP_ENVELOPE_VERSION: int = 1
 
 
 __all__ = [
+    "ManagedIssuanceInProgressError",
+    "ManagedIssuanceOperationError",
+    "ManagedIssuanceRegistry",
+    "ManagedIssuanceState",
+    "ManagedIssuanceStore",
+    "begin_managed_issuance",
+    "complete_managed_issuance",
+    "resume_managed_issuance",
     "AsyncC2spBoundedResourceFetcher",
     "AsyncC2spTlogSource",
     "C2spEventContext",

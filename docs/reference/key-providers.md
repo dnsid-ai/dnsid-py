@@ -5,7 +5,7 @@ description: "Key management backends: file-backed local keys and AWS KMS and op
 
 <!-- GENERATED FILE — do not edit. Regenerate with `python scripts/gen_docs.py` in dnsid-ai/dnsid-py. -->
 
-Install `dnsid-google-kms` separately and import `GoogleKmsKeyProvider` from `dnsid_google_kms`. It uses ambient Google credentials and an existing numeric CryptoKeyVersion with software EC_SIGN_ED25519. Configuration selects `google-kms`, `key_ref` (JSON `keyRef`), and optionally algorithm `EdDSA`; never include raw credentials in settings. Generation stays pending until explicit activation; supersession is local, not cloud retirement. Provider state is process-local, not persistence/recovery orchestration.
+Install the `gcp` extra (`pip install "dnsid[gcp]"`) and import `GoogleKmsKeyProvider` from `dnsid`. It uses ambient Google credentials and an existing numeric CryptoKeyVersion with software EC_SIGN_ED25519. Configuration selects `google-kms`, `key_ref` (JSON `keyRef`), and optionally algorithm `EdDSA`; never include raw credentials in settings. Generation stays pending until explicit activation; supersession is local, not cloud retirement. Provider state is process-local, not persistence/recovery orchestration.
 
 ## `LocalKeyProvider`
 
@@ -519,7 +519,7 @@ Fetch public key info for *key_id* via KMS ``GetPublicKey``.
 
 **Raises:**
 
-- `ArgumentError`: If the KMS response includes no public key bytes.
+- `ArgumentError`: If the KMS response includes no public key bytes, or a request using a full immutable key ARN receives a present ``KeyId`` that differs from the requested ARN.
 
 ### `sign`
 
@@ -574,6 +574,10 @@ AwsKmsFacade.get_public_key(key_id: str) -> dict[str, Any]
 Fetch public key info for *key_id*.
 
 > **Returns a dict with keys:** ``key_id`` (str | None), ``public_key`` (bytes), ``key_spec`` (str | None), ``key_usage`` (str | None), ``signing_algorithms`` (list[str] | None).
+
+For newly created keys, ``key_id`` must be the canonical key ARN matching
+the ARN returned by ``create_signing_key``. When opening an existing key,
+``key_id`` remains optional and alias references remain supported.
 
 ### `sign`
 
@@ -674,7 +678,7 @@ published, and ordinary loading and rotation remain separate operations.
 ## `GoogleKmsKeyProvider`
 
 ```python
-from dnsid_google_kms import GoogleKmsKeyProvider
+from dnsid import GoogleKmsKeyProvider
 ```
 
 *Bases:* `KeyProvider`
@@ -694,6 +698,36 @@ GoogleKmsKeyProvider(client: Any, key_version_name: str) -> None
 ```
 
 Read and validate an existing version through a synchronous KMS client.
+
+### `create`
+
+```python
+GoogleKmsKeyProvider.create(client: Any, crypto_key_name: str) -> tuple[GoogleKmsKeyProvider, str, str]
+```
+
+Create a pending version under an existing compatible CryptoKey.
+
+The parent must have ASYMMETRIC_SIGN purpose and a SOFTWARE
+EC_SIGN_ED25519 version template. No prior version is opened.
+Native readiness polling is bounded to ten seconds. Failure never
+recreates or deletes a version. Service errors before creation pass
+through unchanged. Once the created version is identified and bound to
+its parent, readiness and public-key validation failures raise
+ArgumentError naming the version and chaining the original cause.
+The injected client remains caller-owned on success and failure.
+
+**Arguments:**
+
+- `client` (`Any`): Caller-supplied synchronous Google KMS client.
+- `crypto_key_name` (`str`): Fully qualified existing CryptoKey parent name.
+
+**Returns:**
+
+- `tuple[GoogleKmsKeyProvider, str, str]` — The pending provider, RFC 7638 key ID, and immutable version name. Persist the public reference for recovery and call ``activate(kid)`` explicitly before using the provider as the initial signer.
+
+**Raises:**
+
+- `ArgumentError`: If metadata or public material is invalid, or native generation does not become ready within the polling bound. Readiness and public-key validation failures after the created version is identified and bound to its parent name that version and chain the original cause.
 
 ### `signing_key`
 
@@ -738,6 +772,11 @@ Create a pending Ed25519 version under the originally configured parent.
 Creation uses the parent's version template. Both the creation response
 and public key must confirm software Ed25519 before local registration.
 Failure after creation never promotes a key or retries by creating another.
+Service errors before creation pass through unchanged.
+
+**Raises:**
+
+- `ArgumentError`: If the returned version name is invalid, belongs to another parent, or is already known. Once the created version is identified and bound to its parent, metadata validation and public-key read or validation failures raise ArgumentError naming the immutable version and chaining the original cause.
 
 ### `activate`
 
@@ -782,7 +821,7 @@ Sign only with an active or pending key, checking version and CRC32C binding.
 ## `GoogleKmsBootstrapResult`
 
 ```python
-from dnsid_google_kms import GoogleKmsBootstrapResult
+from dnsid import GoogleKmsBootstrapResult
 ```
 
 Validated immutable initial key reference and its ready signing provider.
@@ -790,7 +829,7 @@ Validated immutable initial key reference and its ready signing provider.
 ## `create_or_reuse_google_kms_key_provider`
 
 ```python
-from dnsid_google_kms import create_or_reuse_google_kms_key_provider
+from dnsid import create_or_reuse_google_kms_key_provider
 ```
 
 ```python
@@ -803,6 +842,12 @@ Only a missing named CryptoKey permits creation; a concurrent create winner
 is reread once. Every route validates the returned key, enabled version 1,
 and public material. Native service errors propagate without added retries,
 polling, repair, or fallback. Existing key rings are prerequisites.
+
+PENDING_GENERATION is not usable and is rejected without retrying bootstrap.
+A later separate explicit invocation with the same parent and key ID can
+succeed once the same immutable version 1 is ENABLED. No replacement version
+or key is created to repair a pending version. This differs from create(),
+which creates a new pending version with bounded readiness polling.
 
 **Arguments:**
 
@@ -826,7 +871,7 @@ with GoogleKmsKeyProvider instead. Constructors and config never bootstrap.
 ## `validate_config`
 
 ```python
-from dnsid_google_kms import validate_config
+from dnsid.google_kms_key_provider import validate_config
 ```
 
 ```python
@@ -838,7 +883,7 @@ Validate existing-version selection without credentials or service calls.
 ## `key_provider_from_config`
 
 ```python
-from dnsid_google_kms import key_provider_from_config
+from dnsid.google_kms_key_provider import key_provider_from_config
 ```
 
 ```python

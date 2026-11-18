@@ -36,20 +36,13 @@ jobs:
       # --upgrade ignores uv.lock and resolves the newest versions the floors
       # permit, so a breaking upstream release is caught here, not by a consumer.
       - name: Resolve fresh against floors
-        run: uv sync --upgrade --all-packages --python ${{ matrix.python-version }} ${{ matrix.python-version == '3.13' && '--all-extras' || '--extra dev --extra aws' }}
-
-      - name: Install Google KMS distribution
-        run: |
-          uv build --package dnsid-google-kms --out-dir dist/google-kms
-          uv run --no-sync python scripts/check_distribution_attribution.py dist/google-kms
-          uv pip install --no-deps --reinstall dist/google-kms/*.whl
-          uv run --no-sync python -c "from importlib.metadata import version; import dnsid_google_kms; print(version('dnsid-google-kms'), dnsid_google_kms.__file__)"
+        run: uv sync --upgrade --python ${{ matrix.python-version }} ${{ matrix.python-version == '3.13' && '--all-extras' || '--extra dev --extra aws --extra gcp' }}
 
       - name: Ruff lint check
         run: uv run --no-sync ruff check .
 
       - name: Mypy type check
-        run: uv run --no-sync mypy dnsid packages/google-kms/dnsid_google_kms
+        run: uv run --no-sync mypy dnsid
 
       - name: Run tests
         run: uv run --no-sync pytest

@@ -781,7 +781,10 @@ def test_managed_trust_selects_managed_registry():
     with patch("dnsid.c2sp_tlog.create_dnsid_managed_verification_registry") as factory:
         factory.return_value = LogRegistry()
         manager = construct_identity_manager(LoadedConfig(log_trust=LogTrust(managed=True)))
-    factory.assert_called_once_with()
+    factory.assert_called_once()
+    options = factory.call_args.args[0]
+    assert options.resource_fetcher is not None
+    assert options.resource_fetcher in factory.return_value._owned_resources
     assert manager._log_registry is factory.return_value
     manager.close()
 

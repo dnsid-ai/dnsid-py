@@ -16,18 +16,20 @@ For AWS KMS-backed signing keys, install the `aws` extra:
 pip install "dnsid[aws]"
 ```
 
-Google Cloud KMS support is a separate optional distribution:
+For Google Cloud KMS-backed signing keys, install the `gcp` extra:
 
 ```bash
-pip install dnsid-google-kms
+pip install "dnsid[gcp]"
 ```
 
-Import it with `from dnsid_google_kms import GoogleKmsKeyProvider`, not from
-`dnsid`. Installing the base SDK alone does not install Google dependencies.
+Import it with `from dnsid import GoogleKmsKeyProvider`. Installing the base SDK
+alone does not install Google dependencies. For explicit initial named-key
+create/reuse, see [Google bootstrap](#explicit-initial-google-named-key-bootstrap);
+ordinary construction and configuration remain open-only.
 
 If the release is not yet available on PyPI, install directly from GitHub.
 Replace `main` with a [release tag](https://github.com/dnsid-ai/dnsid-py/releases)
-to pin a version; the `[aws]` extra works the same way:
+to pin a version; the `[aws]` and `[gcp]` extras work the same way:
 
 ```bash
 pip install "dnsid @ git+https://github.com/dnsid-ai/dnsid-py@main"
@@ -82,11 +84,11 @@ method or trust root; configure a matching reader (see the
 
 - **Core protocol** — `IdentityManager` drives every protocol operation: domain verification, TXT-record creation and publication, key rotation, and lifecycle-event signing.
 - **Application profiles** (not part of the core protocol): JWT/JWS ([JOSE](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-jose.md)), [RFC 9421 HTTP Message Signatures](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-http-signatures.md), [Web Bot Auth](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-web-bot-auth.md), and [OIDC](https://github.com/dnsid-ai/dnsid-py/blob/main/docs/reference/profile-oidc.md).
-- **Key management** — private keys stay behind the `KeyProvider` interface: file-backed with `LocalKeyProvider`, or externalized entirely with `AwsKmsKeyProvider`, the optional `dnsid_google_kms.GoogleKmsKeyProvider`, or your own KMS/HSM-backed implementation.
+- **Key management** — private keys stay behind the `KeyProvider` interface: file-backed with `LocalKeyProvider`, or externalized entirely with `AwsKmsKeyProvider`, `GoogleKmsKeyProvider` (with the `gcp` extra), or your own KMS/HSM-backed implementation.
 - **Transparency log** — a ready-made C2SP tile-log `LogReader` (`dnsid.c2sp_tlog`).
 - **Registry client** — operator-side registration and publication workflows.
 
-**Import surface.** Core SDK exports are importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. Import transparency-log integration from `dnsid.c2sp_tlog`. The separately installed Google provider is imported from `dnsid_google_kms`.
+**Import surface.** Core SDK exports are importable from the package root (`from dnsid import IdentityManager, JoseProfile`), mirroring the TypeScript SDK's umbrella package. The profile classes are also importable from their home submodules (`dnsid.jose`, `dnsid.http_signatures`) — both paths refer to the same classes. Import transparency-log integration from `dnsid.c2sp_tlog`. The Google provider is available as `from dnsid import GoogleKmsKeyProvider`; its dependencies require the `gcp` extra.
 
 **Async verification.** Use `await manager.async_verify_domain(domain)` and
 `await http_signer.async_verify_signed_http_request(request)` in middleware.
@@ -473,14 +475,14 @@ dnsid/
 
 ## Google Cloud KMS key provider
 
-Install `dnsid-google-kms` separately. It uses the official synchronous Google
+Install the `gcp` extra with `pip install "dnsid[gcp]"`. It uses the official synchronous Google
 client and its ambient Application Default Credentials chain; grant the caller
 permission to read the public key and sign with the selected version. Do not put
 credentials, private keys, or access tokens into deployment settings.
 
 ```python
 from google.cloud import kms_v1
-from dnsid_google_kms import GoogleKmsKeyProvider
+from dnsid import GoogleKmsKeyProvider
 
 provider = GoogleKmsKeyProvider(
     kms_v1.KeyManagementServiceClient(),
@@ -522,6 +524,134 @@ published/authorized rotation, and application-owned persistence and managed
 rotation recovery are not implemented by this package. Reopening a version
 explicitly selects that version as the initial signer; it does not restore
 previous pending or superseded state.
+
+### Explicit initial Google named-key bootstrap
+
+
+```python
+from google.cloud import kms_v1
+from dnsid import create_or_reuse_google_kms_key_provider
+
+client = kms_v1.KeyManagementServiceClient()  # caller owns and closes this client
+result = create_or_reuse_google_kms_key_provider(
+    client,
+    parent="projects/my-project/locations/global/keyRings/agents",
+    crypto_key_id="stable-org-agent-name",
+)
+# Persist result.key_version_name; use result.provider for operational signing.
+# Only AFTER success, separately invoke your application's explicit agent-ID
+# create/reuse action. Bootstrap itself never performs that action.
+```
+
+Choose a stable collision-free ID per identity; no normalization is applied.
+The existing project/location/key ring and read/create/sign permissions are
+prerequisites. This opt-in operation reuses the exact named CryptoKey or creates
+it only after a typed NotFound, rereading a concurrent AlreadyExists winner once.
+All routes require enabled software Ed25519 version **1** and validated public
+material. No polling, extra version, ancestor creation, repair or fallback occurs;
+native failures propagate, including uncertain create outcomes. The SDK adds no
+retry policy. `PENDING_GENERATION` is not usable and is rejected: bootstrap does
+not poll or retry internally. A later separate explicit invocation with the same
+`parent` and `crypto_key_id` can succeed once the same immutable version **1** is
+`ENABLED`; it never creates a replacement key or version to repair pending state.
+The returned result is frozen, and the injected client remains caller-owned.
+
+For rotated identities, reopen the persisted authorized immutable version with
+`GoogleKmsKeyProvider`, not bootstrap. Construction, config loading and explicit
+pending-version generation remain unchanged. Keys come first; agent IDs are a
+separate explicit application step. The server never creates these keys.
+
+The separate `GoogleKmsKeyProvider.create(client, crypto_key_name)` API creates a
+new pending version under an existing compatible CryptoKey and uses bounded
+readiness polling. It returns a provider, kid and version reference, requiring
+explicit activation. It is not named-key create/reuse bootstrap.
+
+### Google software Ed25519 in a multi-region or global location
+
+[Google documents SOFTWARE keys in Cloud KMS locations](https://cloud.google.com/kms/docs/locations)
+and [software EC_SIGN_ED25519](https://cloud.google.com/kms/docs/algorithms).
+This is a vendor-documented setup pattern, not live-service verification or a
+universal availability promise. Check current location/algorithm support, CLI
+support, permissions and organization policies before provisioning. These providers
+target **SOFTWARE** Ed25519, not HSM or EXTERNAL custody.
+
+Prefer an approved existing version. If provisioning is authorized, an external
+operator can create a ring/key as follows. These shell variables are CLI inputs,
+not new SDK environment settings:
+
+```sh
+set -eu
+project=my-project
+location=us                 # Or global, as a separate approved location choice.
+ring=agents
+key=agent
+
+gcloud kms keyrings create "$ring" --project="$project" --location="$location"
+gcloud kms keys create "$key" --project="$project" --location="$location" \
+  --keyring="$ring" --purpose=asymmetric-signing \
+  --default-algorithm=ec-sign-ed25519 --protection-level=software
+gcloud kms keys versions list --project="$project" --location="$location" \
+  --keyring="$ring" --key="$key"
+```
+
+Select the actual enabled numeric version from the returned inventory; do not
+assume version `1` or use a mutable selector. Confirm its algorithm/protection
+and public key before deployment. Set finite RPC/readiness budgets, stop on
+failure, and reconcile any created resources rather than blindly creating again.
+Runtime clients need `cloudkms.cryptoKeyVersions.viewPublicKey` and
+`cloudkms.cryptoKeyVersions.useToSign`; creation/IAM administration stays with the
+separately authorized operator. Credentials use ambient Application Default
+Credentials, never deployment secrets.
+
+Both independently configured clients use **the identical full version name**
+within the selected location. For example, replace this illustrative version with
+the actual resource in a deployment JSON fragment:
+
+```json
+{"keySource":{"provider":"google-kms","keyRef":"projects/my-project/locations/us/keyRings/agents/cryptoKeys/agent/cryptoKeyVersions/7","settings":{"algorithm":"EdDSA"}}}
+```
+
+For a separate `global` deployment, use the actual resource containing
+`locations/global` in both clients, for example:
+
+```json
+{"keySource":{"provider":"google-kms","keyRef":"projects/my-project/locations/global/keyRings/agents/cryptoKeys/agent/cryptoKeyVersions/7","settings":{"algorithm":"EdDSA"}}}
+```
+
+Do not rewrite an existing `us` resource to
+`global`, or to a constituent regional name: those designate different resources,
+not replicas of the original version. A global service endpoint does not make a
+regional key global. Python deployment settings support only `algorithm: "EdDSA"`;
+project and location come from `keyRef`, not extra settings.
+
+A multi-region (including the special `global` location) is **one location
+resource/version**, not independently named regional replicas. Google manages
+material across datacenters in that location; callers cannot select a subset.
+Location is immutable. `global` is not a geographic residency guarantee, and
+metadata operations requiring consensus can have higher latency. Choose topology
+and residency before creation; do not promise region-pinned custody or automatic
+SDK failover from this pattern.
+
+Opening uses the existing version only: no automatic generation, replication,
+import, discovery or local-signer fallback. Explicit generation creates another
+version, not a regional replica, and does not authorize changing the established
+signer or publication. Preserve existing identity binding and application-owned
+rotation/recovery orchestration.
+
+Google public JWK `kid` values are RFC 7638 thumbprints, not cloud resource names.
+To verify same-key use, independently compare canonical public `crv`, `kty`, `x`
+thumbprints and require `OKP` / `Ed25519` / `EdDSA`, equal `x` and no private `d`.
+Sign the same raw payload independently, locally verify both signatures with the
+common/other client's public key, and reopen the exact version to repeat. Do not
+compare different `us` and `global` keys as if they were replicas. Signing sends
+raw data, not a digest, and retains the provider's version/integrity checks.
+
+Plan [version destruction](https://cloud.google.com/kms/docs/destroy-restore)
+with the resource owner: scheduling destruction is not immediate deletion.
+Key rings and CryptoKey containers cannot simply be deleted after the test;
+account for retained containers or an approved project lifecycle. Local provider
+supersession does not destroy cloud material. Prefer pre-existing approved
+fixtures when retained containers are unacceptable.
 
 ## AWS KMS key provider
 
@@ -625,6 +755,95 @@ IAM permissions required at runtime: `kms:GetPublicKey`, `kms:Sign`. Add
 `kms:CreateKey` for `generate_key()` and `kms:ScheduleKeyDeletion` if
 `schedule_key_deletion_on_supersede=True`.
 
+### AWS Ed25519 multi-Region keys
+
+[AWS documents asymmetric multi-Region keys](https://docs.aws.amazon.com/kms/latest/developerguide/multi-region-keys-overview.html)
+and [Ed25519 signing](https://docs.aws.amazon.com/kms/latest/developerguide/asymmetric-key-specs.html).
+This is a vendor-documented setup pattern, not live-service verification or a
+promise that every account/region supports the combination. Check current service
+availability, CLI support and organization policies before provisioning; stop on
+an unsupported combination rather than substituting another algorithm.
+
+Provision outside application startup, using a separately authorized operator.
+For example, in one account and AWS partition (shell variables below are operator
+inputs/output, not SDK environment settings):
+
+```sh
+set -eu
+primary_region=us-east-1
+replica_region=us-west-2
+primary_arn=$(aws kms create-key --region "$primary_region" \
+  --multi-region --key-spec ECC_NIST_EDWARDS25519 --key-usage SIGN_VERIFY \
+  --query KeyMetadata.Arn --output text)
+replica_arn=$(aws kms replicate-key --region "$primary_region" \
+  --key-id "$primary_arn" --replica-region "$replica_region" \
+  --query ReplicaKeyMetadata.Arn --output text)
+aws kms describe-key --region "$primary_region" --key-id "$primary_arn"
+aws kms describe-key --region "$replica_region" --key-id "$replica_arn"
+```
+
+Save the exact returned ARNs. Confirm `MultiRegionConfiguration` links the two
+keys, `KeySpec` is `ECC_NIST_EDWARDS25519`, `KeyUsage` is `SIGN_VERIFY`, and both
+keys are enabled before use. Set a finite readiness deadline and RPC timeouts;
+if a key is still creating, recheck within that budget, not in an endless loop.
+Do not blindly repeat creation after a lost response. Runtime principals need
+`kms:GetPublicKey` and `kms:Sign` on each regional key; replication/provisioning
+permissions belong to the operator, not ordinary startup.
+
+Configure two independent clients with **different immutable regional key ARNs
+and matching regions**, explicitly selecting `EdDSA`. These are deployment JSON
+fragments; replace the illustrative account/key IDs with the returned ARNs:
+
+```json
+{"keySource":{"provider":"aws-kms","keyRef":"arn:aws:kms:us-east-1:123456789012:key/mrk-0123456789abcdef0123456789abcdef","settings":{"region":"us-east-1","algorithm":"EdDSA"}}}
+```
+
+```json
+{"keySource":{"provider":"aws-kms","keyRef":"arn:aws:kms:us-west-2:123456789012:key/mrk-0123456789abcdef0123456789abcdef","settings":{"region":"us-west-2","algorithm":"EdDSA"}}}
+```
+
+Use ambient AWS credentials. Do not send the primary ARN to the replica region
+and rely on redirection. Related MRKs share key material and a key ID, not one
+global ARN: policies, grants, aliases and enabled state are regional. An `mrk-`
+prefix alone proves neither relationship nor public-key equality.
+
+Opening configuration never generates or replicates keys and has no automatic
+regional failover or local-signer fallback. Explicit provider creation/rotation
+is not automatic MRK replication or fleet coordination. Preserve existing
+publication/signing-key binding checks; changing configuration does not authorize
+replacing an established signer.
+
+`EdDSA` uses `ED25519_SHA_512` with **RAW data, at most 4096 bytes**. Oversized
+payloads fail. Do not hash them and substitute Ed25519ph/DIGEST: that is not the
+same signature scheme. See [AWS Sign limits](https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html).
+
+Python AWS public JWK kids are thumbprints; saved KMS references remain
+regional. Go/TypeScript AWS providers instead retain native canonical identifiers
+as kids, which can differ between related regional keys.
+
+Go/TypeScript identity-bound configuration also compares the selected kid with
+the verified publication, so a region-B ARN cannot use region A's unchanged
+publication even when their public material matches. The publication must match
+the selected regional kid through the applicable authorized publication/key-rotation
+process. Python's thumbprint kids avoid that specific regional-ARN kid mismatch,
+but do not bypass native-reference or publication/signing-key binding checks or
+establish that a shared-publication deployment has been verified.
+
+For cryptographic equality, require public JWK `kty=OKP`, `crv=Ed25519`,
+`alg=EdDSA`, equal `x`, and no private `d`. Independently compute RFC 7638 SHA-256
+thumbprints over canonical JSON containing only `crv`, `kty`, `x`; compare those,
+not entire serialized JWKs or native references. Sign the same bounded raw payload through
+each client and independently verify both signatures with the common public key
+(and the other client's public key). Reopen the exact saved references and repeat;
+signature-byte equality is not the acceptance criterion. Unrelated keys cannot
+satisfy this check; the SDK does not discover cross-region misconfiguration.
+
+Plan cleanup before allocation. For owned disposable fixtures,
+[schedule replica deletion before deleting the primary](https://docs.aws.amazon.com/kms/latest/developerguide/deleting-keys.html#deleting-mrks)
+and verify each key's disposition. Scheduled deletion is delayed, not completed
+removal; retain an owner/follow-up for outstanding resources. Never delete shared
+keys as test cleanup.
+
 ## Implementing KeyProvider
 
 All private-key operations go through the `KeyProvider` interface — supply one that wraps your KMS or HSM to keep key material out of the process entirely:
@@ -690,8 +909,9 @@ registry = create_dnsid_managed_verification_registry()
 ```
 
 It selects SDK-embedded reviewed trust only for exact canonical `public`
-references to `https://log.dev.dnsid.ai`, `https://log.dnsid.ai`, or
-`https://log.partners.dnsid.ai`; unknown scopes and prefixes fail closed. Every
+references to `https://log.dev.dnsid.ai`, `https://log.dnsid.ai`,
+`https://log.partners.dnsid.ai`, `https://log.stg.dnsid.ai`, `https://log.dev.knownsystems.ai`,
+`https://log.stg.knownsystems.ai`, or `https://log.knownsystems.ai`; unknown scopes and prefixes fail closed. Every
 managed log prefers verified signed stream bundles with bounded raw-scan fallback. The generic factory never selects these roots.
 
 Both factories use a restart-ephemeral in-memory checkpoint store
@@ -827,9 +1047,11 @@ returned `bindings_ready` is true only for matching, verified governance proof
 and verified entity delegation. Pending proofs remain pending; no entity JWKS URL
 is inferred from this response.
 
-Initial issuance requires one durable coordinator and one retry owner. The SDK
-provides preparation, signing, and submission primitives, not a complete issuance
-coordinator. See [integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
+Initial issuance uses the shared durable coordinator in `dnsid.c2sp_tlog`:
+`begin_managed_issuance`, `resume_managed_issuance`, and
+`complete_managed_issuance`. The caller supplies exclusive durable storage, owns
+publication and retries, and verifies public ACTIVE before completion. See
+[integration requirements](COMPATIBILITY.md#configuration-and-lifecycle-boundaries).
 
 To move an established signer, use explicit `rotate_operational_key()` with a
 `target_key_provider` and stable old/target provider references. To change the signing
@@ -922,13 +1144,21 @@ combines them field-wise (later wins, lists replace; `log_trust` and operational
 from dnsid import (
     identity_manager_from_environment,  # DNSID_* variables
     identity_manager_from_dnsid,        # ~/.dnsid or a DNSid CLI identity directory
-    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry", "keySource"}
+    identity_manager_from_file,         # JSON deployment file {"dnsid", "logTrust", "registry", "keySource", "foundry"}
     load_environment, load_file, load_cli_directory, merge_loaded_config, construct_identity_manager, LoadedConfig,
 )
 
 idm = identity_manager_from_environment()          # under `dnsid local run`: keys, transport, log trust
 idm = construct_identity_manager(merge_loaded_config(load_file("dnsid.json"), load_environment()))
 ```
+
+Only the Foundry workflow reads the `foundry` deployment member. Core identity
+construction ignores it. The workflow is source-checkout only and is excluded
+from published packages until server acceptance passes, so `foundry` has no
+effect in released versions until that gate clears. Foundry create rejects configuration
+with ordinary identity fields, including the `DNSID_DOMAIN` and
+`DNSID_GOVERNANCE_ID` environment variables. Its expected GI is
+`foundry.governanceId`, set through file/code configuration.
 
 | Variable | Maps to |
 |---|---|
@@ -962,6 +1192,8 @@ Runnable examples live in [examples/](https://github.com/dnsid-ai/dnsid-py/tree/
 | Example | Description | Prerequisites |
 |---|---|---|
 | [examples/key-rotation/](examples/key-rotation/) | Authorized operational-key rotation with durable restart recovery | Local registry (Docker + DNSid CLI) |
+| [examples/aws-kms-first/](examples/aws-kms-first/) | Explicit first operational-key creation in AWS KMS; public-key handoff, not issuance | `aws` extra, ambient AWS credentials, supported region and create/public-key/sign permissions |
+| [examples/gcp-kms-first/](examples/gcp-kms-first/) | Explicit first operational-key version creation in Google Cloud KMS; public-key handoff, not issuance | `gcp` extra, ambient Google credentials, compatible existing CryptoKey parent and create/read/sign permissions |
 | [examples/local-key-provider/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/local-key-provider) | File-backed local key provider demo | None — fully self-contained |
 | [examples/published-signing/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/published-signing) | Load deployment config, verify an existing identity, and sign with AWS KMS or file custody | Published identity and its existing operational key |
 | [examples/a2a/](https://github.com/dnsid-ai/dnsid-py/tree/main/examples/a2a) | Two agents (Alice + Bob) exchanging RFC 9421-signed A2A messages | Local registry (Docker + DNSid CLI) |
@@ -1033,7 +1265,7 @@ chose:
 
 - DNS TXT lookup of `_dnsid.<domain>` through your system resolver (no hardcoded resolver)
 - HTTPS GET to the JWKS and status URLs published in that TXT record
-- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dev.dnsid.ai` / `log.partners.dnsid.ai` (C2SP transparency log, bundled public trust roots), cloud KMS endpoints
+- Opt-in only, never contacted unless you configure them: `https://api.dnsid.ai` (registry client), `https://log.dnsid.ai` / `log.dev.dnsid.ai` / `log.partners.dnsid.ai` / `log.stg.dnsid.ai` / `log.knownsystems.ai` / `log.dev.knownsystems.ai` / `log.stg.knownsystems.ai` (C2SP transparency log, bundled public trust roots), cloud KMS endpoints
 - No telemetry, usage reporting, update checks, or crash reporting
 
 **Logging.** None today. A standard-library `logging` logger under the `dnsid` namespace is declared for future

@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from dnsid import remaining_seconds, verification_budget
-from dnsid._verification_budget import verification_operation
+from dnsid._verification_budget import BudgetExhausted, detached_budget, verification_operation
 from dnsid.exceptions import ArgumentError, VerificationError
 from dnsid.oidc import _get_json
 from tests.test_verification_coalescing import _manager_fixture
@@ -53,6 +53,23 @@ def test_nested_operations_share_budget_and_never_return_late(monkeypatch):
             with verification_budget():
                 cancelled.set()
                 remaining_seconds()
+
+
+def test_detached_budget_drops_parent_deadline_and_cancellation_then_restores_them(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("dnsid._verification_budget.time.monotonic", lambda: clock[0])
+    cancelled = threading.Event()
+    with pytest.raises(BudgetExhausted):
+        with verification_budget(1.0, cancelled=cancelled):
+            clock[0] += 2.0
+            cancelled.set()
+            with detached_budget(5.0):
+                assert remaining_seconds() == 5.0
+                clock[0] += 5.0
+                with pytest.raises(BudgetExhausted):
+                    remaining_seconds()
+            remaining_seconds()
+    assert remaining_seconds() == 30.0
 
 
 def test_waiter_deadline_does_not_cancel_shared_verification(ec_pair):

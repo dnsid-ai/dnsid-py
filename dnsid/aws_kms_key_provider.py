@@ -107,6 +107,10 @@ class AwsKmsFacade(ABC):
         Returns a dict with keys:
           ``key_id`` (str | None), ``public_key`` (bytes), ``key_spec`` (str | None),
           ``key_usage`` (str | None), ``signing_algorithms`` (list[str] | None).
+
+        For newly created keys, ``key_id`` must be the canonical key ARN matching
+        the ARN returned by ``create_signing_key``. When opening an existing key,
+        ``key_id`` remains optional and alias references remain supported.
         """
 
     @abstractmethod
@@ -360,7 +364,9 @@ class BotoKmsFacade(AwsKmsBootstrapFacade):
             ``key_usage``, and ``signing_algorithms``.
 
         Raises:
-            ArgumentError: If the KMS response includes no public key bytes.
+            ArgumentError: If the KMS response includes no public key bytes, or
+                a request using a full immutable key ARN receives a present
+                ``KeyId`` that differs from the requested ARN.
         """
         response = self._client.get_public_key(KeyId=key_id)
         pub = response.get("PublicKey")
@@ -368,6 +374,12 @@ class BotoKmsFacade(AwsKmsBootstrapFacade):
             raise ArgumentError(
                 f"AWS KMS GetPublicKey response did not include PublicKey for {key_id}"
             )
+        if (
+            re.fullmatch(r"arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+", key_id)
+            and "KeyId" in response
+            and response["KeyId"] != key_id
+        ):
+            raise ArgumentError("AWS KMS public key reference mismatch")
         return {
             "key_id": response.get("KeyId"),
             "public_key": bytes(pub),
@@ -615,7 +627,7 @@ class AwsKmsKeyProvider(KeyProvider):
         if not key_id:
             raise ArgumentError("AWS KMS create key response did not include a key ID")
         try:
-            kid = self._public_jwk(key_id).kid
+            kid = self._public_jwk(key_id, created=True).kid
         except Exception as e:
             raise ArgumentError(
                 f"created AWS KMS key {key_id} but failed to load its public key: {e}"
@@ -681,9 +693,10 @@ class AwsKmsKeyProvider(KeyProvider):
     def _kms_key_id(self, reference: str) -> str:
         return self._kms_key_ids[self._public_jwk(reference).kid]
 
-    def _public_jwk(self, kid: str) -> JWK:
-        kid = self._kms_key_ids.get(kid, kid)
-        if kid in self._jwk_cache:
+    def _public_jwk(self, kid: str, *, created: bool = False) -> JWK:
+        if not created:
+            kid = self._kms_key_ids.get(kid, kid)
+        if not created and kid in self._jwk_cache:
             return self._jwk_cache[kid]
 
         result = self._client.get_public_key(kid)
@@ -702,6 +715,17 @@ class AwsKmsKeyProvider(KeyProvider):
             raise ArgumentError(f"AWS KMS key {kid} does not support {self._algorithm}")
 
         canonical_kid = result.get("key_id") or kid
+        if created:
+            arn = re.fullmatch(
+                r"arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/([A-Za-z0-9-]+)",
+                result.get("key_id") or "",
+            )
+            bare_id = re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                kid,
+            )
+            if arn is None or (canonical_kid != kid and not (bare_id and arn[1] == kid)):
+                raise ArgumentError("AWS KMS created key public reference mismatch")
         _validate_kid(canonical_kid)
         jwk = _spki_to_jwk(pub_bytes, self._algorithm, canonical_kid)
         existing_key_id = self._kms_key_ids.get(jwk.kid)

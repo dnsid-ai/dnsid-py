@@ -88,8 +88,6 @@ jobs:
         run: |
           VERSION_BARE="${VERSION#v}"
           sed -i "s/^version = \".*\"/version = \"${VERSION_BARE}\"/" pyproject.toml
-          sed -i "s/^version = \".*\"/version = \"${VERSION_BARE}\"/" packages/google-kms/pyproject.toml
-          sed -i "s/dnsid==[0-9][^\"]*/dnsid==${VERSION_BARE}/" packages/google-kms/pyproject.toml
           uv lock
 
       - name: Open or update release PR

@@ -334,10 +334,16 @@ from dnsid import RegistryRevocationReason
 
 Owner-authorized reason codes accepted by the registry revoke API.
 
+The registry publishes them as the protocol reasons cessationOfOperation,
+keyCompromise and policyViolation. POLICY_VIOLATION permanently blocks
+re-registration of the domain and needs an org admin
+(Identity-Digital/known-foundry#72).
+
 **Members:**
 
 - `OWNER_REQUEST` = `'owner_request'`
 - `KEY_COMPROMISE` = `'key_compromise'`
+- `POLICY_VIOLATION` = `'policy_violation'`
 
 ## `EventType`
 

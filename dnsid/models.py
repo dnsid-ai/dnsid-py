@@ -2041,6 +2041,8 @@ class SubmissionResult:
     error_code: str = ""
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
+    status_code: int | None = None
+
     VALID_STATES = frozenset({"pending", "accepted", "rejected"})
 
     @property

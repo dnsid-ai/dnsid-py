@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dnsid"
-version = "0.32.1"
+version = "0.36.0"
 description = "Python SDK for the DNSid Protocol — agent identity management and verification"
 readme = "README.md"
 authors = [{ name = "Known Systems AI, Inc." }]
@@ -44,6 +44,10 @@ Changelog = "https://github.com/dnsid-ai/dnsid-py/blob/main/CHANGELOG.md"
 aws = [
     "boto3>=1.34",
 ]
+gcp = [
+    "google-cloud-kms>=3.0",
+    "google-crc32c>=1.5",
+]
 dev = [
     "build>=1.2",
     "pytest>=8.0",
@@ -62,14 +66,13 @@ a2a = [
     "sse-starlette",
 ]
 
+# The module stays source-only until the server's named-Live requirements are released.
 [tool.hatch.build.targets.wheel]
 packages = ["dnsid"]
+exclude = ["/dnsid/foundry"]
 
-[tool.uv.workspace]
-members = ["packages/google-kms"]
-
-[tool.uv.sources]
-dnsid = { workspace = true }
+[tool.hatch.build.targets.sdist]
+exclude = ["/dnsid/foundry", "/tests/test_foundry*.py"]
 
 [tool.ruff]
 target-version = "py311"

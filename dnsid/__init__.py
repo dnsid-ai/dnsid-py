@@ -30,6 +30,9 @@ Application profiles (not part of the DNSid protocol):
 Key management:
     LocalKeyProvider           — file-backed EdDSA/ES256 KeyProvider with key rotation lifecycle
     AwsKmsKeyProvider          — AWS KMS-backed KeyProvider (optional dep: boto3)
+    GoogleKmsKeyProvider       — Google Cloud KMS-backed KeyProvider (optional extra: gcp)
+    GoogleKmsBootstrapResult   — immutable initial version and ready signing provider
+    create_or_reuse_google_kms_key_provider — explicit named initial-key bootstrap
     AwsKmsConfig               — configuration for AwsKmsKeyProvider
     AwsKmsKeyState             — mutable lifecycle state for AwsKmsKeyProvider
     BotoKmsFacade              — boto3 adapter for AwsKmsKeyProvider
@@ -98,6 +101,7 @@ from .aws_kms_key_provider import (
     create_or_reuse_aws_kms_key_provider as create_or_reuse_aws_kms_key_provider,
 )
 from .config_loading import (
+    FoundryConfig,
     KeySource,
     LoadedConfig,
     LogTrust,
@@ -134,6 +138,13 @@ from .exceptions import (
     RegistryRequestError,
     ValidationError,
     VerificationError,
+)
+from .google_kms_key_provider import (
+    GoogleKmsBootstrapResult as GoogleKmsBootstrapResult,
+)
+from .google_kms_key_provider import GoogleKmsKeyProvider
+from .google_kms_key_provider import (
+    create_or_reuse_google_kms_key_provider as create_or_reuse_google_kms_key_provider,
 )
 from .http_signatures import HttpMessageSignatureConfig, HttpSignatureProfile
 from .interfaces import (
@@ -347,8 +358,12 @@ __all__ = [
     "VerifiedOIDCSubject",
     # Key management
     "LocalKeyProvider",
+    "GoogleKmsKeyProvider",
+    "GoogleKmsBootstrapResult",
+    "create_or_reuse_google_kms_key_provider",
     # Configuration loading
     "LoadedConfig",
+    "FoundryConfig",
     "LogTrust",
     "KeySource",
     "load_environment",
