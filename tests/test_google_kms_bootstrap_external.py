@@ -1,7 +1,7 @@
-"""External contract tests for #62 cases 1–8.
+"""Named-key bootstrap validates and reuses the initial Google signing identity.
 
 All dependencies are fake. No product-private imports or observed expectations.
-Case 9 is covered separately by existing regression tests.
+Ordinary opening, generation and rotation have separate regression tests.
 """
 
 import base64
@@ -17,13 +17,12 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 from google.api_core import exceptions as gexc
 from google.cloud import kms_v1
 
-from dnsid import ArgumentError
 from dnsid import (
+    ArgumentError,
     GoogleKmsBootstrapResult,
     GoogleKmsKeyProvider,
     create_or_reuse_google_kms_key_provider,
 )
-
 
 PARENT = "projects/project-A/locations/global/keyRings/ring-A"
 KEY_ID = "Agent_01-key"

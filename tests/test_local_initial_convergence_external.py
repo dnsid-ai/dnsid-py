@@ -1,4 +1,4 @@
-"""External #62 local characterization; real-capable, no network or mocks.
+"""Local initial creation preserves a reusable identity; real filesystem and crypto.
 
 Only public LocalKeyProvider methods and JWK.to_dict are used. Workers are
 separate processes so a stalled load can be bounded without leaking threads.
@@ -18,7 +18,6 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
 
 from dnsid import LocalKeyProvider
-
 
 WORKERS = 6
 BUDGET_SECONDS = 30.0
@@ -103,7 +102,8 @@ def _race(path, algorithm, evidence):
         with selectors.DefaultSelector() as selector:
             for index in range(WORKERS):
                 evidence.append({"attempt": index, "status": "not_started"})
-                process = subprocess.Popen(
+                # Fixed interpreter/repository worker; remaining argv is test-owned.
+                process = subprocess.Popen(  # noqa: S603
                     [sys.executable, str(Path(__file__).resolve()), "--worker",
                      str(path), algorithm, str(index)],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,

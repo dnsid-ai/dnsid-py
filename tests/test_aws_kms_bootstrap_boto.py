@@ -13,6 +13,9 @@ import json
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("botocore")
+
 from botocore.exceptions import ClientError
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
