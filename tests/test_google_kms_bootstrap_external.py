@@ -18,7 +18,7 @@ from google.api_core import exceptions as gexc
 from google.cloud import kms_v1
 
 from dnsid import ArgumentError
-from dnsid_google_kms import (
+from dnsid import (
     GoogleKmsBootstrapResult,
     GoogleKmsKeyProvider,
     create_or_reuse_google_kms_key_provider,
