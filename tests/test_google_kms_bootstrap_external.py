@@ -220,7 +220,7 @@ class FakeKms:
 
 
 class InvalidInputReadKms(FakeKms):
-    """Permit malformed-request reads, not mutation, for local validation tests."""
+    """Record any invalid-input dependency call so zero-call checks expose it."""
 
     def get_crypto_key(self, *, request):
         self.record("lookup", request)
@@ -602,23 +602,23 @@ INVALID_IDS = (
 
 @pytest.mark.parametrize("parent", INVALID_PARENTS)
 def test_case7_invalid_parent_before_mutation(parent):
-    """Mode: real-capable. GIVEN invalid parent WHEN bootstrap THEN no mutation."""
+    """Mode: real-capable. GIVEN invalid parent WHEN bootstrap THEN no dependency calls."""
     client = InvalidInputReadKms()
     with pytest.raises(ArgumentError):
         create_or_reuse_google_kms_key_provider(client, parent=parent, crypto_key_id=KEY_ID)
     assert client.creates == 0
-    assert all(stage in ("lookup", "version", "public") for stage, _ in client.calls)
+    assert client.calls == []
     assert_owned(client)
 
 
 @pytest.mark.parametrize("key_id", INVALID_IDS)
 def test_case7_invalid_id_before_mutation(key_id):
-    """Mode: real-capable. GIVEN invalid ID WHEN bootstrap THEN no remote mutation."""
+    """Mode: real-capable. GIVEN invalid ID WHEN bootstrap THEN no dependency calls."""
     client = InvalidInputReadKms()
     with pytest.raises(ArgumentError):
         create_or_reuse_google_kms_key_provider(client, parent=PARENT, crypto_key_id=key_id)
     assert client.creates == 0
-    assert all(stage in ("lookup", "version", "public") for stage, _ in client.calls)
+    assert client.calls == []
     assert_owned(client)
 
 
