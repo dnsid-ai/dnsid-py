@@ -47,7 +47,7 @@ UnrelatedConflict = type("AlreadyExistsException", (Exception,), {})
 
 
 def outcome(action):
-    """Keep consumer outcome assertions RED even against the declaration stub."""
+    """Capture the caller-visible result or original exception for assertions."""
     try:
         return action(), None
     except Exception as error:

@@ -1,7 +1,7 @@
-"""Frozen, unrun external contract draft for #62 cases 1–8.
+"""External contract tests for #62 cases 1–8.
 
 All dependencies are fake. No product-private imports or observed expectations.
-Case 9 is deliberately assigned to the parent's existing regression task.
+Case 9 is covered separately by existing regression tests.
 """
 
 import base64
@@ -391,7 +391,7 @@ def test_case4_native_error_identity(stage, error_type):
     client = FakeKms(route)
     error = error_type("NotFound AlreadyExists 404 409 misleading error text")
     client.faults[stage] = error
-    with pytest.raises(BaseException) as caught:
+    with pytest.raises(error_type) as caught:
         bootstrap(client)
     assert caught.value is error
     assert_no_repair(client)
@@ -539,13 +539,15 @@ CORRUPTIONS = (
 @pytest.mark.parametrize("stage,defect", CORRUPTIONS)
 def test_case6_each_corrupt_response_on_every_success_route(route, stage, defect):
     """Mode: fake-only. GIVEN corrupt resource WHEN bootstrap THEN no provider/repair."""
+    # Independently prove the same route with valid material before varying one response.
+    baseline = FakeKms(route)
+    assert_usable(bootstrap(baseline), baseline)
     client = FakeKms(route)
     client.corruption = (stage, defect)
-    with pytest.raises(Exception) as caught:
+    # Public bootstrap docs require ArgumentError for incompatible returned material.
+    # Fixture assertions and unrelated crashes cannot satisfy this oracle.
+    with pytest.raises(ArgumentError):
         bootstrap(client)
-    # An invariant failure in this fake is a broken test or forbidden operation,
-    # not acceptable evidence that the product rejected malformed remote data.
-    assert not isinstance(caught.value, (AssertionError, AttributeError, TypeError))
     assert_no_repair(client)
 
 
