@@ -1,4 +1,4 @@
-"""Independent #62 A-J acceptance tests from the clean declaration contract.
+"""Explicit AWS alias bootstrap validates a reusable winner and preserves native failures.
 
 All KMS dependencies are fake; cryptographic expectations are independently
 computed with cryptography/hashlib, never SDK private helpers. No lifecycle
