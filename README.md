@@ -527,6 +527,21 @@ previous pending or superseded state.
 
 ### Explicit initial Google named-key bootstrap
 
+The provider, bootstrap result type and bootstrap function are public exports
+of the root `dnsid` package (with Google dependencies installed via the `gcp`
+extra):
+
+```python
+from dnsid import (
+    GoogleKmsKeyProvider,
+    GoogleKmsBootstrapResult,
+    create_or_reuse_google_kms_key_provider,
+)
+```
+
+`GoogleKmsBootstrapResult` contains `key_version_name` (the immutable version
+reference) and `provider` (a `GoogleKmsKeyProvider`). See the
+[generated key-provider reference](https://docs.dnsid.ai/reference/py/key-providers/).
 
 ```python
 from google.cloud import kms_v1
