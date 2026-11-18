@@ -535,7 +535,13 @@ def test_J_ordinary_missing_open_remains_existing_only(algorithm):
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_J_explicit_generation_is_fresh_pending_without_switching_signer(algorithm):
     """Mode: real-capable. Given ordinary open, when generate, then fresh pending only."""
-    client = Kms(algorithm)
+    class GenerationKms(Kms):
+        # The public facade contract requires matching ARNs for newly created keys.
+        def seed(self, ref=None):
+            ref = ref or f"arn:aws:kms:us-east-1:123456789012:key/{UUID(int=len(self.keys) + 1)}"
+            return super().seed(ref)
+
+    client = GenerationKms(algorithm)
     ref = client.seed()
     provider = AwsKmsKeyProvider.load(client, AwsKmsConfig(active_key_id=ref, algorithm=algorithm))
     original = provider.signing_key()
@@ -546,6 +552,7 @@ def test_J_explicit_generation_is_fresh_pending_without_switching_signer(algorit
     state = provider.state_snapshot()
     assert state.active_key_id == ref and state.retained_key_ids == []
     assert len(state.pending_key_ids) == 2 and ref not in state.pending_key_ids
+    assert set(state.pending_key_ids) == set(client.keys) - {ref}
     for kid in pending:
         pending_ref = next(key for key in client.keys if thumbprint(client.keys[key]) == kid)
         assert provider.jwk(kid).kid == kid
