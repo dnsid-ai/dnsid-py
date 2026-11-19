@@ -589,7 +589,7 @@ def prepared_sign_response(material, defect):
     present = kms_v1.AsymmetricSignResponse.pb(response).HasField("signature_crc32c")
     assert present is (defect != "absent-crc")
     if defect == "absent-crc":
-        assert response.signature_crc32c == 0
+        assert response.signature_crc32c is None
     elif defect.startswith("crc:"):
         assert response.signature_crc32c == int(defect.split(":")[1])
         assert not 0 <= response.signature_crc32c <= 0xFFFFFFFF
