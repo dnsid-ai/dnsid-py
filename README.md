@@ -761,6 +761,10 @@ native errors propagate unchanged, including response loss and failed winner
 reads. There is no polling or presumed candidate success; a later explicit call
 may resolve the same alias again. Public JWK `kid` remains its RFC 7638 thumbprint.
 
+If the alias is temporarily unreadable after acquisition, avoid immediate repeated
+bootstrap calls: wait before a later explicit attempt, because a new initial
+NotFound can create another candidate key.
+
 This is **nondestructive partial bootstrap**, not full lifecycle management.
 Bootstrap never retargets aliases, deletes or disables keys, or schedules
 retirement. Disposition/reconciliation of losing or ambiguous resources is
