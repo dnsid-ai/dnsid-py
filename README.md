@@ -702,6 +702,37 @@ Public JWK `kid` values and the IDs used by `jwk()`, `list_key_ids()`,
 public-key thumbprints. The provider maps them to KMS references internally;
 configuration and saved `AwsKmsKeyState` still contain KMS key IDs, not thumbprints.
 
+**Upgrade note:** older versions published KMS references as JWK `kid` values.
+The same KMS key now publishes a different `kid`. For an existing identity that
+published the old value, arrange approved key-binding continuity before upgrading
+its signer; do not silently replace the published identifier.
+
+**Persisting state** — `AwsKmsKeyProvider` owns the active/pending/retained
+lifecycle but does not persist state itself. Save the snapshot after any
+lifecycle change and restore it on the next process start:
+
+```python
+# After generate_key(), activate(), or supersede():
+snapshot = provider.state_snapshot()
+save_to_database(snapshot)   # your persistence layer
+
+# On next start, load saved state back into AwsKmsKeyState and pass to load()
+```
+
+**Key rotation**:
+
+```python
+new_kid = provider.generate_key()   # creates a new KMS key in pending state
+provider.activate(new_kid)          # promotes to active; old active → retained
+provider.supersede(old_kid)         # removes a retained key (optionally schedules KMS deletion)
+save_to_database(provider.state_snapshot())
+```
+
+For existing-key loading and signing, runtime IAM permissions are
+`kms:GetPublicKey` and `kms:Sign`. Add `kms:CreateKey` for `generate_key()` and
+`kms:ScheduleKeyDeletion` if `schedule_key_deletion_on_supersede=True`.
+The explicit bootstrap operation below has separate creation permissions.
+
 ### Explicit initial AWS key create/reuse
 
 Ordinary `load()` and key-source configuration only open existing keys. To
@@ -736,39 +767,10 @@ retirement. Disposition/reconciliation of losing or ambiguous resources is
 **deferred**, not an accepted permanent-retention policy. It creates no agent ID
 and performs no registry, DNS, log publication or rotation; those remain separate
 explicit actions. The separate cloud identity/custody question is unresolved.
-Bootstrap needs `kms:GetPublicKey`, `kms:CreateKey`, and `kms:CreateAlias` as
-applicable; runtime signing needs `kms:Sign`. Existing rotation settings do not
-decide bootstrap resource disposition.
-
-**Upgrade note:** older versions published KMS references as JWK `kid` values.
-The same KMS key now publishes a different `kid`. For an existing identity that
-published the old value, arrange approved key-binding continuity before upgrading
-its signer; do not silently replace the published identifier.
-
-**Persisting state** — `AwsKmsKeyProvider` owns the active/pending/retained
-lifecycle but does not persist state itself. Save the snapshot after any
-lifecycle change and restore it on the next process start:
-
-```python
-# After generate_key(), activate(), or supersede():
-snapshot = provider.state_snapshot()
-save_to_database(snapshot)   # your persistence layer
-
-# On next start, load saved state back into AwsKmsKeyState and pass to load()
-```
-
-**Key rotation**:
-
-```python
-new_kid = provider.generate_key()   # creates a new KMS key in pending state
-provider.activate(new_kid)          # promotes to active; old active → retained
-provider.supersede(old_kid)         # removes a retained key (optionally schedules KMS deletion)
-save_to_database(provider.state_snapshot())
-```
-
-IAM permissions required at runtime: `kms:GetPublicKey`, `kms:Sign`. Add
-`kms:CreateKey` for `generate_key()` and `kms:ScheduleKeyDeletion` if
-`schedule_key_deletion_on_supersede=True`.
+Bootstrap needs `kms:GetPublicKey` to resolve and validate the alias winner.
+The creation path also needs `kms:CreateKey` and `kms:CreateAlias`; bootstrap
+itself does not sign. Using the returned provider to sign needs `kms:Sign`.
+Existing rotation settings do not decide bootstrap resource disposition.
 
 ### AWS Ed25519 multi-Region keys
 
