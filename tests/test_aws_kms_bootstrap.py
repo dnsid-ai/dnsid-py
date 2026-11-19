@@ -225,7 +225,8 @@ def usable(result, client, ref):
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_A_first_create_fresh_caller_and_canonical_open(algorithm):
-    """Mode: real-capable. Given absence, when explicit bootstrap repeats, then reuse."""
+    # Mode: real-capable.
+    """Given absence, when explicit bootstrap repeats, then reuse."""
     client = Kms(algorithm)
     first, error = bootstrap(client, algorithm)
     assert error is None, f"consumer expected a usable key result, got {error!r}"
@@ -251,7 +252,8 @@ REFERENCES = [str(UUID(int=9)), "mrk-0123456789abcdef0123456789ABCDEF",
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 @pytest.mark.parametrize("ref", REFERENCES)
 def test_B_existing_compatible_canonical_winner(algorithm, ref):
-    """Mode: real-capable. Given a compatible alias, when opened, then no allocation."""
+    # Mode: real-capable.
+    """Given a compatible alias, when opened, then no allocation."""
     client = Kms(algorithm)
     client.aliases[ALIAS] = client.seed(ref)
     result, error = bootstrap(client, algorithm)
@@ -264,7 +266,8 @@ def test_B_existing_compatible_canonical_winner(algorithm, ref):
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 @pytest.mark.parametrize("winner", ["replica-left", "replica-right"])
 def test_C_both_controlled_winner_orders_and_later_fresh_caller(algorithm, winner):
-    """Mode: fake-only. Given two absent reads, when acquisition races, then converge."""
+    # Mode: fake-only.
+    """Given two absent reads, when acquisition races, then converge."""
     client = Kms(algorithm)
     client.read_barrier = threading.Barrier(2)
     client.winner_thread = winner
@@ -321,7 +324,8 @@ ERROR_FACTORIES = [PermissionError, TimeoutError, RuntimeError, UnrelatedNotFoun
             or (stage == "acquire" and error_type is NativeAlreadyExists))
 ])
 def test_D_native_error_identity_by_stage(stage, error_type):
-    """Mode: fake-only. Given a stage fault, when invoked, then preserve its identity."""
+    # Mode: fake-only.
+    """Given a stage fault, when invoked, then preserve its identity."""
     client = Kms(ALGORITHMS[0])
     ref = client.seed()
     if stage in {"initial", "canonical", "sign"}:
@@ -350,7 +354,8 @@ def test_D_native_error_identity_by_stage(stage, error_type):
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_E_response_loss_is_failed_attempt_then_explicit_recovery(algorithm):
-    """Mode: fake-only. Given committed acquisition response loss, then no presumed success."""
+    # Mode: fake-only.
+    """Given committed acquisition response loss, then no presumed success."""
     client = Kms(algorithm)
     fault = TimeoutError("response lost after commit")
     def hook(operation, *args):
@@ -372,7 +377,8 @@ def test_E_response_loss_is_failed_attempt_then_explicit_recovery(algorithm):
 
 @pytest.mark.parametrize("fault_type", [NativeNotFound, PermissionError, TimeoutError])
 def test_F_conflict_then_one_failed_winner_resolution(fault_type):
-    """Mode: fake-only. Given conflict and unavailable winner, then fail without polling."""
+    # Mode: fake-only.
+    """Given conflict and unavailable winner, then fail without polling."""
     client = Kms(ALGORITHMS[0])
     fault = fault_type("winner unavailable")
     reads = 0
@@ -400,7 +406,8 @@ INVALID_REFS = [None, "", " ", "alias/dnsid/other", "arn:aws:kms:us-east-1:12345
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 @pytest.mark.parametrize("bad_ref", INVALID_REFS)
 def test_G_invalid_returned_reference_is_not_normalized(algorithm, bad_ref):
-    """Mode: fake-only. Given noncanonical remote identity, then ArgumentError, no replacement."""
+    # Mode: fake-only.
+    """Given noncanonical remote identity, then ArgumentError, no replacement."""
     client = Kms(algorithm)
     ref = client.seed()
     def hook(operation, *args):
@@ -415,7 +422,8 @@ def test_G_invalid_returned_reference_is_not_normalized(algorithm, bad_ref):
 
 @pytest.mark.parametrize("bad_ref", [None, "", " ", "alias/invalid", str(UUID(int=3)) + "\n"])
 def test_G_invalid_candidate_id_never_acquires(bad_ref):
-    """Mode: fake-only. Given invalid creation ID, then no alias acquisition."""
+    # Mode: fake-only.
+    """Given invalid creation ID, then no alias acquisition."""
     client = Kms(ALGORITHMS[0])
     client.created_id = bad_ref
     result, error = bootstrap(client, ALGORITHMS[0])
@@ -428,7 +436,8 @@ def test_G_invalid_candidate_id_never_acquires(bad_ref):
 @pytest.mark.parametrize("defect", ["usage", "spec", "advertised", "malformed", "wrong-type", "wrong-curve",
                                     "other-algorithm", "cross-id", "cross-material"])
 def test_G_remote_metadata_spki_and_cross_read_binding(algorithm, defect):
-    """Mode: fake-only. Given incompatible remote evidence, then reject rather than substitute."""
+    # Mode: fake-only.
+    """Given incompatible remote evidence, then reject rather than substitute."""
     client = Kms(algorithm)
     ref, other = client.seed(), client.seed()
     client.aliases[ALIAS] = ref
@@ -471,7 +480,8 @@ INVALID_ALIASES = [None, 123, "", " ", "dnsid/agent", "alias/", "alias/aws/reser
 
 @pytest.mark.parametrize("alias", INVALID_ALIASES)
 def test_H_invalid_alias_rejected_before_any_dependency(alias):
-    """Mode: real-capable. Given invalid alias, when bootstrap, then reject before calls."""
+    # Mode: real-capable.
+    """Given invalid alias, when bootstrap, then reject before calls."""
     client = Kms(ALGORITHMS[0])
     result, error = bootstrap(client, ALGORITHMS[0], alias)
     assert result is None and isinstance(error, ArgumentError), f"expected input rejection, got {error!r}"
@@ -480,7 +490,8 @@ def test_H_invalid_alias_rejected_before_any_dependency(alias):
 
 @pytest.mark.parametrize("algorithm", [None, "", "ES256", "EdDSA", "ECDSA_SHA_384", 123])
 def test_H_invalid_algorithm_rejected_before_any_dependency(algorithm):
-    """Mode: real-capable. Given invalid algorithm, then no downgrade or dependency calls."""
+    # Mode: real-capable.
+    """Given invalid algorithm, then no downgrade or dependency calls."""
     client = Kms(ALGORITHMS[0])
     result, error = bootstrap(client, algorithm)
     assert result is None and isinstance(error, ArgumentError), f"expected input rejection, got {error!r}"
@@ -489,7 +500,8 @@ def test_H_invalid_algorithm_rejected_before_any_dependency(algorithm):
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_H_distinct_exact_aliases_stay_distinct(algorithm):
-    """Mode: real-capable. Given distinct exact aliases, then allocate separate identities."""
+    # Mode: real-capable.
+    """Given distinct exact aliases, then allocate separate identities."""
     client = Kms(algorithm)
     aliases = [ALIAS, "alias/dnsid/org/agent"]
     refs = []
@@ -504,7 +516,8 @@ def test_H_distinct_exact_aliases_stay_distinct(algorithm):
 
 
 def test_H_additional_service_alias_restriction_is_native():
-    """Mode: fake-only. Given AWS rejects an extra restriction, then preserve native error."""
+    # Mode: fake-only.
+    """Given AWS rejects an extra restriction, then preserve native error."""
     client = Kms(ALGORITHMS[0])
     fault = RuntimeError("service alias restriction")
     def hook(operation, *args):
@@ -518,7 +531,8 @@ def test_H_additional_service_alias_restriction_is_native():
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_J_ordinary_missing_open_remains_existing_only(algorithm):
-    """Mode: real-capable. Given missing ordinary key, when load, then fail without create."""
+    # Mode: real-capable.
+    """Given missing ordinary key, when load, then fail without create."""
     client = Kms(algorithm)
     fault = NativeNotFound("ordinary missing")
     def hook(operation, *args):
@@ -534,7 +548,8 @@ def test_J_ordinary_missing_open_remains_existing_only(algorithm):
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_J_explicit_generation_is_fresh_pending_without_switching_signer(algorithm):
-    """Mode: real-capable. Given ordinary open, when generate, then fresh pending only."""
+    # Mode: real-capable.
+    """Given ordinary open, when generate, then fresh pending only."""
     class GenerationKms(Kms):
         # The public facade contract requires matching ARNs for newly created keys.
         def seed(self, ref=None):
@@ -564,7 +579,8 @@ def test_J_explicit_generation_is_fresh_pending_without_switching_signer(algorit
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_I_standalone_key_bootstrap_never_constructs_publication_authority(algorithm, monkeypatch):
-    """Mode: fake-only. Given key-only bootstrap, then no implicit manager/registry flow."""
+    # Mode: fake-only.
+    """Given key-only bootstrap, then no implicit manager/registry flow."""
     from dnsid import IdentityManager, RegistryClient
 
     publication_calls = []
@@ -583,7 +599,8 @@ def test_I_standalone_key_bootstrap_never_constructs_publication_authority(algor
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_A_successful_acquisition_resolves_actual_winner_not_candidate(algorithm):
-    """Mode: fake-only. Given acquired alias resolves elsewhere, then return validated winner."""
+    # Mode: fake-only.
+    """Given acquired alias resolves elsewhere, then return validated winner."""
     client = Kms(algorithm)
     winner = client.seed()
     def hook(operation, *args):

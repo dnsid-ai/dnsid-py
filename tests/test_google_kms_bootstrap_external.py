@@ -26,7 +26,7 @@ from dnsid import (
 
 PARENT = "projects/project-A/locations/global/keyRings/ring-A"
 KEY_ID = "Agent_01-key"
-PAYLOAD = b"known62 independent application payload\x00\xff"
+PAYLOAD = b"bootstrap application payload\x00\xff"
 ALGORITHM = kms_v1.CryptoKeyVersion.CryptoKeyVersionAlgorithm.EC_SIGN_ED25519
 SOFTWARE = kms_v1.ProtectionLevel.SOFTWARE
 PURPOSE = kms_v1.CryptoKey.CryptoKeyPurpose.ASYMMETRIC_SIGN
@@ -295,7 +295,8 @@ def test_fixture_crc32c_known_castagnoli_vector():
 
 
 def test_case1_absent_named_key_and_fresh_existing_reference():
-    """Mode: real-capable. GIVEN absence WHEN bootstrap THEN usable version 1."""
+    # Mode: real-capable.
+    """GIVEN absence WHEN bootstrap THEN usable version 1."""
     client = FakeKms("create")
     result = None
     error = None
@@ -320,7 +321,8 @@ def test_case1_absent_named_key_and_fresh_existing_reference():
 
 
 def test_case2_fresh_reuse_preserves_public_identity_without_create():
-    """Mode: real-capable. GIVEN version 1 WHEN repeated opens THEN stable identity."""
+    # Mode: real-capable.
+    """GIVEN version 1 WHEN repeated opens THEN stable identity."""
     material = Material()
     first = FakeKms(material=material)
     second = FakeKms(material=material)
@@ -333,7 +335,8 @@ def test_case2_fresh_reuse_preserves_public_identity_without_create():
 
 
 def test_case3_deterministic_named_creation_race():
-    """Mode: fake-only. GIVEN simultaneous misses WHEN creates race THEN one identity."""
+    # Mode: fake-only.
+    """GIVEN simultaneous misses WHEN creates race THEN one identity."""
     count = 4
     client = FakeKms("create")
     client.barrier = threading.Barrier(count)
@@ -385,7 +388,8 @@ ERROR_STAGES = ("lookup", "create", "winner", "version", "public")
 @pytest.mark.parametrize("error_type", ERROR_TYPES)
 @pytest.mark.parametrize("stage", ERROR_STAGES)
 def test_case4_native_error_identity(stage, error_type):
-    """Mode: fake-only. GIVEN native error WHEN bootstrap THEN same exception escapes."""
+    # Mode: fake-only.
+    """GIVEN native error WHEN bootstrap THEN same exception escapes."""
     route = "winner" if stage == "winner" else "create" if stage == "create" else "reuse"
     client = FakeKms(route)
     error = error_type("NotFound AlreadyExists 404 409 misleading error text")
@@ -404,7 +408,8 @@ def test_case4_native_error_identity(stage, error_type):
 @pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize("stage", ("version", "public"))
 def test_case4_child_not_found_never_authorizes_creation(route, stage):
-    """Mode: fake-only. GIVEN absent version/public WHEN read THEN fail without repair."""
+    # Mode: fake-only.
+    """GIVEN absent version/public WHEN read THEN fail without repair."""
     client = FakeKms(route)
     error = gexc.NotFound("missing immutable child")
     client.faults[stage] = error
@@ -415,7 +420,8 @@ def test_case4_child_not_found_never_authorizes_creation(route, stage):
 
 
 def test_case5_uncertain_commit_is_failure_then_separate_explicit_reuse():
-    """Mode: fake-only. GIVEN commit then timeout WHEN fresh call THEN reuse committed key."""
+    # Mode: fake-only.
+    """GIVEN commit then timeout WHEN fresh call THEN reuse committed key."""
     client = FakeKms("create")
     error = gexc.DeadlineExceeded("commit outcome not reported")
     client.uncertain = error
@@ -537,7 +543,8 @@ CORRUPTIONS = (
 @pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize("stage,defect", CORRUPTIONS)
 def test_case6_each_corrupt_response_on_every_success_route(route, stage, defect):
-    """Mode: fake-only. GIVEN corrupt resource WHEN bootstrap THEN no provider/repair."""
+    # Mode: fake-only.
+    """GIVEN corrupt resource WHEN bootstrap THEN no provider/repair."""
     # Independently prove the same route with valid material before varying one response.
     baseline = FakeKms(route)
     assert_usable(bootstrap(baseline), baseline)
@@ -551,7 +558,8 @@ def test_case6_each_corrupt_response_on_every_success_route(route, stage, defect
 
 
 def test_case6_winner_disappears_without_recreate_loop():
-    """Mode: fake-only. GIVEN AlreadyExists then NotFound WHEN reread THEN native failure."""
+    # Mode: fake-only.
+    """GIVEN AlreadyExists then NotFound WHEN reread THEN native failure."""
     client = FakeKms("winner")
     error = gexc.NotFound("winner no longer readable")
     client.faults["winner"] = error
@@ -609,7 +617,8 @@ def prepared_sign_response(material, defect):
 ))
 @pytest.mark.parametrize("method", ("sign", "sign_key"))
 def test_case6_sign_response_integrity(route, defect, method):
-    """Mode: fake-only. GIVEN valid bootstrap WHEN signing response corrupt THEN fail."""
+    # Mode: fake-only.
+    """GIVEN valid bootstrap WHEN signing response corrupt THEN fail."""
     client = FakeKms(route)
     result = bootstrap(client)
     assert_usable(result, client)
@@ -663,7 +672,8 @@ INVALID_IDS = (
 
 @pytest.mark.parametrize("parent", INVALID_PARENTS)
 def test_case7_invalid_parent_before_mutation(parent):
-    """Mode: real-capable. GIVEN invalid parent WHEN bootstrap THEN no dependency calls."""
+    # Mode: real-capable.
+    """GIVEN invalid parent WHEN bootstrap THEN no dependency calls."""
     client = InvalidInputReadKms()
     with pytest.raises(ArgumentError):
         create_or_reuse_google_kms_key_provider(client, parent=parent, crypto_key_id=KEY_ID)
@@ -674,7 +684,8 @@ def test_case7_invalid_parent_before_mutation(parent):
 
 @pytest.mark.parametrize("key_id", INVALID_IDS)
 def test_case7_invalid_id_before_mutation(key_id):
-    """Mode: real-capable. GIVEN invalid ID WHEN bootstrap THEN no dependency calls."""
+    # Mode: real-capable.
+    """GIVEN invalid ID WHEN bootstrap THEN no dependency calls."""
     client = InvalidInputReadKms()
     with pytest.raises(ArgumentError):
         create_or_reuse_google_kms_key_provider(client, parent=PARENT, crypto_key_id=key_id)
@@ -684,13 +695,15 @@ def test_case7_invalid_id_before_mutation(key_id):
 
 
 def test_case7_none_client_is_not_ambient_credentials():
-    """Mode: real-capable. GIVEN None client WHEN bootstrap THEN ArgumentError."""
+    # Mode: real-capable.
+    """GIVEN None client WHEN bootstrap THEN ArgumentError."""
     with pytest.raises(ArgumentError):
         create_or_reuse_google_kms_key_provider(None, parent=PARENT, crypto_key_id=KEY_ID)
 
 
 def test_case7_missing_ancestor_is_native_failure_not_ancestor_creation():
-    """Mode: real-capable. GIVEN absent ring WHEN named create fails THEN native error."""
+    # Mode: real-capable.
+    """GIVEN absent ring WHEN named create fails THEN native error."""
     client = FakeKms("create")
     error = gexc.NotFound("prerequisite key ring absent")
     client.faults["create"] = error
@@ -702,7 +715,8 @@ def test_case7_missing_ancestor_is_native_failure_not_ancestor_creation():
 
 
 def test_case7_each_scope_component_is_independently_significant():
-    """Mode: real-capable. GIVEN five scopes WHEN bootstrap THEN five exact identities."""
+    # Mode: real-capable.
+    """GIVEN five scopes WHEN bootstrap THEN five exact identities."""
     scopes = (
         (PARENT, KEY_ID),
         ("projects/project-B/locations/global/keyRings/ring-A", KEY_ID),
@@ -728,7 +742,8 @@ def test_case7_each_scope_component_is_independently_significant():
 
 @pytest.mark.parametrize("key_id", ("a", "Z" * 63, "_", "-", "Aa_09-z"))
 def test_case7_valid_id_boundaries_are_preserved(key_id):
-    """Mode: real-capable. GIVEN valid boundary ID WHEN create THEN exact spelling."""
+    # Mode: real-capable.
+    """GIVEN valid boundary ID WHEN create THEN exact spelling."""
     client = FakeKms("create", Material(key_id=key_id))
     assert_usable(bootstrap(client), client)
     assert client.creates == 1
@@ -736,7 +751,8 @@ def test_case7_valid_id_boundaries_are_preserved(key_id):
 
 @pytest.mark.parametrize("route", ROUTES)
 def test_case8_explicit_application_key_first_composition(route):
-    """Mode: fake-only. GIVEN app composition WHEN success THEN explicit agent step later.
+    # Mode: fake-only.
+    """GIVEN app composition WHEN success THEN explicit agent step later.
 
     This is a test-owned application action, NOT a proposed SDK agent API or a server.
     """
@@ -762,7 +778,8 @@ def test_case8_explicit_application_key_first_composition(route):
 
 @pytest.mark.parametrize("stage", ERROR_STAGES)
 def test_case8_key_failure_prevents_application_agent_step(stage):
-    """Mode: fake-only. GIVEN failed key operation WHEN composed THEN no agent action."""
+    # Mode: fake-only.
+    """GIVEN failed key operation WHEN composed THEN no agent action."""
     route = "winner" if stage == "winner" else "create" if stage == "create" else "reuse"
     client = FakeKms(route)
     error = RuntimeError("explicit key operation failed")

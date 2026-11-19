@@ -83,7 +83,7 @@ def _worker(path, algorithm, index):
         result["status"] = "load_success"
         try:
             result["jwk"] = provider.signing_key().to_dict()
-            payload = f"known62-initial-convergence/{algorithm}/{index}".encode()
+            payload = f"initial-convergence/{algorithm}/{index}".encode()
             result["payload"] = base64.b64encode(payload).decode("ascii")
             result["signature"] = base64.b64encode(provider.sign(payload)).decode("ascii")
         except Exception as error:
@@ -202,9 +202,10 @@ def _race(path, algorithm, evidence):
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_overlapping_explicit_initial_loads_converge(tmp_path, record_property, algorithm):
+    # Mode: real-capable.
     """GIVEN absent store WHEN concurrent opt-in loads THEN all successes agree.
 
-    Mode: real-capable. Load exceptions remain evidence, not a fixed loser API.
+    Load exceptions remain evidence, not a fixed loser API.
     """
     path = tmp_path / "identity.json"
     evidence = []
@@ -230,47 +231,49 @@ def test_overlapping_explicit_initial_loads_converge(tmp_path, record_property, 
         # Ordinary reopen must retain the same identity, not repair/create one.
         reopened = LocalKeyProvider.load(path)
         assert _identity(reopened.signing_key().to_dict(), algorithm) == expected
-        payload = b"known62-ordinary-reopen"
+        payload = b"ordinary-reopen"
         _verify(shared, payload, reopened.sign(payload))
         assert not errors, "\n".join(errors)
     finally:
         report = json.dumps({"algorithm": algorithm, "attempts": evidence,
                              "verification_errors": errors}, sort_keys=True)
-        record_property("known62_attempts", report)
-        print("KNOWN62_ATTEMPTS " + report, flush=True)
+        record_property("initial_convergence_attempts", report)
+        print("INITIAL_CONVERGENCE_ATTEMPTS " + report, flush=True)
 
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 @pytest.mark.parametrize("as_string", (False, True), ids=("Path", "str"))
 def test_explicit_load_reuses_existing_identity(tmp_path, algorithm, as_string):
+    # Mode: real-capable.
     """GIVEN existing key WHEN opt-in requests opposite algorithm THEN reuse.
 
-    Mode: real-capable. Creation is explicit and precedes reuse; no agent action.
+    Creation is explicit and precedes reuse; no agent action.
     """
     path = tmp_path / "existing.json"
     argument = str(path) if as_string else path
     first = LocalKeyProvider.load(argument, create_if_missing=True, algorithm=algorithm)
     shared = first.signing_key().to_dict()
     expected = _identity(shared, algorithm)
-    payload = b"known62-original"
+    payload = b"initial-identity"
     _verify(shared, payload, first.sign(payload))
     other = "ES256" if algorithm == "EdDSA" else "EdDSA"
     reused = LocalKeyProvider.load(argument, create_if_missing=True, algorithm=other)
     assert _identity(reused.signing_key().to_dict(), algorithm) == expected
-    payload = b"known62-explicit-reuse"
+    payload = b"explicit-reuse"
     _verify(shared, payload, reused.sign(payload))
     reopened = LocalKeyProvider.load(argument)
     assert _identity(reopened.signing_key().to_dict(), algorithm) == expected
-    payload = b"known62-reuse-ordinary-reopen"
+    payload = b"reuse-ordinary-reopen"
     _verify(shared, payload, reopened.sign(payload))
 
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 @pytest.mark.parametrize("as_string", (False, True), ids=("Path", "str"))
 def test_ordinary_absent_load_never_creates_signing_store(tmp_path, algorithm, as_string):
+    # Mode: real-capable.
     """GIVEN absent path WHEN ordinary load THEN FileNotFoundError, still absent.
 
-    Mode: real-capable. No assertion about lock sidecars or cleanup internals.
+    No assertion about lock sidecars or cleanup internals.
     """
     path = tmp_path / "absent.json"
     argument = str(path) if as_string else path
