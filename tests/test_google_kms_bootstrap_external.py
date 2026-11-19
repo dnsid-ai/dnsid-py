@@ -562,6 +562,45 @@ def test_case6_winner_disappears_without_recreate_loop():
     assert_no_repair(client)
 
 
+def prepared_sign_response(material, defect):
+    """Build and verify the intended defect before entering any rejection catch."""
+    signature = material.private.sign(PAYLOAD)
+    material.public.verify(signature, PAYLOAD)
+    response = corrupt(kms_v1.AsymmetricSignResponse(
+        name=material.version, signature=signature,
+        signature_crc32c=crc32c(signature), verified_data_crc32c=True,
+        protection_level=SOFTWARE,
+    ), defect, material)
+    expected_name = {
+        "wrong-version": f"{material.name}/cryptoKeyVersions/2",
+        "wrong-parent": material.version.replace("project-A", "other-project"),
+        "empty-name": "",
+    }.get(defect, material.version)
+    assert response.name == expected_name
+    assert response.verified_data_crc32c is (defect != "unverified-data")
+    assert response.protection_level == SOFTWARE
+    if defect.startswith("signature-length:"):
+        length = int(defect.split(":")[1])
+        assert response.signature == b"x" * length
+        assert len(response.signature) == length
+    else:
+        assert response.signature == signature
+        material.public.verify(response.signature, PAYLOAD)
+    present = kms_v1.AsymmetricSignResponse.pb(response).HasField("signature_crc32c")
+    assert present is (defect != "absent-crc")
+    if defect == "absent-crc":
+        assert response.signature_crc32c == 0
+    elif defect.startswith("crc:"):
+        assert response.signature_crc32c == int(defect.split(":")[1])
+        assert not 0 <= response.signature_crc32c <= 0xFFFFFFFF
+    elif defect == "mismatched-crc":
+        assert response.signature_crc32c == crc32c(response.signature) ^ 1
+        assert response.signature_crc32c != crc32c(response.signature)
+    else:
+        assert response.signature_crc32c == crc32c(response.signature)
+    return response
+
+
 @pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize("defect", (
     "wrong-version", "wrong-parent", "empty-name", "unverified-data", "absent-crc",
@@ -574,13 +613,35 @@ def test_case6_sign_response_integrity(route, defect, method):
     client = FakeKms(route)
     result = bootstrap(client)
     assert_usable(result, client)
-    client.sign_corruption = defect
+    response = prepared_sign_response(client.material, defect)
+    requests = []
+    delivered = []
+
+    def deliver(*, request):
+        # No assertions, crypto or protobuf work inside the rejection context.
+        client.calls.append(("sign", request))
+        requests.append(request)
+        delivered.append(response)
+        return response
+
+    client.asymmetric_sign = deliver
+    calls_before = len(client.calls)
     with pytest.raises(Exception) as caught:
         if method == "sign":
             result.provider.sign(PAYLOAD)
         else:
             result.provider.sign_key(client.material.kid, PAYLOAD)
     assert not isinstance(caught.value, (AssertionError, AttributeError, TypeError))
+    assert len(delivered) == 1
+    assert delivered[0] is response
+    assert len(requests) == 1
+    assert client.calls[calls_before:] == [("sign", requests[0])]
+    request = requests[0]
+    assert field(request, "name") == client.material.version
+    assert field(request, "data") == PAYLOAD
+    typed = kms_v1.AsymmetricSignRequest(request) if isinstance(request, dict) else request
+    assert kms_v1.AsymmetricSignRequest.pb(typed).HasField("data_crc32c")
+    assert typed.data_crc32c == crc32c(PAYLOAD)
     assert_owned(client)
 
 
