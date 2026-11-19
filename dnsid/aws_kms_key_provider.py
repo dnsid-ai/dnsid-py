@@ -6,8 +6,9 @@ import hashlib
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_der_public_key
 
@@ -139,12 +140,158 @@ class AwsKmsFacade(ABC):
         )
 
 
+class AwsKmsBootstrapFacade(AwsKmsFacade):
+    """Additional KMS capabilities for explicit alias-based key bootstrap."""
+
+    @property
+    @abstractmethod
+    def not_found_exception(self) -> type[Exception]:
+        """Return the native KMS NotFoundException type."""
+
+    @property
+    @abstractmethod
+    def already_exists_exception(self) -> type[Exception]:
+        """Return the native KMS AlreadyExistsException type."""
+
+    @abstractmethod
+    def create_alias(self, alias_name: str, target_key_id: str) -> None:
+        """Acquire an alias with CreateAlias, never update an existing alias."""
+
+
+@dataclass(frozen=True)
+class AwsKmsBootstrapConfig:
+    """Explicit alias and signing algorithm for AWS key bootstrap."""
+
+    alias_name: str
+    algorithm: AwsKmsSigningAlgorithm
+
+
+@dataclass(frozen=True)
+class AwsKmsBootstrapResult:
+    """Canonical KMS reference and standalone provider for the winning key.
+
+    The reference is a UUID or mrk key ID, or a key ARN, never an alias.
+    The provider's public JWK kid is an RFC 7638 thumbprint, not this reference.
+    """
+
+    key_ref: str
+    key_provider: AwsKmsKeyProvider
+
+
+def create_or_reuse_aws_kms_key_provider(
+    client: AwsKmsBootstrapFacade,
+    config: AwsKmsBootstrapConfig,
+) -> AwsKmsBootstrapResult:
+    """Explicitly create or reuse a compatible signing key through an exact alias.
+
+    Only initial native NotFound authorizes creation. Successful acquisition or
+    native AlreadyExists is followed by one alias read; there is no polling.
+    This operation never retargets aliases or deletes, disables, or schedules
+    retirement of keys. Losing/ambiguous resource disposition remains deferred,
+    not an accepted permanent-retention policy. No identity is registered or
+    published, and ordinary loading and rotation remain separate operations.
+
+    Args:
+        client: Explicit facade with typed native exceptions and alias acquisition.
+        config: Exact caller-supplied alias and signing algorithm.
+
+    Returns:
+        Canonical winner reference and a standalone, locally active provider.
+        Its public JWK kid is an RFC 7638 thumbprint, not the KMS reference.
+
+    Raises:
+        ArgumentError: If inputs or returned identity, metadata, or material are
+            invalid or inconsistent. Native service exceptions propagate unchanged.
+    """
+    alias = config.alias_name
+    if (
+        not isinstance(alias, str)
+        or alias != alias.strip()
+        or not alias.startswith("alias/")
+        or alias == "alias/"
+        or alias.startswith("alias/aws/")
+        or "#" in alias
+    ):
+        raise ArgumentError("invalid AWS KMS bootstrap alias")
+    if config.algorithm not in ("ECDSA_SHA_256", "ED25519_SHA_512"):
+        raise ArgumentError("unsupported AWS KMS signing algorithm")
+
+    try:
+        resolved = client.get_public_key(alias)
+    except client.not_found_exception:
+        candidate = client.create_signing_key(_default_key_spec(config.algorithm))
+        _bootstrap_key_ref(candidate)
+        try:
+            client.create_alias(alias, candidate)
+        except client.already_exists_exception:
+            pass  # A competing caller acquired the alias; resolve that winner once.
+        resolved = client.get_public_key(alias)
+
+    key_ref, public_jwk = _bootstrap_public_key(resolved, config.algorithm)
+    validated_ref, validated_jwk = _bootstrap_public_key(
+        client.get_public_key(key_ref), config.algorithm
+    )
+    if validated_ref != key_ref or validated_jwk != public_jwk:
+        raise ArgumentError("AWS KMS winner identity or public material changed during validation")
+
+    provider = AwsKmsKeyProvider(
+        client, AwsKmsConfig(algorithm=config.algorithm, active_key_id=key_ref)
+    )
+    # Seed only the independently validated canonical winner, never an alias or candidate.
+    provider._jwk_cache[key_ref] = validated_jwk
+    provider._kms_key_ids[validated_jwk.kid] = key_ref
+    return AwsKmsBootstrapResult(key_ref=key_ref, key_provider=provider)
+
+
+def _bootstrap_key_ref(value: Any) -> str:
+    key_id = (
+        r"(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|mrk-[0-9a-fA-F]{32})"
+    )
+    key_arn = rf"arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{{12}}:key/{key_id}"
+    if not isinstance(value, str) or re.fullmatch(rf"(?:{key_id}|{key_arn})", value) is None:
+        raise ArgumentError("AWS KMS bootstrap requires a canonical key ID or key ARN")
+    return value
+
+
+def _bootstrap_public_key(
+    result: dict[str, Any], algorithm: AwsKmsSigningAlgorithm
+) -> tuple[str, JWK]:
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+
+    key_ref = _bootstrap_key_ref(result.get("key_id"))
+    advertised = result.get("signing_algorithms")
+    if (
+        result.get("key_usage") != "SIGN_VERIFY"
+        or result.get("key_spec") != _default_key_spec(algorithm)
+        or not isinstance(advertised, list)
+        or algorithm not in advertised
+    ):
+        raise ArgumentError("AWS KMS bootstrap key metadata is incompatible")
+    spki = result.get("public_key")
+    if not isinstance(spki, bytes) or not spki:
+        raise ArgumentError("AWS KMS bootstrap requires public SPKI bytes")
+    try:
+        public = load_der_public_key(spki)
+    except (ValueError, TypeError, UnsupportedAlgorithm) as error:
+        raise ArgumentError("invalid AWS KMS bootstrap public key") from error
+    if algorithm == "ECDSA_SHA_256":
+        compatible = isinstance(public, ec.EllipticCurvePublicKey) and isinstance(
+            public.curve, ec.SECP256R1
+        )
+    else:
+        compatible = isinstance(public, ed25519.Ed25519PublicKey)
+    if not compatible:
+        raise ArgumentError("AWS KMS bootstrap public key type or curve is incompatible")
+    return key_ref, _spki_to_jwk(spki, algorithm, key_ref)
+
+
 # ---------------------------------------------------------------------------
 # BotoKmsFacade — production adapter wrapping a boto3 KMS client
 # ---------------------------------------------------------------------------
 
 
-class BotoKmsFacade(AwsKmsFacade):
+class BotoKmsFacade(AwsKmsBootstrapFacade):
     """Adapter wrapping a ``boto3`` KMS client.
 
     Usage::
@@ -166,6 +313,20 @@ class BotoKmsFacade(AwsKmsFacade):
             client: A ``boto3`` KMS client, e.g. ``boto3.client("kms")``.
         """
         self._client = client
+
+    @property
+    def not_found_exception(self) -> type[Exception]:
+        """Return this client's native KMS NotFoundException type."""
+        return cast(type[Exception], self._client.exceptions.NotFoundException)
+
+    @property
+    def already_exists_exception(self) -> type[Exception]:
+        """Return this client's native KMS AlreadyExistsException type."""
+        return cast(type[Exception], self._client.exceptions.AlreadyExistsException)
+
+    def create_alias(self, alias_name: str, target_key_id: str) -> None:
+        """Acquire an alias via KMS CreateAlias without retargeting existing aliases."""
+        self._client.create_alias(AliasName=alias_name, TargetKeyId=target_key_id)
 
     def create_signing_key(
         self,

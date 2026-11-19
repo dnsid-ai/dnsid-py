@@ -23,7 +23,9 @@ pip install "dnsid[gcp]"
 ```
 
 Import it with `from dnsid import GoogleKmsKeyProvider`. Installing the base SDK
-alone does not install Google dependencies.
+alone does not install Google dependencies. For explicit initial named-key
+create/reuse, see [Google bootstrap](#explicit-initial-google-named-key-bootstrap);
+ordinary construction and configuration remain open-only.
 
 If the release is not yet available on PyPI, install directly from GitHub.
 Replace `main` with a [release tag](https://github.com/dnsid-ai/dnsid-py/releases)
@@ -523,6 +525,62 @@ rotation recovery are not implemented by this package. Reopening a version
 explicitly selects that version as the initial signer; it does not restore
 previous pending or superseded state.
 
+### Explicit initial Google named-key bootstrap
+
+The provider, bootstrap result type and bootstrap function are public exports
+of the root `dnsid` package (with Google dependencies installed via the `gcp`
+extra):
+
+```python
+from dnsid import (
+    GoogleKmsKeyProvider,
+    GoogleKmsBootstrapResult,
+    create_or_reuse_google_kms_key_provider,
+)
+```
+
+`GoogleKmsBootstrapResult` contains `key_version_name` (the immutable version
+reference) and `provider` (a `GoogleKmsKeyProvider`). See the
+[generated key-provider reference](https://docs.dnsid.ai/reference/py/key-providers/).
+
+```python
+from google.cloud import kms_v1
+from dnsid import create_or_reuse_google_kms_key_provider
+
+client = kms_v1.KeyManagementServiceClient()  # caller owns and closes this client
+result = create_or_reuse_google_kms_key_provider(
+    client,
+    parent="projects/my-project/locations/global/keyRings/agents",
+    crypto_key_id="stable-org-agent-name",
+)
+# Persist result.key_version_name; use result.provider for operational signing.
+# Only AFTER success, separately invoke your application's explicit agent-ID
+# create/reuse action. Bootstrap itself never performs that action.
+```
+
+Choose a stable collision-free ID per identity; no normalization is applied.
+The existing project/location/key ring and read/create/sign permissions are
+prerequisites. This opt-in operation reuses the exact named CryptoKey or creates
+it only after a typed NotFound, rereading a concurrent AlreadyExists winner once.
+All routes require enabled software Ed25519 version **1** and validated public
+material. No polling, extra version, ancestor creation, repair or fallback occurs;
+native failures propagate, including uncertain create outcomes. The SDK adds no
+retry policy. `PENDING_GENERATION` is not usable and is rejected: bootstrap does
+not poll or retry internally. A later separate explicit invocation with the same
+`parent` and `crypto_key_id` can succeed once the same immutable version **1** is
+`ENABLED`; it never creates a replacement key or version to repair pending state.
+The returned result is frozen, and the injected client remains caller-owned.
+
+For rotated identities, reopen the persisted authorized immutable version with
+`GoogleKmsKeyProvider`, not bootstrap. Construction, config loading and explicit
+pending-version generation remain unchanged. Keys come first; agent IDs are a
+separate explicit application step. The server never creates these keys.
+
+The separate `GoogleKmsKeyProvider.create(client, crypto_key_name)` API creates a
+new pending version under an existing compatible CryptoKey and uses bounded
+readiness polling. It returns a provider, kid and version reference, requiring
+explicit activation. It is not named-key create/reuse bootstrap.
+
 ### Google software Ed25519 in a multi-region or global location
 
 [Google documents SOFTWARE keys in Cloud KMS locations](https://cloud.google.com/kms/docs/locations)
@@ -670,9 +728,53 @@ provider.supersede(old_kid)         # removes a retained key (optionally schedul
 save_to_database(provider.state_snapshot())
 ```
 
-IAM permissions required at runtime: `kms:GetPublicKey`, `kms:Sign`. Add
-`kms:CreateKey` for `generate_key()` and `kms:ScheduleKeyDeletion` if
-`schedule_key_deletion_on_supersede=True`.
+For existing-key loading and signing, runtime IAM permissions are
+`kms:GetPublicKey` and `kms:Sign`. Add `kms:CreateKey` for `generate_key()` and
+`kms:ScheduleKeyDeletion` if `schedule_key_deletion_on_supersede=True`.
+The explicit bootstrap operation below has separate creation permissions.
+
+### Explicit initial AWS key create/reuse
+
+Ordinary `load()` and key-source configuration only open existing keys. To
+explicitly obtain an initial key through a deterministic alias in your injected
+client's account and region:
+
+```python
+from dnsid import AwsKmsBootstrapConfig, create_or_reuse_aws_kms_key_provider
+
+result = create_or_reuse_aws_kms_key_provider(
+    facade,
+    AwsKmsBootstrapConfig(
+        alias_name="alias/dnsid/my-org/my-agent",
+        algorithm="ECDSA_SHA_256",  # or "ED25519_SHA_512"
+    ),
+)
+provider = result.key_provider
+key_ref = result.key_ref  # canonical UUID/mrk key ID or key ARN, not a JWK kid
+```
+
+The exact alias is not normalized. Only an initial native KMS NotFound permits
+one key creation and one CreateAlias attempt. Success or native AlreadyExists
+contention is followed by exactly one alias winner read; the canonical identity,
+metadata and public material must validate consistently before return. Other
+native errors propagate unchanged, including response loss and failed winner
+reads. There is no polling or presumed candidate success; a later explicit call
+may resolve the same alias again. Public JWK `kid` remains its RFC 7638 thumbprint.
+
+If the alias is temporarily unreadable after acquisition, avoid immediate repeated
+bootstrap calls: wait before a later explicit attempt, because a new initial
+NotFound can create another candidate key.
+
+This is **nondestructive partial bootstrap**, not full lifecycle management.
+Bootstrap never retargets aliases, deletes or disables keys, or schedules
+retirement. Disposition/reconciliation of losing or ambiguous resources is
+**deferred**, not an accepted permanent-retention policy. It creates no agent ID
+and performs no registry, DNS, log publication or rotation; those remain separate
+explicit actions. The separate cloud identity/custody question is unresolved.
+Bootstrap needs `kms:GetPublicKey` to resolve and validate the alias winner.
+The creation path also needs `kms:CreateKey` and `kms:CreateAlias`; bootstrap
+itself does not sign. Using the returned provider to sign needs `kms:Sign`.
+Existing rotation settings do not decide bootstrap resource disposition.
 
 ### AWS Ed25519 multi-Region keys
 
