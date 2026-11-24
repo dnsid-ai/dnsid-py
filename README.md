@@ -353,6 +353,25 @@ crawler requests. Keeping `ek` off the signing fleet does not remove that author
 Dedicated WBA-key delegation requires a separate security design before broad
 multi-node deployment.
 
+#### Migrating WBA from draft-00 to draft-01
+
+This is a breaking change. Update both signers and verifiers; draft-00 peers
+are not compatible with this profile.
+
+- Remove `WebBotAuthConfig.signature_agent_type` and
+  `WebBotAuthVerificationOptions.discovery_type` from your configuration.
+- Set `signature_agent_uri`, its alias `directory_url`, and any configured
+  `discovery_uri` to the complete directory URL, for example
+  `https://agent.example/.well-known/http-message-signatures-directory`.
+  A bare `https://agent.example` now fetches `/`; the verifier no longer appends
+  the well-known path. With no URL override, the signer uses the full well-known
+  URL automatically.
+- Remove parameters such as `;type=directory` and `;type=jwks_uri` from
+  `Signature-Agent` members. The verifier rejects members with parameters.
+- Directory JWKs emitted by this SDK no longer include `alg`. For custom
+  directories, omit `alg` or use `"Ed25519"`; the verifier rejects the old
+  `"ed25519"` value. The HTTP Message Signature `alg` remains `"ed25519"`.
+
 ### JWT bot bearer authentication
 
 The legacy `WebBotAuthProfile` name is retained for compatibility. It implements
