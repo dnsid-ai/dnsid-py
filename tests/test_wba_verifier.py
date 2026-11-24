@@ -176,7 +176,7 @@ def test_same_key_at_another_url_requires_fresh_authenticated_discovery(setup):
     verifier.verify_web_bot_auth_signed_request(req, opts)
     uri = f"https://{DOMAIN}/other-keys"
     WBAHttpSigner(provider, DOMAIN, config=WebBotAuthConfig(
-        signature_agent_uri=uri, signature_agent_type="jwks_uri",
+        signature_agent_uri=uri,
     )).sign(req)
 
     def unavailable(response):
@@ -257,19 +257,16 @@ def test_discovery_requires_explicit_policy(setup):
     verifier.verify_web_bot_auth_signed_request(req, opts)
 
 
-@pytest.mark.parametrize("kind,path", [
-    ("directory", "/.well-known/http-message-signatures-directory"),
-    ("jwks_uri", "/direct?query"),
-])
-def test_discovery_types(setup, kind, path):
+@pytest.mark.parametrize("path", ["/.well-known/http-message-signatures-directory", "/direct?query"])
+def test_discovery_endpoints(setup, path):
     from dnsid.wba_signer import WebBotAuthConfig
 
     provider, _, verifier, req, opts, _, fetched = setup
-    uri = f"https://{DOMAIN}" + (path if kind == "jwks_uri" else "")
+    uri = f"https://{DOMAIN}{path}"
     WBAHttpSigner(provider, DOMAIN, config=WebBotAuthConfig(
-        signature_agent_uri=uri, signature_agent_type=kind,
+        signature_agent_uri=uri,
     )).sign(req)
-    opts.discovery_uri, opts.discovery_type = uri, kind
+    opts.discovery_uri = uri
     verifier.verify_web_bot_auth_signed_request(req, opts)
     assert fetched == [f"https://{DOMAIN}{path}"]
 
@@ -337,21 +334,15 @@ def test_default_transport_rejects_private_resolution(setup, monkeypatch):
 
 
 @pytest.mark.parametrize("member", [
-    '"http://agent.example.com";type=directory',
-    '"https://other.example";type=directory',
-    '"https://agent.example.com";type=unknown',
-    '"https://agent.example.com";type=cimd',
-    '"https://agent.example.com";type="directory"',
-    '"https://user@agent.example.com";type=directory',
-    '"https://[";type=directory',
-    f'"https://{DOMAIN}/";type=directory',
-    f'"https://{DOMAIN}/custom";type=directory',
-    f'"https://{DOMAIN}?keys=1";type=directory',
-    f'"https://{DOMAIN}#keys";type=directory',
-    f'"https://{DOMAIN}?";type=directory',
-    f'"https://{DOMAIN}#";type=directory',
-    f'"https://{DOMAIN}:443";type=directory',
-    f'"https://{DOMAIN.upper()}";type=directory',
+    '"http://agent.example.com"',
+    '"https://other.example"',
+    '"https://agent.example.com";type=directory',
+    '"https://agent.example.com";type=jwks_uri',
+    '"https://agent.example.com";extension',
+    '"https://user@agent.example.com"',
+    '"https://["',
+    f'"https://{DOMAIN}#keys"',
+    f'"https://{DOMAIN}#"',
 ])
 def test_rejects_untrusted_signature_agent(setup, member):
     provider, resolver, verifier, req, opts, _, fetched = setup
@@ -367,14 +358,15 @@ def test_rejects_untrusted_signature_agent(setup, member):
     resolver.verify_domain.assert_not_called()
 
 
-def test_absent_discovery_type_defaults_to_directory(setup):
-    provider, _, verifier, req, opts, _, _ = setup
+def test_root_url_is_fetched_without_well_known_expansion(setup):
+    provider, _, verifier, req, opts, _, fetched = setup
     req.set_header("signature-agent", f'bot2="https://{DOMAIN}"')
     params = SignatureParams.parse(req.get_header("signature-input"))
     req.set_header("signature", "bot2=:" + b64_std_encode(
         provider.sign(_build_signature_base(req, params))
     ) + ":")
     verifier.verify_web_bot_auth_signed_request(req, opts)
+    assert fetched == [f"https://{DOMAIN}"]
 
 
 @pytest.mark.parametrize("mode", ["success", "zero-ttl", "denied", "mtls", "directory-only"])
