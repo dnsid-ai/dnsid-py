@@ -31,10 +31,16 @@ Key management:
     LocalKeyProvider           — file-backed EdDSA/ES256 KeyProvider with key rotation lifecycle
     AwsKmsKeyProvider          — AWS KMS-backed KeyProvider (optional dep: boto3)
     GoogleKmsKeyProvider       — Google Cloud KMS-backed KeyProvider (optional extra: gcp)
+    GoogleKmsBootstrapResult   — immutable initial version and ready signing provider
+    create_or_reuse_google_kms_key_provider — explicit named initial-key bootstrap
     AwsKmsConfig               — configuration for AwsKmsKeyProvider
     AwsKmsKeyState             — mutable lifecycle state for AwsKmsKeyProvider
     BotoKmsFacade              — boto3 adapter for AwsKmsKeyProvider
     AwsKmsFacade               — abstract facade for testing without AWS
+    AwsKmsBootstrapFacade      — explicit alias acquisition and native exception types
+    AwsKmsBootstrapConfig      — exact alias and algorithm for explicit bootstrap
+    AwsKmsBootstrapResult      — canonical reference and locally active provider
+    create_or_reuse_aws_kms_key_provider — explicit nondestructive initial key bootstrap
 
 Configuration loading (loaders parse; constructors default):
     load_environment / load_file / load_cli_directory — one loader per source → LoadedConfig
@@ -68,6 +74,15 @@ from ._response_middleware import ResponseSigningMiddleware
 from ._verification_budget import remaining_seconds, verification_budget
 from .agent_status import active_status_document
 from .aws_kms_key_provider import (
+    AwsKmsBootstrapConfig as AwsKmsBootstrapConfig,
+)
+from .aws_kms_key_provider import (
+    AwsKmsBootstrapFacade as AwsKmsBootstrapFacade,
+)
+from .aws_kms_key_provider import (
+    AwsKmsBootstrapResult as AwsKmsBootstrapResult,
+)
+from .aws_kms_key_provider import (
     AwsKmsConfig as AwsKmsConfig,
 )
 from .aws_kms_key_provider import (
@@ -81,6 +96,9 @@ from .aws_kms_key_provider import (
 )
 from .aws_kms_key_provider import (
     BotoKmsFacade as BotoKmsFacade,
+)
+from .aws_kms_key_provider import (
+    create_or_reuse_aws_kms_key_provider as create_or_reuse_aws_kms_key_provider,
 )
 from .config_loading import (
     FoundryConfig,
@@ -121,7 +139,13 @@ from .exceptions import (
     ValidationError,
     VerificationError,
 )
+from .google_kms_key_provider import (
+    GoogleKmsBootstrapResult as GoogleKmsBootstrapResult,
+)
 from .google_kms_key_provider import GoogleKmsKeyProvider
+from .google_kms_key_provider import (
+    create_or_reuse_google_kms_key_provider as create_or_reuse_google_kms_key_provider,
+)
 from .http_signatures import HttpMessageSignatureConfig, HttpSignatureProfile
 from .interfaces import (
     AbstractRegistryClient,
@@ -256,6 +280,10 @@ __all__ = [
     "DnsIdTxtRecord",
     "TXTRecord",
     # Keys
+    "AwsKmsBootstrapConfig",
+    "AwsKmsBootstrapFacade",
+    "AwsKmsBootstrapResult",
+    "create_or_reuse_aws_kms_key_provider",
     "JWK",
     "JWKS",
     "check_ek_ku_distinctness",
@@ -331,6 +359,8 @@ __all__ = [
     # Key management
     "LocalKeyProvider",
     "GoogleKmsKeyProvider",
+    "GoogleKmsBootstrapResult",
+    "create_or_reuse_google_kms_key_provider",
     # Configuration loading
     "LoadedConfig",
     "FoundryConfig",

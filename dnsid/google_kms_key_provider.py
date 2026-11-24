@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from cryptography.hazmat.primitives import serialization
@@ -25,7 +26,13 @@ from .exceptions import ArgumentError, NoActiveSigningKeyError
 from .interfaces import KeyProvider
 from .models import JWK
 
-__all__ = ["GoogleKmsKeyProvider", "validate_config", "key_provider_from_config"]
+__all__ = [
+    "GoogleKmsKeyProvider",
+    "GoogleKmsBootstrapResult",
+    "create_or_reuse_google_kms_key_provider",
+    "validate_config",
+    "key_provider_from_config",
+]
 
 _PARENT = re.compile(
     r"projects/[^/\s#]+/locations/[^/\s#]+/keyRings/[^/\s#]+/cryptoKeys/[^/\s#]+"
@@ -144,7 +151,7 @@ class GoogleKmsKeyProvider(KeyProvider):
         from google.cloud import kms_v1
 
         response = self._client.get_public_key(request={"name": key_version_name})
-        if response.name != key_version_name:
+        if response is None or response.name != key_version_name:
             raise ArgumentError("google-kms public response version mismatch")
         if response.algorithm != kms_v1.CryptoKeyVersion.CryptoKeyVersionAlgorithm.EC_SIGN_ED25519:
             raise ArgumentError("google-kms requires EC_SIGN_ED25519")
@@ -331,3 +338,98 @@ class GoogleKmsKeyProvider(KeyProvider):
             if len(signature) != 64 or response.signature_crc32c != google_crc32c.value(signature):
                 raise ArgumentError("google-kms signature integrity failure")
             return signature
+
+
+@dataclass(frozen=True)
+class GoogleKmsBootstrapResult:
+    """Validated immutable initial key reference and its ready signing provider."""
+
+    key_version_name: str
+    provider: GoogleKmsKeyProvider
+
+
+def create_or_reuse_google_kms_key_provider(
+    client: Any, *, parent: str, crypto_key_id: str
+) -> GoogleKmsBootstrapResult:
+    """Explicitly create or reuse one named software Ed25519 key's version 1.
+
+    Only a missing named CryptoKey permits creation; a concurrent create winner
+    is reread once. Every route validates the returned key, enabled version 1,
+    and public material. Native service errors propagate without added retries,
+    polling, repair, or fallback. Existing key rings are prerequisites.
+
+    PENDING_GENERATION is not usable and is rejected without retrying bootstrap.
+    A later separate explicit invocation with the same parent and key ID can
+    succeed once the same immutable version 1 is ENABLED. No replacement version
+    or key is created to repair a pending version. This differs from create(),
+    which creates a new pending version with bounded readiness polling.
+
+    Args:
+        client: Caller-owned synchronous KMS client; never closed here.
+        parent: Exact projects/{project}/locations/{location}/keyRings/{ring}.
+        crypto_key_id: Stable caller-chosen ID, 1–63 ASCII letters, digits, _ or -.
+
+    Returns:
+        Frozen result containing the immutable version-1 name and provider.
+
+    Raises:
+        ArgumentError: If local scope or returned key material is incompatible.
+
+    Complete this key operation before a separate explicit application agent-ID
+    action. This function never registers an agent or publishes/configures keys.
+    For rotated identities, reopen the persisted authorized immutable reference
+    with GoogleKmsKeyProvider instead. Constructors and config never bootstrap.
+    """
+    from google.api_core.exceptions import AlreadyExists, NotFound
+    from google.cloud import kms_v1
+
+    if (
+        client is None
+        or not isinstance(parent, str)
+        or re.fullmatch(r"projects/[^/\s#]+/locations/[^/\s#]+/keyRings/[^/\s#]+", parent)
+        is None
+        or not isinstance(crypto_key_id, str)
+        or re.fullmatch(r"[a-zA-Z0-9_-]{1,63}", crypto_key_id) is None
+    ):
+        raise ArgumentError("google-kms bootstrap requires a client and exact named key scope")
+
+    name = f"{parent}/cryptoKeys/{crypto_key_id}"
+    algorithm = kms_v1.CryptoKeyVersion.CryptoKeyVersionAlgorithm.EC_SIGN_ED25519
+    protection = kms_v1.ProtectionLevel.SOFTWARE
+    purpose = kms_v1.CryptoKey.CryptoKeyPurpose.ASYMMETRIC_SIGN
+    try:
+        key = client.get_crypto_key(request={"name": name})
+    except NotFound:
+        try:
+            key = client.create_crypto_key(request={
+                "parent": parent,
+                "crypto_key_id": crypto_key_id,
+                "crypto_key": {
+                    "purpose": purpose,
+                    "version_template": {"algorithm": algorithm, "protection_level": protection},
+                },
+                "skip_initial_version_creation": False,
+            })
+        except AlreadyExists:
+            key = client.get_crypto_key(request={"name": name})
+
+    template = getattr(key, "version_template", None)
+    if (
+        getattr(key, "name", None) != name
+        or getattr(key, "purpose", None) != purpose
+        or getattr(template, "algorithm", None) != algorithm
+        or getattr(template, "protection_level", None) != protection
+    ):
+        raise ArgumentError("google-kms bootstrap requires the exact software Ed25519 CryptoKey")
+
+    version_name = f"{name}/cryptoKeyVersions/1"
+    version = client.get_crypto_key_version(request={"name": version_name})
+    if (
+        getattr(version, "name", None) != version_name
+        or getattr(version, "state", None)
+        != kms_v1.CryptoKeyVersion.CryptoKeyVersionState.ENABLED
+        or getattr(version, "algorithm", None) != algorithm
+        or getattr(version, "protection_level", None) != protection
+    ):
+        raise ArgumentError("google-kms bootstrap requires enabled software Ed25519 version 1")
+    return GoogleKmsBootstrapResult(version_name, GoogleKmsKeyProvider(client, version_name))

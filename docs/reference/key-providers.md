@@ -449,7 +449,7 @@ the RFC 7638 thumbprints used by the KeyProvider methods and public JWKs.
 from dnsid import BotoKmsFacade
 ```
 
-*Bases:* `AwsKmsFacade`
+*Bases:* `AwsKmsBootstrapFacade`
 
 Adapter wrapping a ``boto3`` KMS client.
 
@@ -464,6 +464,11 @@ Usage::
         algorithm="ECDSA_SHA_256",
     ))
 
+**Attributes:**
+
+- `not_found_exception` (`type[Exception]`): Return this client's native KMS NotFoundException type.
+- `already_exists_exception` (`type[Exception]`): Return this client's native KMS AlreadyExistsException type.
+
 ### `BotoKmsFacade` constructor
 
 ```python
@@ -475,6 +480,14 @@ Wrap a ``boto3`` KMS client.
 **Arguments:**
 
 - `client` (`Any`): A ``boto3`` KMS client, e.g. ``boto3.client("kms")``.
+
+### `create_alias`
+
+```python
+BotoKmsFacade.create_alias(alias_name: str, target_key_id: str) -> None
+```
+
+Acquire an alias via KMS CreateAlias without retargeting existing aliases.
 
 ### `create_signing_key`
 
@@ -587,6 +600,80 @@ Schedule deletion of *key_id* after a waiting period.
 Optional; only required when ``schedule_key_deletion_on_supersede`` is
 ``True``.  Raises NotImplementedError when the facade does not support
 key deletion.
+
+## `AwsKmsBootstrapFacade`
+
+```python
+from dnsid import AwsKmsBootstrapFacade
+```
+
+*Bases:* `AwsKmsFacade`
+
+Additional KMS capabilities for explicit alias-based key bootstrap.
+
+**Attributes:**
+
+- `not_found_exception` (`type[Exception]`): Return the native KMS NotFoundException type.
+- `already_exists_exception` (`type[Exception]`): Return the native KMS AlreadyExistsException type.
+
+### `create_alias`
+
+```python
+AwsKmsBootstrapFacade.create_alias(alias_name: str, target_key_id: str) -> None
+```
+
+Acquire an alias with CreateAlias, never update an existing alias.
+
+## `AwsKmsBootstrapConfig`
+
+```python
+from dnsid import AwsKmsBootstrapConfig
+```
+
+Explicit alias and signing algorithm for AWS key bootstrap.
+
+## `AwsKmsBootstrapResult`
+
+```python
+from dnsid import AwsKmsBootstrapResult
+```
+
+Canonical KMS reference and standalone provider for the winning key.
+
+The reference is a UUID or mrk key ID, or a key ARN, never an alias.
+The provider's public JWK kid is an RFC 7638 thumbprint, not this reference.
+
+## `create_or_reuse_aws_kms_key_provider`
+
+```python
+from dnsid import create_or_reuse_aws_kms_key_provider
+```
+
+```python
+create_or_reuse_aws_kms_key_provider(client: AwsKmsBootstrapFacade, config: AwsKmsBootstrapConfig) -> AwsKmsBootstrapResult
+```
+
+Explicitly create or reuse a compatible signing key through an exact alias.
+
+Only initial native NotFound authorizes creation. Successful acquisition or
+native AlreadyExists is followed by one alias read; there is no polling.
+This operation never retargets aliases or deletes, disables, or schedules
+retirement of keys. Losing/ambiguous resource disposition remains deferred,
+not an accepted permanent-retention policy. No identity is registered or
+published, and ordinary loading and rotation remain separate operations.
+
+**Arguments:**
+
+- `client` (`AwsKmsBootstrapFacade`): Explicit facade with typed native exceptions and alias acquisition.
+- `config` (`AwsKmsBootstrapConfig`): Exact caller-supplied alias and signing algorithm.
+
+**Returns:**
+
+- `AwsKmsBootstrapResult` — Canonical winner reference and a standalone, locally active provider. Its public JWK kid is an RFC 7638 thumbprint, not the KMS reference.
+
+**Raises:**
+
+- `ArgumentError`: If inputs or returned identity, metadata, or material are invalid or inconsistent. Native service exceptions propagate unchanged.
 
 ## `GoogleKmsKeyProvider`
 
@@ -730,6 +817,56 @@ GoogleKmsKeyProvider.sign_key(kid: str, payload: bytes) -> bytes
 ```
 
 Sign only with an active or pending key, checking version and CRC32C binding.
+
+## `GoogleKmsBootstrapResult`
+
+```python
+from dnsid import GoogleKmsBootstrapResult
+```
+
+Validated immutable initial key reference and its ready signing provider.
+
+## `create_or_reuse_google_kms_key_provider`
+
+```python
+from dnsid import create_or_reuse_google_kms_key_provider
+```
+
+```python
+create_or_reuse_google_kms_key_provider(client: Any, *, parent: str, crypto_key_id: str) -> GoogleKmsBootstrapResult
+```
+
+Explicitly create or reuse one named software Ed25519 key's version 1.
+
+Only a missing named CryptoKey permits creation; a concurrent create winner
+is reread once. Every route validates the returned key, enabled version 1,
+and public material. Native service errors propagate without added retries,
+polling, repair, or fallback. Existing key rings are prerequisites.
+
+PENDING_GENERATION is not usable and is rejected without retrying bootstrap.
+A later separate explicit invocation with the same parent and key ID can
+succeed once the same immutable version 1 is ENABLED. No replacement version
+or key is created to repair a pending version. This differs from create(),
+which creates a new pending version with bounded readiness polling.
+
+**Arguments:**
+
+- `client` (`Any`): Caller-owned synchronous KMS client; never closed here.
+- `parent` (`str`): Exact projects/{project}/locations/{location}/keyRings/{ring}.
+- `crypto_key_id` (`str`): Stable caller-chosen ID, 1–63 ASCII letters, digits, _ or -.
+
+**Returns:**
+
+- `GoogleKmsBootstrapResult` — Frozen result containing the immutable version-1 name and provider.
+
+**Raises:**
+
+- `ArgumentError`: If local scope or returned key material is incompatible.
+
+Complete this key operation before a separate explicit application agent-ID
+action. This function never registers an agent or publishes/configures keys.
+For rotated identities, reopen the persisted authorized immutable reference
+with GoogleKmsKeyProvider instead. Constructors and config never bootstrap.
 
 ## `validate_config`
 
