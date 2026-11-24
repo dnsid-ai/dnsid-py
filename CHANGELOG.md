@@ -1,4 +1,31 @@
 
+## [0.37.0] - 2026-11-24
+
+### Bug Fixes
+
+- fix: bind AWS public reads to selected regional ARN ([215603a](https://github.com/dnsid-ai/dnsid-py/commit/215603a84d30e1b06f241cd3610ddc5bd60b31ae))
+- fix: accept public IPv4 behind the well-known NAT64 prefix in the SSRF guard ([#139](https://github.com/dnsid-ai/dnsid-py/pull/139))
+- fix(ci): use the default uv version for release generation ([#142](https://github.com/dnsid-ai/dnsid-py/pull/142))
+- fix: support alternate registry lifecycle responses ([#143](https://github.com/dnsid-ai/dnsid-py/pull/143))
+- fix: clarify generated WBA migration notes and KMS links ([#144](https://github.com/dnsid-ai/dnsid-py/pull/144))
+
+### Features
+
+- feat: add the Known logs to the managed verification catalog ([#133](https://github.com/dnsid-ai/dnsid-py/pull/133))
+- feat!: migrate WBA to draft-01; draft-00 peers are incompatible. Remove `WebBotAuthConfig.signature_agent_type` and `WebBotAuthVerificationOptions.discovery_type`; URL overrides must specify the full directory URL. `include_signature_agent=False` and `signature_agent=False` now raise `ArgumentError`. See [migration notes](https://github.com/dnsid-ai/dnsid-py/blob/main/README.md#migrating-wba-from-draft-00-to-draft-01) ([#141](https://github.com/dnsid-ai/dnsid-py/pull/141))
+
+### Other
+
+- Support policyViolation revocation reason ([#134](https://github.com/dnsid-ai/dnsid-py/pull/134))
+
+### Testing
+
+- test: characterize single-cloud multi-region keys ([8c335f5](https://github.com/dnsid-ai/dnsid-py/commit/8c335f5f24e46575996ca0d1af3673351e2081c8))
+- test: prove AWS Ed25519 RAW size boundary ([acfbc7b](https://github.com/dnsid-ai/dnsid-py/commit/acfbc7b55056c467d4fc45c5f74bf26cf412fdb2))
+- test: preserve existing AWS native open compatibility ([68f4219](https://github.com/dnsid-ai/dnsid-py/commit/68f42196838cef5e0ab348ad2207c7a1eb0b42ee))
+- test: prove F1 KMS fault boundaries ([1c5f2f1](https://github.com/dnsid-ai/dnsid-py/commit/1c5f2f152439148f23e644354b3323fdda89ac4e))
+
+
 ## [0.36.0] - 2026-11-11
 
 ### Features
