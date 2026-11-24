@@ -496,16 +496,16 @@ class TestPrepareIssuance:
         )
         return response
 
-    def test_posts_no_body_and_returns_exact_untrusted_transport_result(self):
+    def test_gets_no_body_and_returns_exact_untrusted_transport_result(self):
         entry = b' {"signed":"bytes are not reserialized"}\n'
         response = self._response(entry)
         captured: dict = {}
 
-        def fake_post(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None):
             captured.update(url=url, headers=headers, timeout=timeout)
             return response
 
-        with patch_registry_http("httpx.post", fake_post):
+        with patch_registry_http("httpx.get", fake_get):
             result = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
 
         assert isinstance(result, PreparedRegistryEvent)
@@ -559,7 +559,7 @@ class TestPrepareIssuance:
         )
 
         wire, context, operational = self._signed_issuance()
-        with patch_registry_http("httpx.post", return_value=self._response(wire, header)):
+        with patch_registry_http("httpx.get", return_value=self._response(wire, header)):
             response = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
         assert response.entry_bytes == wire
         prepared = parse_prepared_issuance(response.entry_bytes, context)
@@ -605,7 +605,7 @@ class TestPrepareIssuance:
             wire = b"[]"
         else:
             wire = canonical_bytes(envelope)
-        with patch_registry_http("httpx.post", return_value=self._response(wire)):
+        with patch_registry_http("httpx.get", return_value=self._response(wire)):
             response = _make_client().prepare_issuance(_DOMAIN, "issuance-1")
         assert response.entry_bytes == wire
         with pytest.raises(C2spTlogParseError):
@@ -613,19 +613,19 @@ class TestPrepareIssuance:
 
     def test_domain_is_path_escaped(self):
         response = self._response()
-        with patch_registry_http("httpx.post", return_value=response) as post:
+        with patch_registry_http("httpx.get", return_value=response) as get:
             _make_client().prepare_issuance("agent+dev.example.com", "issuance-1")
-        assert "/agent/agent%2Bdev.example.com/tlog/issuance/prepare" in post.call_args.args[0]
+        assert "/agent/agent%2Bdev.example.com/tlog/issuance/prepare" in get.call_args.args[0]
 
     @pytest.mark.parametrize(
         "key",
         ["", " leading", "trailing ", "x" * 201, "é" * 101],
     )
     def test_rejects_product_invalid_idempotency_keys_before_transport(self, key):
-        with patch_registry_http("httpx.post") as post:
+        with patch_registry_http("httpx.get") as get:
             with pytest.raises(ArgumentError, match="1 to 200 bytes"):
                 _make_client().prepare_issuance(_DOMAIN, key)
-        post.assert_not_called()
+        get.assert_not_called()
 
 
 class TestPreparedEventTransport:
@@ -648,7 +648,7 @@ class TestPreparedEventTransport:
         response = self._response(b"secret response body")
         response.status_code = 500
         response.is_success = False
-        with patch_registry_http("httpx.post", return_value=response):
+        with patch_registry_http("httpx.get", return_value=response):
             with pytest.raises(VerificationError) as exc_info:
                 _make_client().prepare_issuance(_DOMAIN, "issuance-1")
         assert "secret response body" not in str(exc_info.value)

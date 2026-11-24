@@ -592,7 +592,7 @@ RegistryClient.prepare_issuance(domain: str, idempotency_key: str) -> PreparedRe
 
 Fetch exact raw ISSUANCE bytes for operational countersigning.
 
-``POST /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
+``GET /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
 body. The response bytes are untrusted. Use
 ``dnsid.c2sp_tlog.parse_prepared_issuance`` with the expected identity
 and keys to validate them against the entry's signed ``lr`` before
@@ -823,7 +823,7 @@ from dnsid import SubmissionResult
 
 Typed result of RegistryClient.submit_prepared_event.
 
-*state* is one of "pending", "accepted", or "rejected".  A pending or
+*state* is one of "pending", "submitting", "accepted", or "rejected". A pending or
 otherwise indeterminate submission is retried with the exact same entry
 bytes and idempotency key; the entry is never regenerated.
 

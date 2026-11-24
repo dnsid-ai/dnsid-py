@@ -2028,7 +2028,7 @@ _PRIVATE_JWK_MEMBERS: frozenset[str] = frozenset({"d", "p", "q", "dp", "dq", "qi
 class SubmissionResult:
     """Typed result of RegistryClient.submit_prepared_event.
 
-    *state* is one of "pending", "accepted", or "rejected".  A pending or
+    *state* is one of "pending", "submitting", "accepted", or "rejected". A pending or
     otherwise indeterminate submission is retried with the exact same entry
     bytes and idempotency key; the entry is never regenerated.
     """
@@ -2043,7 +2043,7 @@ class SubmissionResult:
 
     status_code: int | None = None
 
-    VALID_STATES = frozenset({"pending", "accepted", "rejected"})
+    VALID_STATES = frozenset({"pending", "submitting", "accepted", "rejected"})
 
     @property
     def accepted(self) -> bool:

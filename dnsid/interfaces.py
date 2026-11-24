@@ -728,7 +728,7 @@ class AbstractRegistryClient(ABC):
     def prepare_issuance(self, domain: str, idempotency_key: str) -> PreparedRegistryEvent:
         """Fetch exact untrusted accountable-entity-signed ISSUANCE bytes.
 
-        POST ``{baseUrl}/api/v1/agent/{domain}/tlog/issuance/prepare`` with no
+        GET ``{baseUrl}/api/v1/agent/{domain}/tlog/issuance/prepare`` with no
         body and the supplied ``Idempotency-Key`` header. Validate the returned
         bytes with ``dnsid.c2sp_tlog.parse_prepared_issuance`` against the
         expected identity and keys before countersigning.
