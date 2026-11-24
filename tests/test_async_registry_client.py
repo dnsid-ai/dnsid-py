@@ -65,6 +65,8 @@ def _response(request):
     path = request.url.path
     if path == "/api/v1/org/onboarding":
         return httpx.Response(200, json={"org_id": "org-1"})
+    if path.endswith("/prepare"):
+        return httpx.Response(200, content=_ENTRY)
     if request.method == "GET":
         return httpx.Response(200, json={**_REGISTER_RESPONSE, "managed": "self", "dns_published": True})
     if path == "/api/v1/agent":
@@ -77,8 +79,6 @@ def _response(request):
         return httpx.Response(202, json={"request_id": "live-1", "agent_id": "agent-123", "status": "pending"})
     if path.endswith("/record"):
         return httpx.Response(200, json={"canonicalContent": _VALID_CANONICAL, "signingKid": "kid-1"})
-    if path.endswith("/prepare"):
-        return httpx.Response(200, content=_ENTRY)
     if path.endswith("/events"):
         return httpx.Response(200, json={"state": "accepted", "entryHash": hashlib.sha256(_ENTRY).hexdigest()})
     return httpx.Response(200, json={"id": "agent-123", "status": "VERIFIED"})

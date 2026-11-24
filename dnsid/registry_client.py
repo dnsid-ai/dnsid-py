@@ -1332,7 +1332,7 @@ class RegistryClient(AbstractRegistryClient):
     def prepare_issuance(self, domain: str, idempotency_key: str) -> PreparedRegistryEvent:
         """Fetch exact raw ISSUANCE bytes for operational countersigning.
 
-        ``POST /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
+        ``GET /api/v1/agent/{domain}/tlog/issuance/prepare`` has no request
         body. The response bytes are untrusted. Use
         ``dnsid.c2sp_tlog.parse_prepared_issuance`` with the expected identity
         and keys to validate them against the entry's signed ``lr`` before
@@ -1363,7 +1363,7 @@ class RegistryClient(AbstractRegistryClient):
         try:
             response = yield _RegistryCall(
                 "_http_request",
-                "POST", f"{self._base_url}{path}",
+                "GET", f"{self._base_url}{path}",
                 headers={
                     **self._auth_headers(),
                     "Content-Type": "application/json",
@@ -1578,6 +1578,7 @@ class RegistryClient(AbstractRegistryClient):
             error_code = str(data.get("error") or "")
             if error_code in {
                 "TLOG_SUBMISSION_BUSY",
+                "submission_busy",
                 "TLOG_SUBMISSION_INDETERMINATE",
             }:
                 result = SubmissionResult(state="pending", error_code=error_code, raw=data)
