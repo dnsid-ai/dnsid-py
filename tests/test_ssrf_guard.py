@@ -33,6 +33,9 @@ class TestIsDisallowedIp:
             "18.67.65.117",
             "1.1.1.1",
             "2606:4700:4700::1111",
+            "64:ff9b::808:808",  # NAT64 well-known prefix + 8.8.8.8 (DNS64 network)
+            "64:ff9b::8.8.8.8",  # same address, dotted form
+            "64:ff9b::1714:b7e",  # + 23.20.11.126
         ],
     )
     def test_public_allowed(self, ip):
@@ -52,6 +55,13 @@ class TestIsDisallowedIp:
             "fe80::1",  # ipv6 link-local
             "fc00::1",  # ipv6 ULA
             "::ffff:127.0.0.1",  # ipv4-mapped loopback
+            "64:ff9b::7f00:1",  # NAT64 + 127.0.0.1
+            "64:ff9b::a00:5",  # NAT64 + 10.0.0.5
+            "64:ff9b::a9fe:a9fe",  # NAT64 + 169.254.169.254 (cloud metadata)
+            "64:ff9b::6440:1",  # NAT64 + 100.64.0.1 (CGNAT)
+            "64:ff9b::",  # NAT64 + 0.0.0.0
+            "64:ff9b:1::808:808",  # RFC 8215 local-use NAT64 prefix stays rejected
+            "64:ff9b::1:808:808",  # outside the /96: not a NAT64 address
             "not-an-ip",  # unparseable → fail closed
         ],
     )
@@ -91,6 +101,8 @@ class TestIsPrivateOrLoopbackIp:
             "ff02::1",
             "::",
             "::ffff:169.254.1.1",
+            "64:ff9b::7f00:1",  # NAT64 never carries loopback/private (RFC 6052 3.1)
+            "64:ff9b::a00:1",
             "not-an-ip",
         ],
     )
@@ -99,6 +111,18 @@ class TestIsPrivateOrLoopbackIp:
 
 
 class TestResolveChecked:
+    def test_allows_public_nat64_resolution(self):
+        """A DNS64 network answers an IPv4-only name with the well-known NAT64 prefix."""
+        with patch(
+            "dnsid.safe_transport._resolve_addresses", return_value=["64:ff9b::1714:b7e"],
+        ):
+            assert resolve_checked_address("ek.example") == "64:ff9b::1714:b7e"
+
+    def test_blocks_nat64_wrapped_private_resolution(self):
+        with patch("dnsid.safe_transport._resolve_addresses", return_value=["64:ff9b::a00:5"]):
+            with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):
+                resolve_checked_address("evil.example")
+
     def test_blocks_private_resolution(self):
         with patch("dnsid.safe_transport._resolve_addresses", return_value=["127.0.0.1"]):
             with pytest.raises(httpcore.ConnectError, match=SSRF_BLOCK_MARKER):

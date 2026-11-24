@@ -25,15 +25,33 @@ SSRF_BLOCK_MARKER = "dnsid-ssrf-blocked"
 """Marker included in connection errors caused by destination policy."""
 
 
+# RFC 6052 well-known NAT64 prefix. On IPv6-only networks with DNS64, names with only IPv4
+# addresses resolve to this prefix plus the IPv4 address, and the NAT64 gateway connects to
+# that embedded address. RFC 6052 section 3.1
+# forbids the prefix for non-global IPv4, but an attacker can still publish such AAAA records,
+# so the embedded address gets the full IPv4 policy. The local-use prefix 64:ff9b:1::/48
+# (RFC 8215) maps network-specific space and stays rejected.
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
+
+
+def _destination(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """The IPv4 address an IPv4-mapped or well-known-NAT64 IPv6 address reaches, else *ip*."""
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return ip.ipv4_mapped
+        if ip in _NAT64_WELL_KNOWN_PREFIX:
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
+
+
 def is_disallowed_ip(ip_text: str) -> bool:
     """Return whether *ip_text* is unsafe for an SDK-managed public read."""
     try:
-        ip = ipaddress.ip_address(ip_text)
+        ip = _destination(ipaddress.ip_address(ip_text))
     except ValueError:
         return True
-    mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:
-        ip = mapped
     return bool(
         not ip.is_global
         or ip.is_loopback

@@ -8,7 +8,10 @@ Security properties enforced by the SDK's verification path (not configurable of
 
 - **SSRF guard** — JWKS (`ku`/`ek`) and status (`su`) fetches reject hosts that
   resolve to non-public addresses (loopback, private, link-local ranges); a
-  blocked resolution raises a non-transient `VerificationError`. `ku` redirects stay on the pinned host, `ek` redirects stay within the pinned `gi` DNS-label boundary, and `su` may follow host-changing HTTPS redirects.
+  blocked resolution raises a non-transient `VerificationError`. IPv4-mapped
+  (`::ffff:a.b.c.d`) and well-known NAT64 (`64:ff9b::a.b.c.d`, RFC 6052)
+  addresses are judged by the IPv4 address they carry, so the SDK can reach
+  public hosts from IPv6-only networks that use DNS64. `ku` redirects stay on the pinned host, `ek` redirects stay within the pinned `gi` DNS-label boundary, and `su` may follow host-changing HTTPS redirects.
 - **Host pinning** — JWKS fetches are pinned to the host implied by the record
   (`ku` on the agent's domain, `ek` on the governance domain); registry-hosted
   `su` URLs are permitted with the same fetch-time bounds.
