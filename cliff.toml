@@ -30,15 +30,22 @@ commit_preprocessors = [
   { pattern = "\\Afix: enforce checkpoint continuity and trusted storage contracts \\(#73\\)(\\n|\\z)", replace = "fix!: enforce checkpoint continuity and trusted storage contracts (#73)${1}" },
   # #108 also fixed signature bases used by request-only signatures.
   { pattern = "\\Afeat: negotiated response signatures \\(#108\\)(\\n|\\z)", replace = "feat: negotiated RFC 9421 response signatures and ASGI ResponseSigningMiddleware; signature bases now derive @target-uri with \"/\" for an empty path and serialize Inner List members selected by ;key (#108)${1}" },
+  { pattern = "\\Afeat!: wba draft 01 \\(#141\\)(\\n|\\z)", replace = "feat!: migrate WBA to draft-01; draft-00 peers are incompatible. Remove `WebBotAuthConfig.signature_agent_type` and `WebBotAuthVerificationOptions.discovery_type`; URL overrides must specify the full directory URL. `include_signature_agent=False` and `signature_agent=False` now raise `ArgumentError`. See [migration notes](https://github.com/dnsid-ai/dnsid-py/blob/main/README.md#migrating-wba-from-draft-00-to-draft-01) (#141)${1}" },
+  # These #61 references do not identify this repository's PR #61.
+  { pattern = "\\A(fix: bind AWS public reads to selected regional ARN) \\(#61\\)(\\n|\\z)", replace = "${1} ([215603a](https://github.com/dnsid-ai/dnsid-py/commit/215603a84d30e1b06f241cd3610ddc5bd60b31ae))${2}" },
+  { pattern = "\\A(test: characterize single-cloud multi-region keys) \\(#61\\)(\\n|\\z)", replace = "${1} ([8c335f5](https://github.com/dnsid-ai/dnsid-py/commit/8c335f5f24e46575996ca0d1af3673351e2081c8))${2}" },
+  { pattern = "\\A(test: prove AWS Ed25519 RAW size boundary) \\(#61\\)(\\n|\\z)", replace = "${1} ([acfbc7b](https://github.com/dnsid-ai/dnsid-py/commit/acfbc7b55056c467d4fc45c5f74bf26cf412fdb2))${2}" },
+  { pattern = "\\A(test: preserve existing AWS native open compatibility) \\(#61\\)(\\n|\\z)", replace = "${1} ([68f4219](https://github.com/dnsid-ai/dnsid-py/commit/68f42196838cef5e0ab348ad2207c7a1eb0b42ee))${2}" },
+  { pattern = "\\A(test: prove F1 KMS fault boundaries) \\(#61\\)(\\n|\\z)", replace = "${1} ([1c5f2f1](https://github.com/dnsid-ai/dnsid-py/commit/1c5f2f152439148f23e644354b3323fdda89ac4e))${2}" },
   { pattern = "Merge pull request #(\\d+) from [^\\n]+\\n\\n(.*)", replace = "${2} ([#${1}](https://github.com/dnsid-ai/dnsid-py/pull/${1}))" },
   { pattern = "\\A([^\\n]+) \\(#(\\d+)\\)(\\n|\\z)", replace = "${1} ([#${2}](https://github.com/dnsid-ai/dnsid-py/pull/${2}))${3}" },
 ]
 commit_parsers = [
   { message = "^chore: update changelog and version|^Release v[0-9]", skip = true },
   { message = "(?i)(?:^feat|^add).*\\[#\\d+\\]", group = "Features", increment = "minor" },
-  { message = "(?i)(?:^fix|^bug).*\\[#\\d+\\]", group = "Bug Fixes", increment = "patch" },
+  { message = "(?i)(?:^fix|^bug).*\\[(?:#\\d+|[0-9a-f]{7})\\]", group = "Bug Fixes", increment = "patch" },
   { message = "(?i)^doc.*\\[#\\d+\\]", group = "Documentation", increment = "patch" },
-  { message = "(?i)^test.*\\[#\\d+\\]", group = "Testing", increment = "patch" },
+  { message = "(?i)^test.*\\[(?:#\\d+|[0-9a-f]{7})\\]", group = "Testing", increment = "patch" },
   { message = "(?i)(?:^refactor|^chore|^update|^bump|^deps|^ci|^sec).*\\[#\\d+\\]", group = "Chores", increment = "patch" },
   { message = ".*\\[#\\d+\\]", group = "Other", increment = "patch" },
   { message = ".*", skip = true },
