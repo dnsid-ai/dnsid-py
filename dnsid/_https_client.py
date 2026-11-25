@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import ipaddress
 import json
 import ssl
 from typing import Any
@@ -451,26 +452,78 @@ def _assert_https_redirect(location: str) -> None:
         )
 
 
-def _assert_same_host_https_redirect(
-    location: str, allowed_host: str, domain_boundary: bool = False
-) -> None:
-    """Reject redirects outside the selected HTTPS host boundary."""
-    from ._utils import normalize_fqdn
+def _host_allowed(
+    host: str,
+    allowed_host: str,
+    domain_boundary: bool = False,
+    *,
+    ignore_root_dot: bool = False,
+) -> bool:
+    """Return whether *host* stays on *allowed_host*.
 
-    _assert_https_redirect(location)
-    parsed = urlparse(location)
-    if parsed.hostname:
+    *host* is allowed when it equals *allowed_host* or, with *domain_boundary*,
+    lies at or beneath it on a DNS-label boundary.
+
+    Both names are compared in the canonical form produced by ``normalize_fqdn``
+    (UTS 46 mapping, A-label encoding, ASCII lowercase): the name that is
+    resolved and presented as TLS SNI. The boundary is therefore enforced on the
+    name that will be dialed, however a caller spelled *allowed_host*.
+
+    A trailing dot is not canonicalized away: both sides must agree on it, so
+    that a pinned fetch dials exactly the published host. *ignore_root_dot*
+    lifts that rule for callers that match a presented name rather than pin a
+    redirect (Web Bot Auth discovery, where "agent.example." and
+    "agent.example" name the same signer).
+
+    An IP literal matches only the same address and never a domain boundary,
+    because an address has no parent domain ("4.3.2.1" is not beneath "3.2.1").
+    A host that is neither a valid DNS name nor an IP literal is never allowed;
+    in particular there is no fallback to comparing the host as written.
+    """
+    from ._utils import normalize_fqdn
+    from .exceptions import ValidationError
+
+    try:
+        host_address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
         try:
-            redir_host = normalize_fqdn(parsed.hostname)
-        except Exception:
-            redir_host = parsed.hostname.lower()
-        if redir_host != allowed_host and not (
-            domain_boundary and redir_host.endswith("." + allowed_host)
-        ):
-            raise VerificationError(
-                VerificationCode.TLS_ERROR,
-                f"Redirect changes host from {allowed_host!r} to {redir_host!r}",
-            )
+            return host_address == ipaddress.ip_address(allowed_host)
+        except ValueError:
+            return False
+    if not ignore_root_dot and host.endswith(".") != allowed_host.endswith("."):
+        return False
+    try:
+        canonical_host = normalize_fqdn(host)
+        canonical_allowed = normalize_fqdn(allowed_host)
+    except ValidationError:
+        return False
+    return canonical_host == canonical_allowed or (
+        domain_boundary and canonical_host.endswith("." + canonical_allowed)
+    )
+
+
+def _assert_same_host_https_redirect(
+    location: str,
+    allowed_host: str,
+    domain_boundary: bool = False,
+    *,
+    ignore_root_dot: bool = False,
+) -> None:
+    """Reject redirects outside the selected HTTPS host boundary.
+
+    See :func:`_host_allowed` for the comparison rules and *ignore_root_dot*.
+    """
+    _assert_https_redirect(location)
+    host = urlparse(location).hostname
+    if host and not _host_allowed(
+        host, allowed_host, domain_boundary, ignore_root_dot=ignore_root_dot
+    ):
+        raise VerificationError(
+            VerificationCode.TLS_ERROR,
+            f"Redirect changes host from {allowed_host!r} to {host!r}",
+        )
 
 
 def _peer_ssl_object(response: httpx.Response) -> Any:

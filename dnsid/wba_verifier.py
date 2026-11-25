@@ -139,7 +139,9 @@ def _directory_url(uri: str) -> str:
     # Validate the original credentials too, including an empty username.
     if parsed.username is not None or parsed.password is not None:
         _reject("Signature-Agent credentials are forbidden")
-    _assert_same_host_https_redirect(uri, host)
+    # A Signature-Agent URI names the signer; it is not a pinned redirect, so a
+    # root dot is normalized away rather than required to match.
+    _assert_same_host_https_redirect(uri, host, ignore_root_dot=True)
     return uri
 
 
@@ -485,7 +487,7 @@ class WBAHttpVerifier:
         transport = _BorrowedTransport(self._transport)
         try:
             with httpx.Client(transport=transport, trust_env=False) as client:
-                _assert_same_host_https_redirect(url, domain)
+                _assert_same_host_https_redirect(url, domain, ignore_root_dot=True)
                 started = _now().timestamp()
                 with client.stream(
                     "GET", url,
