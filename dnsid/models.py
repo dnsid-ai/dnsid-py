@@ -853,12 +853,17 @@ class DnsIdTxtRecord:
         gi_domain = normalize_fqdn(self.gi) if gi_is_domain else ""
 
         # ku must be HTTPS with host == identity FQDN.
-        # A root dot in the ku/ek host is invalid: fetchers compare hosts exactly.
-        ku_host = _parse_https_uri_host(self.ku, field_name="ku")
-        if ku_host.endswith(".") or normalize_fqdn(ku_host) != identity:
+        # A root dot in the ku/ek host is rejected rather than canonicalized away,
+        # so the host as published is exactly the host that is compared and dialed.
+        # The host is then compared in normalize_fqdn form (UTS 46, A-label,
+        # lowercase): the name the transport resolves and presents as TLS SNI.
+        ku_host = _parse_record_https_uri_host(self.ku, field_name="ku")
+        if ku_host.endswith("."):
+            raise ValidationError("ku host must not end with a root dot")
+        if normalize_fqdn(ku_host) != identity:
             raise ValidationError("ku host must equal identity FQDN")
 
-        ek_host = _parse_https_uri_host(self.ek, field_name="ek")
+        ek_host = _parse_record_https_uri_host(self.ek, field_name="ek")
         if ek_host.endswith("."):
             raise ValidationError("ek host must not end with a root dot")
         ek_host = normalize_fqdn(ek_host)
@@ -870,7 +875,7 @@ class DnsIdTxtRecord:
         # it is validated as a well-formed HTTPS URL but not host-pinned.
         # SSRF exposure is bounded by the status fetch itself: HTTPS-only
         # redirects, public-address resolution, and a bounded response size.
-        _parse_https_uri_host(self.su, field_name="su")
+        _parse_record_https_uri_host(self.su, field_name="su")
 
         # lr must be a well-formed ledger reference: '{method}:{entry_ref}'
         # where method matches [a-z][a-z0-9-]*.
@@ -881,7 +886,7 @@ class DnsIdTxtRecord:
                 raise ValidationError(f"malformed lr value {self.lr!r}: {exc}") from exc
 
         if self.cu:
-            _parse_https_uri_host(self.cu, field_name="cu")
+            _parse_record_https_uri_host(self.cu, field_name="cu")
 
         if self.ka and self.ka not in PERMITTED_KA_VALUES:
             raise ValidationError(f"ka must be one of: {sorted(PERMITTED_KA_VALUES)}")
@@ -2312,6 +2317,26 @@ def _validate_component_identifiers(
                 f"duplicate equivalent covered component: {component!r}",
             )
         seen.add(identity)
+
+
+def _parse_record_https_uri_host(uri: str, *, field_name: str) -> str:
+    """Parse a TXT record URL tag (ek, ku, su, cu) and return its host.
+
+    On top of the :func:`_parse_https_uri_host` checks, the host must be an ASCII
+    DNS name as written. TXT values are printable ASCII, so a percent-escape is
+    the only way to smuggle another character into a record URL's host, and
+    RFC 3986 section 3.2.2 directs producers to write internationalized hosts as
+    A-labels. Rejecting percent-escapes (and non-ASCII, for records built in
+    code) keeps the host that is compared and dialed identical to the host as
+    published, and keeps validation consistent with the other DNSid SDKs, which
+    reject the same records. The path and query keep their percent-encoding.
+    """
+    host = _parse_https_uri_host(uri, field_name=field_name)
+    if "%" in host or not host.isascii():
+        raise ValidationError(
+            f"{field_name} host must be an ASCII DNS name without percent-escapes"
+        )
+    return host
 
 
 def _parse_https_uri_host(uri: str, *, field_name: str) -> str:
