@@ -1,4 +1,11 @@
 
+## [0.37.1] - 2026-11-25
+
+### Bug Fixes
+
+- fix: compare record and redirect hosts in canonical form ([#145](https://github.com/dnsid-ai/dnsid-py/pull/145))
+
+
 ## [0.37.0] - 2026-11-24
 
 ### Bug Fixes
